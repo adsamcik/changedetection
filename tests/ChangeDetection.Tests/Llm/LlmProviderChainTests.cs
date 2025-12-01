@@ -45,7 +45,7 @@ public class LlmProviderChainTests
         // Arrange
         var providers = new List<LlmProviderConfig>
         {
-            new() { Name = "Test", IsEnabled = false, IsHealthy = true, ApiKey = "key", ModelId = "model" }
+            new() { Name = "Test", IsEnabled = false, IsHealthy = true, ApiKey = "key", Model = "model" }
         };
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns(providers);
@@ -64,7 +64,7 @@ public class LlmProviderChainTests
         // Arrange
         var providers = new List<LlmProviderConfig>
         {
-            new() { Name = "Test", IsEnabled = true, IsHealthy = false, ApiKey = "key", ModelId = "model" }
+            new() { Name = "Test", IsEnabled = true, IsHealthy = false, ApiKey = "key", Model = "model" }
         };
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns(providers);
@@ -102,8 +102,8 @@ public class LlmProviderChainTests
         // Arrange
         var providers = new List<LlmProviderConfig>
         {
-            new() { Name = "Provider1", IsEnabled = true, IsHealthy = true, Priority = 1, ApiKey = "key1", ModelId = "model1" },
-            new() { Name = "Provider2", IsEnabled = true, IsHealthy = true, Priority = 2, ApiKey = "key2", ModelId = "model2" }
+            new() { Name = "Provider1", IsEnabled = true, IsHealthy = true, Priority = 1, ApiKey = "key1", Model = "model1" },
+            new() { Name = "Provider2", IsEnabled = true, IsHealthy = true, Priority = 2, ApiKey = "key2", Model = "model2" }
         };
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns(providers);
@@ -142,7 +142,7 @@ public class LlmRequestOptionsTests
 
         // Assert
         options.Temperature.ShouldBe(0.7f);
-        options.MaxTokens.ShouldBe(2048);
+        options.MaxTokens.ShouldBe(1024);
         options.ProviderName.ShouldBeNull();
     }
 
@@ -176,7 +176,7 @@ public class LlmResponseTests
         response.IsSuccess.ShouldBeFalse();
         response.Content.ShouldBeNull();
         response.ErrorMessage.ShouldBeNull();
-        response.ProviderName.ShouldBeNull();
+        response.ProviderUsed.ShouldBeNull();
         response.FailedProviderCount.ShouldBe(0);
         response.DurationMs.ShouldBe(0);
     }
@@ -189,18 +189,24 @@ public class LlmResponseTests
         {
             IsSuccess = true,
             Content = "Test response",
-            ProviderName = "OpenAI",
+            ProviderUsed = "OpenAI",
+            Model = "gpt-4",
             FailedProviderCount = 1,
             DurationMs = 500,
-            TokensUsed = 100
+            InputTokens = 50,
+            OutputTokens = 100,
+            Cost = 0.01m
         };
 
         // Assert
         response.IsSuccess.ShouldBeTrue();
         response.Content.ShouldBe("Test response");
-        response.ProviderName.ShouldBe("OpenAI");
+        response.ProviderUsed.ShouldBe("OpenAI");
+        response.Model.ShouldBe("gpt-4");
         response.FailedProviderCount.ShouldBe(1);
         response.DurationMs.ShouldBe(500);
-        response.TokensUsed.ShouldBe(100);
+        response.InputTokens.ShouldBe(50);
+        response.OutputTokens.ShouldBe(100);
+        response.Cost.ShouldBe(0.01m);
     }
 }
