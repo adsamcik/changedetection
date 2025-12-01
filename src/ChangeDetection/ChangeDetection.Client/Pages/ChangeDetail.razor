@@ -1,0 +1,211 @@
+@page "/changes/{Id}"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Change Details - Change Detection</PageTitle>
+
+<div class="change-detail">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading change details...</p>
+        </div>
+    }
+    else if (error != null)
+    {
+        <div class="error-state">
+            <p>@error</p>
+            <a href="/" class="btn btn-outline">← Back to Dashboard</a>
+        </div>
+    }
+    else if (change != null)
+    {
+        <header class="detail-header">
+            <div class="breadcrumb">
+                <a href="/">Dashboard</a>
+                <span>/</span>
+                <a href="/watches/@change.WatchId">@change.WatchTitle</a>
+                <span>/</span>
+                <span>Change Details</span>
+            </div>
+            <h1>Change Detected</h1>
+            <div class="change-meta">
+                <span class="meta-item">📅 @change.DetectedAt.ToString("g")</span>
+                <span class="meta-item importance-@change.Importance.ToLower()">
+                    @GetImportanceIcon(change.Importance) @change.Importance Importance
+                </span>
+            </div>
+        </header>
+
+        <section class="summary-section">
+            <h2>Summary</h2>
+            <p class="summary-text">@change.Summary</p>
+            <div class="change-stats">
+                <div class="stat added">
+                    <span class="stat-value">+@change.LinesAdded</span>
+                    <span class="stat-label">Lines Added</span>
+                </div>
+                <div class="stat removed">
+                    <span class="stat-value">-@change.LinesRemoved</span>
+                    <span class="stat-label">Lines Removed</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="diff-section">
+            <div class="section-header">
+                <h2>Diff View</h2>
+                <div class="view-toggle">
+                    <button class="toggle-btn @(diffView == "unified" ? "active" : "")" @onclick="SetUnifiedView">
+                        Unified
+                    </button>
+                    <button class="toggle-btn @(diffView == "split" ? "active" : "")" @onclick="SetSplitView">
+                        Split
+                    </button>
+                </div>
+            </div>
+
+            <div class="diff-container @diffView">
+                @if (!string.IsNullOrEmpty(change.DiffHtml))
+                {
+                    @((MarkupString)change.DiffHtml)
+                }
+                else
+                {
+                    <pre class="diff-content">@change.DiffText</pre>
+                }
+            </div>
+        </section>
+
+        <section class="snapshots-section">
+            <h2>Snapshots</h2>
+            <div class="snapshots-grid">
+                <div class="snapshot-card">
+                    <h3>Before</h3>
+                    @if (change.PreviousSnapshot != null)
+                    {
+                        <p class="snapshot-time">@change.PreviousSnapshot.CapturedAt.ToString("g")</p>
+                        <div class="snapshot-content">
+                            <pre>@TruncateContent(change.PreviousSnapshot.Content, 1000)</pre>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="no-snapshot">No previous snapshot available</p>
+                    }
+                </div>
+                <div class="snapshot-card">
+                    <h3>After</h3>
+                    @if (change.CurrentSnapshot != null)
+                    {
+                        <p class="snapshot-time">@change.CurrentSnapshot.CapturedAt.ToString("g")</p>
+                        <div class="snapshot-content">
+                            <pre>@TruncateContent(change.CurrentSnapshot.Content, 1000)</pre>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="no-snapshot">No current snapshot available</p>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @if (change.CurrentSnapshot?.ScreenshotPath != null || change.PreviousSnapshot?.ScreenshotPath != null)
+        {
+            <section class="screenshots-section">
+                <h2>Screenshots</h2>
+                <div class="screenshots-grid">
+                    @if (change.PreviousSnapshot?.ScreenshotPath != null)
+                    {
+                        <div class="screenshot-card">
+                            <h3>Before</h3>
+                            <img src="@change.PreviousSnapshot.ScreenshotPath" alt="Previous screenshot" />
+                        </div>
+                    }
+                    @if (change.CurrentSnapshot?.ScreenshotPath != null)
+                    {
+                        <div class="screenshot-card">
+                            <h3>After</h3>
+                            <img src="@change.CurrentSnapshot.ScreenshotPath" alt="Current screenshot" />
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        <div class="actions">
+            <a href="/watches/@change.WatchId" class="btn btn-outline">← Back to Watch</a>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private ChangeDetailDto? change;
+    private bool isLoading = true;
+    private string? error;
+    private string diffView = "unified";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadChange();
+    }
+
+    private async Task LoadChange()
+    {
+        isLoading = true;
+        error = null;
+
+        try
+        {
+            var response = await Http.GetAsync($"/api/changes/{Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                change = await response.Content.ReadFromJsonAsync<ChangeDetailDto>();
+                
+                // Mark as viewed
+                if (change != null && !change.IsViewed)
+                {
+                    await Http.PostAsync($"/api/changes/{Id}/viewed", null);
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                error = "Change not found.";
+            }
+            else
+            {
+                error = "Failed to load change details.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetImportanceIcon(string importance) => importance switch
+    {
+        "Critical" => "🔴",
+        "High" => "🟠",
+        "Medium" => "🟡",
+        _ => "🟢"
+    };
+
+    private string TruncateContent(string content, int maxLength)
+    {
+        if (content.Length <= maxLength) return content;
+        return content[..maxLength] + "\n...[truncated]...";
+    }
+
+    private void SetUnifiedView() => diffView = "unified";
+    private void SetSplitView() => diffView = "split";
+}

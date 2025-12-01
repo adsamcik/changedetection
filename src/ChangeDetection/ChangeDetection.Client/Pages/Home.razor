@@ -1,0 +1,262 @@
+@page "/"
+@using ChangeDetection.Shared.Dtos
+@using ChangeDetection.Client.Components
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Change Detection - Dashboard</PageTitle>
+
+<div class="dashboard">
+    <header class="dashboard-header">
+        <h1>Website Change Detection</h1>
+        <p class="subtitle">Monitor websites for changes with AI-powered analysis</p>
+    </header>
+
+    <section class="smart-input-section">
+        <SmartInput OnWatchCreated="HandleWatchCreated" />
+    </section>
+
+    <section class="stats-section">
+        <div class="stat-card">
+            <span class="stat-value">@watches.Count</span>
+            <span class="stat-label">Watched Sites</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-value">@watches.Count(w => w.Status == "Checking")</span>
+            <span class="stat-label">Currently Checking</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-value">@watches.Count(w => w.HasRecentChanges)</span>
+            <span class="stat-label">Changed Recently</span>
+        </div>
+        <div class="stat-card error">
+            <span class="stat-value">@watches.Count(w => w.Status == "Error")</span>
+            <span class="stat-label">Errors</span>
+        </div>
+    </section>
+
+    <section class="watches-section">
+        <div class="section-header">
+            <h2>Your Watches</h2>
+            <div class="section-actions">
+                <button class="btn btn-outline" @onclick="LoadWatches" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-small"></span>
+                    }
+                    Refresh
+                </button>
+                <a href="/watches/new" class="btn btn-primary">+ Add Watch</a>
+            </div>
+        </div>
+
+        @if (isLoading)
+        {
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <p>Loading watches...</p>
+            </div>
+        }
+        else if (error != null)
+        {
+            <div class="error-state">
+                <p>@error</p>
+                <button class="btn btn-outline" @onclick="LoadWatches">Retry</button>
+            </div>
+        }
+        else if (!watches.Any())
+        {
+            <div class="empty-state">
+                <div class="empty-icon">📡</div>
+                <h3>No watches yet</h3>
+                <p>Start monitoring websites by entering a URL or describing what you want to track above.</p>
+            </div>
+        }
+        else
+        {
+            <div class="watches-grid">
+                @foreach (var watch in watches.OrderByDescending(w => w.HasRecentChanges).ThenByDescending(w => w.LastCheck))
+                {
+                    <div class="watch-card @GetCardClass(watch)" @onclick="() => ViewWatch(watch.Id)">
+                        <div class="watch-header">
+                            <span class="status-indicator @watch.Status.ToLower()"></span>
+                            <h3 class="watch-title">@GetDisplayTitle(watch)</h3>
+                            <div class="watch-actions" @onclick:stopPropagation="true">
+                                <button class="btn-icon" title="@(watch.IsEnabled ? "Pause" : "Resume")" 
+                                        @onclick="() => ToggleWatch(watch)">
+                                    @if (watch.IsEnabled)
+                                    {
+                                        <span>⏸️</span>
+                                    }
+                                    else
+                                    {
+                                        <span>▶️</span>
+                                    }
+                                </button>
+                                <button class="btn-icon" title="Check now" @onclick="() => TriggerCheck(watch.Id)">
+                                    🔄
+                                </button>
+                            </div>
+                        </div>
+                        <p class="watch-url">@TruncateUrl(watch.Url)</p>
+                        @if (!string.IsNullOrEmpty(watch.CssSelector))
+                        {
+                            <p class="watch-selector">Selector: @watch.CssSelector</p>
+                        }
+                        <div class="watch-meta">
+                            <span class="meta-item">
+                                ⏱️ Every @FormatInterval(watch.CheckInterval)
+                            </span>
+                            @if (watch.LastCheck.HasValue)
+                            {
+                                <span class="meta-item">
+                                    📅 @FormatTimeAgo(watch.LastCheck.Value)
+                                </span>
+                            }
+                            @if (watch.ChangeCount > 0)
+                            {
+                                <span class="meta-item changes">
+                                    🔔 @watch.ChangeCount changes
+                                </span>
+                            }
+                        </div>
+                        @if (watch.HasRecentChanges)
+                        {
+                            <div class="change-badge">New Changes!</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private List<WatchListItemDto> watches = new();
+    private bool isLoading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadWatches();
+    }
+
+    private async Task LoadWatches()
+    {
+        isLoading = true;
+        error = null;
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.GetAsync("/api/watches");
+            if (response.IsSuccessStatusCode)
+            {
+                watches = await response.Content.ReadFromJsonAsync<List<WatchListItemDto>>() ?? new();
+            }
+            else
+            {
+                error = "Failed to load watches.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Error loading watches: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void HandleWatchCreated(SmartInput.WatchCreatedEventArgs args)
+    {
+        Navigation.NavigateTo($"/watches/{args.WatchId}");
+    }
+
+    private void ViewWatch(string id)
+    {
+        Navigation.NavigateTo($"/watches/{id}");
+    }
+
+    private async Task ToggleWatch(WatchListItemDto watch)
+    {
+        try
+        {
+            var endpoint = watch.IsEnabled ? $"/api/watches/{watch.Id}/disable" : $"/api/watches/{watch.Id}/enable";
+            var response = await Http.PostAsync(endpoint, null);
+            if (response.IsSuccessStatusCode)
+            {
+                watch.IsEnabled = !watch.IsEnabled;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Silently fail, will refresh on next load
+        }
+    }
+
+    private async Task TriggerCheck(string id)
+    {
+        try
+        {
+            await Http.PostAsync($"/api/watches/{id}/check", null);
+            // Refresh after a short delay to get updated status
+            await Task.Delay(500);
+            await LoadWatches();
+        }
+        catch
+        {
+            // Silently fail
+        }
+    }
+
+    private string GetCardClass(WatchListItemDto watch)
+    {
+        if (!watch.IsEnabled) return "disabled";
+        if (watch.Status == "Error") return "error";
+        if (watch.HasRecentChanges) return "changed";
+        return "";
+    }
+
+    private string GetDisplayTitle(WatchListItemDto watch)
+    {
+        if (!string.IsNullOrEmpty(watch.Title))
+            return watch.Title;
+
+        try
+        {
+            var uri = new Uri(watch.Url);
+            return uri.Host;
+        }
+        catch
+        {
+            return watch.Url;
+        }
+    }
+
+    private string TruncateUrl(string url)
+    {
+        if (url.Length <= 50) return url;
+        return url[..47] + "...";
+    }
+
+    private string FormatInterval(TimeSpan interval)
+    {
+        if (interval.TotalMinutes < 60)
+            return $"{(int)interval.TotalMinutes} min";
+        if (interval.TotalHours < 24)
+            return $"{(int)interval.TotalHours} hr";
+        return $"{(int)interval.TotalDays} days";
+    }
+
+    private string FormatTimeAgo(DateTime dateTime)
+    {
+        var diff = DateTime.UtcNow - dateTime;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+}

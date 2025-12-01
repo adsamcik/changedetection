@@ -1,0 +1,488 @@
+@page "/settings"
+@inject HttpClient Http
+
+<PageTitle>Settings - Change Detection</PageTitle>
+
+<div class="settings-page">
+    <header class="settings-header">
+        <h1>Settings</h1>
+        <p class="subtitle">Configure LLM providers, notifications, and application settings</p>
+    </header>
+
+    <div class="settings-tabs">
+        <button class="tab @(activeTab == "providers" ? "active" : "")" @onclick="SetProvidersTab">
+            LLM Providers
+        </button>
+        <button class="tab @(activeTab == "notifications" ? "active" : "")" @onclick="SetNotificationsTab">
+            Notifications
+        </button>
+        <button class="tab @(activeTab == "general" ? "active" : "")" @onclick="SetGeneralTab">
+            General
+        </button>
+    </div>
+
+    @if (activeTab == "providers")
+    {
+        <section class="settings-section">
+            <div class="section-header">
+                <div>
+                    <h2>LLM Provider Configuration</h2>
+                    <p class="section-description">Configure AI providers for natural language processing. Providers are used in priority order with automatic fallback.</p>
+                </div>
+                <button class="btn btn-primary" @onclick="ShowAddProvider">+ Add Provider</button>
+            </div>
+
+            @if (isLoadingProviders)
+            {
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                </div>
+            }
+            else
+            {
+                <div class="providers-list">
+                    @foreach (var provider in providers.OrderBy(p => p.Priority))
+                    {
+                        <div class="provider-card @(provider.IsEnabled ? "" : "disabled") @(provider.IsHealthy ? "" : "unhealthy")">
+                            <div class="provider-header">
+                                <div class="provider-info">
+                                    <span class="health-indicator @(provider.IsHealthy ? "healthy" : "unhealthy")"></span>
+                                    <h3>@provider.ProviderType</h3>
+                                    <span class="priority-badge">Priority @provider.Priority</span>
+                                </div>
+                                <div class="provider-actions">
+                                    <button class="btn-icon" title="Move up" @onclick="() => MoveProvider(provider, -1)" 
+                                            disabled="@(provider.Priority <= 1)">⬆️</button>
+                                    <button class="btn-icon" title="Move down" @onclick="() => MoveProvider(provider, 1)">⬇️</button>
+                                    <button class="btn-icon" title="Edit" @onclick="() => EditProvider(provider)">✏️</button>
+                                    <button class="btn-icon" title="@(provider.IsEnabled ? "Disable" : "Enable")" 
+                                            @onclick="() => ToggleProvider(provider)">
+                                        @(provider.IsEnabled ? "🔴" : "🟢")
+                                    </button>
+                                    <button class="btn-icon danger" title="Delete" @onclick="() => DeleteProvider(provider)">🗑️</button>
+                                </div>
+                            </div>
+                            <div class="provider-details">
+                                @if (!string.IsNullOrEmpty(provider.ModelId))
+                                {
+                                    <span class="detail">Model: @provider.ModelId</span>
+                                }
+                                @if (provider.MaxTokens > 0)
+                                {
+                                    <span class="detail">Max Tokens: @provider.MaxTokens</span>
+                                }
+                                <span class="detail">Cost: $@provider.CostPerInputToken.ToString("F6")/input, $@provider.CostPerOutputToken.ToString("F6")/output</span>
+                            </div>
+                            @if (!provider.IsHealthy)
+                            {
+                                <div class="provider-error">
+                                    Circuit breaker open - provider temporarily unavailable
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (!providers.Any())
+                    {
+                        <div class="empty-state">
+                            <p>No LLM providers configured. Add a provider to enable natural language input processing.</p>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="usage-summary">
+                <h3>Usage Statistics</h3>
+                @if (usageStats != null)
+                {
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value">@usageStats.TotalRequests</span>
+                            <span class="stat-label">Total Requests</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">@usageStats.TotalInputTokens.ToString("N0")</span>
+                            <span class="stat-label">Input Tokens</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">@usageStats.TotalOutputTokens.ToString("N0")</span>
+                            <span class="stat-label">Output Tokens</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">$@usageStats.TotalCost.ToString("F4")</span>
+                            <span class="stat-label">Total Cost</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else if (activeTab == "notifications")
+    {
+        <section class="settings-section">
+            <h2>Notification Settings</h2>
+            <p class="section-description">Configure how you want to be notified when changes are detected.</p>
+
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="emailEnabled" />
+                    <span>Enable email notifications</span>
+                </label>
+            </div>
+
+            @if (emailEnabled)
+            {
+                <div class="form-group">
+                    <label for="smtpHost">SMTP Host</label>
+                    <input type="text" id="smtpHost" @bind="smtpHost" class="form-control" placeholder="smtp.example.com" />
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="smtpPort">SMTP Port</label>
+                        <input type="number" id="smtpPort" @bind="smtpPort" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="smtpUseSsl" />
+                            <span>Use SSL/TLS</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="smtpUsername">SMTP Username</label>
+                    <input type="text" id="smtpUsername" @bind="smtpUsername" class="form-control" />
+                </div>
+                <div class="form-group">
+                    <label for="smtpPassword">SMTP Password</label>
+                    <input type="password" id="smtpPassword" @bind="smtpPassword" class="form-control" />
+                </div>
+                <div class="form-group">
+                    <label for="fromEmail">From Email Address</label>
+                    <input type="email" id="fromEmail" @bind="fromEmail" class="form-control" placeholder="noreply@example.com" />
+                </div>
+            }
+
+            <button class="btn btn-primary" @onclick="SaveNotificationSettings">Save Notification Settings</button>
+        </section>
+    }
+    else if (activeTab == "general")
+    {
+        <section class="settings-section">
+            <h2>General Settings</h2>
+
+            <div class="form-group">
+                <label for="defaultInterval">Default Check Interval (minutes)</label>
+                <input type="number" id="defaultInterval" @bind="defaultCheckInterval" class="form-control" min="1" />
+            </div>
+
+            <div class="form-group">
+                <label for="maxConcurrent">Max Concurrent Checks</label>
+                <input type="number" id="maxConcurrent" @bind="maxConcurrentChecks" class="form-control" min="1" max="20" />
+            </div>
+
+            <div class="form-group">
+                <label for="snapshotRetention">Snapshot Retention (days)</label>
+                <input type="number" id="snapshotRetention" @bind="snapshotRetentionDays" class="form-control" min="1" />
+                <p class="form-hint">Number of days to keep content snapshots</p>
+            </div>
+
+            <button class="btn btn-primary" @onclick="SaveGeneralSettings">Save General Settings</button>
+        </section>
+    }
+
+    @if (showProviderModal)
+    {
+        <div class="modal-backdrop" @onclick="CloseProviderModal">
+            <div class="modal provider-modal" @onclick:stopPropagation="true">
+                <h3>@(editingProvider == null ? "Add LLM Provider" : "Edit LLM Provider")</h3>
+                
+                <div class="form-group">
+                    <label for="providerType">Provider Type</label>
+                    <select id="providerType" @bind="providerForm.ProviderType" class="form-control">
+                        <option value="">Select provider...</option>
+                        <option value="OpenAI">OpenAI</option>
+                        <option value="AzureOpenAI">Azure OpenAI</option>
+                        <option value="Ollama">Ollama (Local)</option>
+                        <option value="Gemini">Google Gemini</option>
+                        <option value="Claude">Anthropic Claude</option>
+                    </select>
+                </div>
+
+                @if (providerForm.ProviderType == "Ollama")
+                {
+                    <div class="form-group">
+                        <label for="endpoint">Ollama Endpoint</label>
+                        <input type="url" id="endpoint" @bind="providerForm.Endpoint" class="form-control" placeholder="http://localhost:11434" />
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(providerForm.ProviderType))
+                {
+                    <div class="form-group">
+                        <label for="apiKey">API Key</label>
+                        <input type="password" id="apiKey" @bind="providerForm.ApiKey" class="form-control" />
+                    </div>
+                }
+
+                @if (providerForm.ProviderType == "AzureOpenAI")
+                {
+                    <div class="form-group">
+                        <label for="endpoint">Azure Endpoint</label>
+                        <input type="url" id="endpoint" @bind="providerForm.Endpoint" class="form-control" placeholder="https://your-resource.openai.azure.com" />
+                    </div>
+                    <div class="form-group">
+                        <label for="deploymentName">Deployment Name</label>
+                        <input type="text" id="deploymentName" @bind="providerForm.DeploymentName" class="form-control" />
+                    </div>
+                }
+
+                <div class="form-group">
+                    <label for="modelId">Model ID</label>
+                    <input type="text" id="modelId" @bind="providerForm.ModelId" class="form-control" 
+                           placeholder="@GetModelPlaceholder(providerForm.ProviderType)" />
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="priority">Priority</label>
+                        <input type="number" id="priority" @bind="providerForm.Priority" class="form-control" min="1" />
+                    </div>
+                    <div class="form-group">
+                        <label for="maxTokens">Max Tokens</label>
+                        <input type="number" id="maxTokens" @bind="providerForm.MaxTokens" class="form-control" min="100" />
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="costInput">Cost per Input Token ($)</label>
+                        <input type="number" id="costInput" @bind="providerForm.CostPerInputToken" class="form-control" step="0.000001" />
+                    </div>
+                    <div class="form-group">
+                        <label for="costOutput">Cost per Output Token ($)</label>
+                        <input type="number" id="costOutput" @bind="providerForm.CostPerOutputToken" class="form-control" step="0.000001" />
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="providerForm.IsEnabled" />
+                        <span>Enable this provider</span>
+                    </label>
+                </div>
+
+                @if (!string.IsNullOrEmpty(providerModalError))
+                {
+                    <div class="error-message">@providerModalError</div>
+                }
+
+                <div class="modal-actions">
+                    <button class="btn btn-outline" @onclick="CloseProviderModal">Cancel</button>
+                    <button class="btn btn-primary" @onclick="SaveProvider" disabled="@isSavingProvider">
+                        @if (isSavingProvider)
+                        {
+                            <span class="spinner-small"></span>
+                        }
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string activeTab = "providers";
+    private List<LlmProviderDto> providers = new();
+    private LlmUsageStatsDto? usageStats;
+    private bool isLoadingProviders = true;
+    private bool showProviderModal = false;
+    private LlmProviderDto? editingProvider;
+    private LlmProviderCreateDto providerForm = new();
+    private string? providerModalError;
+    private bool isSavingProvider = false;
+
+    // Notification settings
+    private bool emailEnabled = false;
+    private string smtpHost = "";
+    private int smtpPort = 587;
+    private bool smtpUseSsl = true;
+    private string smtpUsername = "";
+    private string smtpPassword = "";
+    private string fromEmail = "";
+
+    // General settings
+    private int defaultCheckInterval = 60;
+    private int maxConcurrentChecks = 5;
+    private int snapshotRetentionDays = 30;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProviders();
+        await LoadUsageStats();
+    }
+
+    private async Task LoadProviders()
+    {
+        isLoadingProviders = true;
+        try
+        {
+            var response = await Http.GetAsync("/api/llm/providers");
+            if (response.IsSuccessStatusCode)
+            {
+                providers = await response.Content.ReadFromJsonAsync<List<LlmProviderDto>>() ?? new();
+            }
+        }
+        finally
+        {
+            isLoadingProviders = false;
+        }
+    }
+
+    private async Task LoadUsageStats()
+    {
+        try
+        {
+            var response = await Http.GetAsync("/api/llm/usage");
+            if (response.IsSuccessStatusCode)
+            {
+                usageStats = await response.Content.ReadFromJsonAsync<LlmUsageStatsDto>();
+            }
+        }
+        catch { }
+    }
+
+    private void ShowAddProvider()
+    {
+        editingProvider = null;
+        providerForm = new LlmProviderCreateDto
+        {
+            Priority = providers.Any() ? providers.Max(p => p.Priority) + 1 : 1,
+            MaxTokens = 4096,
+            IsEnabled = true
+        };
+        providerModalError = null;
+        showProviderModal = true;
+    }
+
+    private void EditProvider(LlmProviderDto provider)
+    {
+        editingProvider = provider;
+        providerForm = new LlmProviderCreateDto
+        {
+            ProviderType = provider.ProviderType,
+            ApiKey = "", // Don't show existing key
+            Endpoint = provider.Endpoint,
+            DeploymentName = provider.DeploymentName,
+            ModelId = provider.ModelId,
+            Priority = provider.Priority,
+            MaxTokens = provider.MaxTokens,
+            CostPerInputToken = provider.CostPerInputToken,
+            CostPerOutputToken = provider.CostPerOutputToken,
+            IsEnabled = provider.IsEnabled
+        };
+        providerModalError = null;
+        showProviderModal = true;
+    }
+
+    private void CloseProviderModal()
+    {
+        showProviderModal = false;
+        editingProvider = null;
+    }
+
+    private async Task SaveProvider()
+    {
+        isSavingProvider = true;
+        providerModalError = null;
+
+        try
+        {
+            HttpResponseMessage response;
+            if (editingProvider != null)
+            {
+                response = await Http.PutAsJsonAsync($"/api/llm/providers/{editingProvider.Id}", providerForm);
+            }
+            else
+            {
+                response = await Http.PostAsJsonAsync("/api/llm/providers", providerForm);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                CloseProviderModal();
+                await LoadProviders();
+            }
+            else
+            {
+                providerModalError = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            providerModalError = ex.Message;
+        }
+        finally
+        {
+            isSavingProvider = false;
+        }
+    }
+
+    private async Task ToggleProvider(LlmProviderDto provider)
+    {
+        var endpoint = provider.IsEnabled 
+            ? $"/api/llm/providers/{provider.Id}/disable" 
+            : $"/api/llm/providers/{provider.Id}/enable";
+        await Http.PostAsync(endpoint, null);
+        await LoadProviders();
+    }
+
+    private async Task MoveProvider(LlmProviderDto provider, int direction)
+    {
+        var newPriority = provider.Priority + direction;
+        if (newPriority < 1) return;
+
+        // Swap priorities with adjacent provider
+        var adjacent = providers.FirstOrDefault(p => p.Priority == newPriority);
+        if (adjacent != null)
+        {
+            var updateForm = new LlmProviderCreateDto { Priority = provider.Priority };
+            await Http.PutAsJsonAsync($"/api/llm/providers/{adjacent.Id}", updateForm);
+        }
+
+        var form = new LlmProviderCreateDto { Priority = newPriority };
+        await Http.PutAsJsonAsync($"/api/llm/providers/{provider.Id}", form);
+        await LoadProviders();
+    }
+
+    private async Task DeleteProvider(LlmProviderDto provider)
+    {
+        await Http.DeleteAsync($"/api/llm/providers/{provider.Id}");
+        await LoadProviders();
+    }
+
+    private string GetModelPlaceholder(string? providerType) => providerType switch
+    {
+        "OpenAI" => "gpt-4o, gpt-4o-mini",
+        "AzureOpenAI" => "gpt-4",
+        "Ollama" => "llama3.1, mistral",
+        "Gemini" => "gemini-1.5-pro, gemini-1.5-flash",
+        "Claude" => "claude-3-5-sonnet-20241022",
+        _ => "model-name"
+    };
+
+    private void SetProvidersTab() => activeTab = "providers";
+    private void SetNotificationsTab() => activeTab = "notifications";
+    private void SetGeneralTab() => activeTab = "general";
+
+    private async Task SaveNotificationSettings()
+    {
+        // TODO: Implement saving notification settings
+        await Task.CompletedTask;
+    }
+
+    private async Task SaveGeneralSettings()
+    {
+        // TODO: Implement saving general settings
+        await Task.CompletedTask;
+    }
+}

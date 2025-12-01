@@ -1,0 +1,322 @@
+@page "/watches/{Id}"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>@(watch?.Title ?? "Watch Details") - Change Detection</PageTitle>
+
+<div class="watch-detail">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading watch details...</p>
+        </div>
+    }
+    else if (error != null)
+    {
+        <div class="error-state">
+            <p>@error</p>
+            <a href="/" class="btn btn-outline">← Back to Dashboard</a>
+        </div>
+    }
+    else if (watch != null)
+    {
+        <header class="detail-header">
+            <div class="breadcrumb">
+                <a href="/">Dashboard</a>
+                <span>/</span>
+                <span>Watch Details</span>
+            </div>
+            <div class="header-content">
+                <div class="title-section">
+                    <span class="status-indicator @watch.Status.ToLower()"></span>
+                    <h1>@(watch.Title ?? GetHostFromUrl(watch.Url))</h1>
+                    @if (!watch.IsEnabled)
+                    {
+                        <span class="badge paused">Paused</span>
+                    }
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-outline" @onclick="TriggerCheck" disabled="@isChecking">
+                        @if (isChecking)
+                        {
+                            <span class="spinner-small"></span>
+                        }
+                        Check Now
+                    </button>
+                    <button class="btn btn-outline" @onclick="ToggleEnabled">
+                        @(watch.IsEnabled ? "Pause" : "Resume")
+                    </button>
+                    <a href="/watches/@Id/edit" class="btn btn-outline">Edit</a>
+                    <button class="btn btn-danger" @onclick="ShowDeleteConfirm">Delete</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="detail-grid">
+            <section class="info-section">
+                <h2>Configuration</h2>
+                <dl class="info-list">
+                    <dt>URL</dt>
+                    <dd>
+                        <a href="@watch.Url" target="_blank" rel="noopener">@watch.Url</a>
+                    </dd>
+                    
+                    @if (!string.IsNullOrEmpty(watch.CssSelector))
+                    {
+                        <dt>CSS Selector</dt>
+                        <dd><code>@watch.CssSelector</code></dd>
+                    }
+                    
+                    @if (!string.IsNullOrEmpty(watch.XpathSelector))
+                    {
+                        <dt>XPath Selector</dt>
+                        <dd><code>@watch.XpathSelector</code></dd>
+                    }
+
+                    <dt>Check Interval</dt>
+                    <dd>@FormatInterval(watch.CheckInterval)</dd>
+
+                    <dt>Created</dt>
+                    <dd>@watch.CreatedAt.ToString("g")</dd>
+
+                    @if (watch.LastCheck.HasValue)
+                    {
+                        <dt>Last Checked</dt>
+                        <dd>@watch.LastCheck.Value.ToString("g") (@FormatTimeAgo(watch.LastCheck.Value))</dd>
+                    }
+
+                    @if (watch.NextCheck.HasValue)
+                    {
+                        <dt>Next Check</dt>
+                        <dd>@watch.NextCheck.Value.ToString("g")</dd>
+                    }
+                </dl>
+
+                @if (!string.IsNullOrEmpty(watch.LastError))
+                {
+                    <div class="error-box">
+                        <h3>Last Error</h3>
+                        <p>@watch.LastError</p>
+                    </div>
+                }
+            </section>
+
+            <section class="changes-section">
+                <div class="section-header">
+                    <h2>Recent Changes</h2>
+                    @if (changes.Any())
+                    {
+                        <a href="/watches/@Id/history" class="btn btn-sm btn-outline">View All</a>
+                    }
+                </div>
+
+                @if (!changes.Any())
+                {
+                    <div class="empty-state-small">
+                        <p>No changes detected yet.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="changes-list">
+                        @foreach (var change in changes.Take(5))
+                        {
+                            <div class="change-item @(change.IsViewed ? "" : "unread")" @onclick="() => ViewChange(change.Id)">
+                                <div class="change-header">
+                                    <span class="change-time">@change.DetectedAt.ToString("g")</span>
+                                    @if (!change.IsViewed)
+                                    {
+                                        <span class="unread-badge">New</span>
+                                    }
+                                </div>
+                                <p class="change-summary">@change.Summary</p>
+                                <div class="change-stats">
+                                    <span class="stat added">+@change.LinesAdded</span>
+                                    <span class="stat removed">-@change.LinesRemoved</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </section>
+
+            <section class="snapshot-section">
+                <h2>Current Content</h2>
+                @if (watch.LatestSnapshot != null)
+                {
+                    <div class="snapshot-info">
+                        <span>Captured: @watch.LatestSnapshot.CapturedAt.ToString("g")</span>
+                        <span>Size: @FormatBytes(watch.LatestSnapshot.ContentLength)</span>
+                    </div>
+                    <div class="snapshot-content">
+                        <pre>@TruncateContent(watch.LatestSnapshot.Content, 500)</pre>
+                    </div>
+                    @if (!string.IsNullOrEmpty(watch.LatestSnapshot.ScreenshotPath))
+                    {
+                        <div class="snapshot-screenshot">
+                            <img src="@watch.LatestSnapshot.ScreenshotPath" alt="Page screenshot" />
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="empty-state-small">
+                        <p>No snapshots captured yet. Click "Check Now" to capture the first snapshot.</p>
+                    </div>
+                }
+            </section>
+        </div>
+
+        @if (showDeleteConfirm)
+        {
+            <div class="modal-backdrop" @onclick="HideDeleteConfirm">
+                <div class="modal" @onclick:stopPropagation="true">
+                    <h3>Delete Watch?</h3>
+                    <p>Are you sure you want to delete this watch? This action cannot be undone.</p>
+                    <div class="modal-actions">
+                        <button class="btn btn-outline" @onclick="HideDeleteConfirm">Cancel</button>
+                        <button class="btn btn-danger" @onclick="DeleteWatch">Delete</button>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private WatchDetailDto? watch;
+    private List<ChangeListItemDto> changes = new();
+    private bool isLoading = true;
+    private bool isChecking = false;
+    private string? error;
+    private bool showDeleteConfirm = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadWatch();
+    }
+
+    private async Task LoadWatch()
+    {
+        isLoading = true;
+        error = null;
+
+        try
+        {
+            var watchResponse = await Http.GetAsync($"/api/watches/{Id}");
+            if (watchResponse.IsSuccessStatusCode)
+            {
+                watch = await watchResponse.Content.ReadFromJsonAsync<WatchDetailDto>();
+            }
+            else if (watchResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                error = "Watch not found.";
+            }
+            else
+            {
+                error = "Failed to load watch details.";
+            }
+
+            if (watch != null)
+            {
+                var changesResponse = await Http.GetAsync($"/api/changes?watchId={Id}&limit=5");
+                if (changesResponse.IsSuccessStatusCode)
+                {
+                    changes = await changesResponse.Content.ReadFromJsonAsync<List<ChangeListItemDto>>() ?? new();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task TriggerCheck()
+    {
+        isChecking = true;
+        try
+        {
+            await Http.PostAsync($"/api/watches/{Id}/check", null);
+            await Task.Delay(2000); // Wait for check to complete
+            await LoadWatch();
+        }
+        finally
+        {
+            isChecking = false;
+        }
+    }
+
+    private async Task ToggleEnabled()
+    {
+        if (watch == null) return;
+        var endpoint = watch.IsEnabled ? $"/api/watches/{Id}/disable" : $"/api/watches/{Id}/enable";
+        await Http.PostAsync(endpoint, null);
+        await LoadWatch();
+    }
+
+    private void ViewChange(string changeId)
+    {
+        Navigation.NavigateTo($"/changes/{changeId}");
+    }
+
+    private void ShowDeleteConfirm() => showDeleteConfirm = true;
+    private void HideDeleteConfirm() => showDeleteConfirm = false;
+
+    private async Task DeleteWatch()
+    {
+        await Http.DeleteAsync($"/api/watches/{Id}");
+        Navigation.NavigateTo("/");
+    }
+
+    private string GetHostFromUrl(string url)
+    {
+        try
+        {
+            return new Uri(url).Host;
+        }
+        catch
+        {
+            return url;
+        }
+    }
+
+    private string FormatInterval(TimeSpan interval)
+    {
+        if (interval.TotalMinutes < 60)
+            return $"Every {(int)interval.TotalMinutes} minutes";
+        if (interval.TotalHours < 24)
+            return $"Every {(int)interval.TotalHours} hours";
+        return $"Every {(int)interval.TotalDays} days";
+    }
+
+    private string FormatTimeAgo(DateTime dateTime)
+    {
+        var diff = DateTime.UtcNow - dateTime;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+
+    private string FormatBytes(int bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+
+    private string TruncateContent(string content, int maxLength)
+    {
+        if (content.Length <= maxLength) return content;
+        return content[..maxLength] + "...";
+    }
+}

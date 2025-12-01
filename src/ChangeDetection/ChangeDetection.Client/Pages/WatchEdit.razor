@@ -1,0 +1,370 @@
+@page "/watches/new"
+@page "/watches/{Id}/edit"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>@(IsEditMode ? "Edit Watch" : "Add Watch") - Change Detection</PageTitle>
+
+<div class="watch-edit">
+    <header class="edit-header">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a>
+            <span>/</span>
+            @if (IsEditMode)
+            {
+                <a href="/watches/@Id">Watch Details</a>
+                <span>/</span>
+                <span>Edit</span>
+            }
+            else
+            {
+                <span>Add Watch</span>
+            }
+        </div>
+        <h1>@(IsEditMode ? "Edit Watch" : "Add New Watch")</h1>
+    </header>
+
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading...</p>
+        </div>
+    }
+    else
+    {
+        <EditForm Model="model" OnValidSubmit="HandleSubmit" class="edit-form">
+            <DataAnnotationsValidator />
+
+            <section class="form-section">
+                <h2>Basic Information</h2>
+                
+                <div class="form-group">
+                    <label for="url">URL *</label>
+                    <InputText id="url" @bind-Value="model.Url" class="form-control" placeholder="https://example.com/page" />
+                    <ValidationMessage For="@(() => model.Url)" />
+                </div>
+
+                <div class="form-group">
+                    <label for="title">Title (optional)</label>
+                    <InputText id="title" @bind-Value="model.Title" class="form-control" placeholder="My Watch" />
+                    <p class="form-hint">A friendly name for this watch. If empty, the domain will be used.</p>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>Content Selection</h2>
+                <p class="section-description">Specify which part of the page to monitor. Leave empty to monitor the entire page.</p>
+
+                <div class="form-group">
+                    <label for="cssSelector">CSS Selector</label>
+                    <InputText id="cssSelector" @bind-Value="model.CssSelector" class="form-control" placeholder="div.main-content, #article-body" />
+                    <p class="form-hint">CSS selector to target specific elements (e.g., <code>.content</code>, <code>#main</code>)</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="xpathSelector">XPath Selector</label>
+                    <InputText id="xpathSelector" @bind-Value="model.XpathSelector" class="form-control" placeholder="//div/span/text()" />
+                    <p class="form-hint">XPath expression for more complex selection</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="ignorePatterns">Ignore Patterns</label>
+                    <InputTextArea id="ignorePatterns" @bind-Value="ignorePatternsText" class="form-control" rows="3" 
+                                   placeholder="One pattern per line&#10;e.g., timestamp|date|random" />
+                    <p class="form-hint">Regex patterns to ignore (one per line). Useful for timestamps, session IDs, etc.</p>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>Check Settings</h2>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="checkInterval">Check Interval</label>
+                        <div class="input-with-unit">
+                            <InputNumber id="checkInterval" @bind-Value="checkIntervalMinutes" class="form-control" min="1" />
+                            <select @bind="checkIntervalUnit" class="form-control unit-select">
+                                <option value="minutes">Minutes</option>
+                                <option value="hours">Hours</option>
+                                <option value="days">Days</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.IsEnabled" />
+                        <span>Enable monitoring</span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>Fetch Settings</h2>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.FetchSettings.UseJavaScript" />
+                        <span>Use JavaScript rendering (Playwright)</span>
+                    </label>
+                    <p class="form-hint">Enable for pages that load content dynamically with JavaScript</p>
+                </div>
+
+                @if (model.FetchSettings.UseJavaScript)
+                {
+                    <div class="form-group">
+                        <label for="waitSelector">Wait for Selector</label>
+                        <InputText id="waitSelector" @bind-Value="model.FetchSettings.WaitForSelector" class="form-control" placeholder="#loaded-content" />
+                        <p class="form-hint">Wait for this element to appear before capturing content</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="waitTime">Additional Wait Time (ms)</label>
+                        <InputNumber id="waitTime" @bind-Value="model.FetchSettings.WaitTimeMs" class="form-control" min="0" max="30000" />
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <InputCheckbox @bind-Value="model.FetchSettings.CaptureScreenshot" />
+                            <span>Capture screenshot</span>
+                        </label>
+                    </div>
+                }
+
+                <div class="form-group">
+                    <label for="timeout">Request Timeout (seconds)</label>
+                    <InputNumber id="timeout" @bind-Value="model.FetchSettings.TimeoutSeconds" class="form-control" min="5" max="120" />
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>Notifications</h2>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.NotificationSettings.EmailEnabled" />
+                        <span>Send email notifications</span>
+                    </label>
+                </div>
+
+                @if (model.NotificationSettings.EmailEnabled)
+                {
+                    <div class="form-group">
+                        <label for="emails">Email Recipients</label>
+                        <InputText id="emails" @bind-Value="emailRecipientsText" class="form-control" placeholder="email@example.com, another@example.com" />
+                    </div>
+                }
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.NotificationSettings.WebhookEnabled" />
+                        <span>Send webhook notifications</span>
+                    </label>
+                </div>
+
+                @if (model.NotificationSettings.WebhookEnabled)
+                {
+                    <div class="form-group">
+                        <label for="webhookUrl">Webhook URL</label>
+                        <InputText id="webhookUrl" @bind-Value="model.NotificationSettings.WebhookUrl" class="form-control" placeholder="https://hooks.example.com/notify" />
+                    </div>
+                }
+
+                <div class="form-group">
+                    <label for="minImportance">Minimum Importance to Notify</label>
+                    <InputSelect id="minImportance" @bind-Value="model.NotificationSettings.MinimumImportanceToNotify" class="form-control">
+                        <option value="Low">Low - All changes</option>
+                        <option value="Medium">Medium - Moderate changes only</option>
+                        <option value="High">High - Significant changes only</option>
+                        <option value="Critical">Critical - Major changes only</option>
+                    </InputSelect>
+                </div>
+            </section>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="error-message">
+                    @errorMessage
+                </div>
+            }
+
+            <div class="form-actions">
+                <a href="@(IsEditMode ? $"/watches/{Id}" : "/")" class="btn btn-outline">Cancel</a>
+                <button type="submit" class="btn btn-primary" disabled="@isSubmitting">
+                    @if (isSubmitting)
+                    {
+                        <span class="spinner-small"></span>
+                    }
+                    @(IsEditMode ? "Save Changes" : "Create Watch")
+                </button>
+            </div>
+        </EditForm>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string? Id { get; set; }
+
+    private bool IsEditMode => !string.IsNullOrEmpty(Id);
+
+    private WatchCreateDto model = new()
+    {
+        Url = "",
+        CheckInterval = TimeSpan.FromHours(1),
+        IsEnabled = true,
+        FetchSettings = new FetchSettingsDto
+        {
+            TimeoutSeconds = 30
+        },
+        NotificationSettings = new NotificationSettingsDto
+        {
+            MinimumImportanceToNotify = "Medium"
+        }
+    };
+
+    private int checkIntervalMinutes = 60;
+    private string checkIntervalUnit = "minutes";
+    private string ignorePatternsText = "";
+    private string emailRecipientsText = "";
+    private bool isLoading = false;
+    private bool isSubmitting = false;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (IsEditMode)
+        {
+            await LoadWatch();
+        }
+    }
+
+    private async Task LoadWatch()
+    {
+        isLoading = true;
+        try
+        {
+            var response = await Http.GetAsync($"/api/watches/{Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                var watch = await response.Content.ReadFromJsonAsync<WatchDetailDto>();
+                if (watch != null)
+                {
+                    model = new WatchCreateDto
+                    {
+                        Url = watch.Url,
+                        Title = watch.Title,
+                        CssSelector = watch.CssSelector,
+                        XpathSelector = watch.XpathSelector,
+                        IgnorePatterns = watch.IgnorePatterns,
+                        CheckInterval = watch.CheckInterval,
+                        IsEnabled = watch.IsEnabled,
+                        FetchSettings = new FetchSettingsDto
+                        {
+                            UseJavaScript = watch.FetchSettings?.UseJavaScript ?? false,
+                            WaitForSelector = watch.FetchSettings?.WaitForSelector,
+                            WaitTimeMs = watch.FetchSettings?.WaitTimeMs ?? 0,
+                            CaptureScreenshot = watch.FetchSettings?.CaptureScreenshot ?? false,
+                            TimeoutSeconds = watch.FetchSettings?.TimeoutSeconds ?? 30
+                        },
+                        NotificationSettings = new NotificationSettingsDto
+                        {
+                            EmailEnabled = watch.NotificationSettings?.EmailEnabled ?? false,
+                            EmailRecipients = watch.NotificationSettings?.EmailRecipients ?? new(),
+                            WebhookEnabled = watch.NotificationSettings?.WebhookEnabled ?? false,
+                            WebhookUrl = watch.NotificationSettings?.WebhookUrl,
+                            MinimumImportanceToNotify = watch.NotificationSettings?.MinimumImportanceToNotify ?? "Medium"
+                        }
+                    };
+
+                    // Set interval values
+                    var interval = watch.CheckInterval;
+                    if (interval.TotalDays >= 1)
+                    {
+                        checkIntervalMinutes = (int)interval.TotalDays;
+                        checkIntervalUnit = "days";
+                    }
+                    else if (interval.TotalHours >= 1)
+                    {
+                        checkIntervalMinutes = (int)interval.TotalHours;
+                        checkIntervalUnit = "hours";
+                    }
+                    else
+                    {
+                        checkIntervalMinutes = Math.Max(1, (int)interval.TotalMinutes);
+                        checkIntervalUnit = "minutes";
+                    }
+
+                    ignorePatternsText = string.Join("\n", watch.IgnorePatterns ?? new());
+                    emailRecipientsText = string.Join(", ", watch.NotificationSettings?.EmailRecipients ?? new());
+                }
+            }
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            // Parse interval
+            model.CheckInterval = checkIntervalUnit switch
+            {
+                "hours" => TimeSpan.FromHours(checkIntervalMinutes),
+                "days" => TimeSpan.FromDays(checkIntervalMinutes),
+                _ => TimeSpan.FromMinutes(checkIntervalMinutes)
+            };
+
+            // Parse ignore patterns
+            model.IgnorePatterns = ignorePatternsText
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => p.Trim())
+                .Where(p => !string.IsNullOrEmpty(p))
+                .ToList();
+
+            // Parse email recipients
+            model.NotificationSettings.EmailRecipients = emailRecipientsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(e => e.Trim())
+                .Where(e => !string.IsNullOrEmpty(e))
+                .ToList();
+
+            HttpResponseMessage response;
+            if (IsEditMode)
+            {
+                response = await Http.PutAsJsonAsync($"/api/watches/{Id}", model);
+            }
+            else
+            {
+                response = await Http.PostAsJsonAsync("/api/watches", model);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<WatchDetailDto>();
+                Navigation.NavigateTo($"/watches/{result?.Id ?? Id}");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                errorMessage = $"Failed to save: {error}";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}

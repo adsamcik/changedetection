@@ -1,0 +1,326 @@
+.dashboard {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.dashboard-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.dashboard-header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+    background: linear-gradient(135deg, var(--primary-color, #0066cc), var(--info-color, #8b5cf6));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.subtitle {
+    color: var(--muted-color, #666);
+    font-size: 1.125rem;
+}
+
+.smart-input-section {
+    margin-bottom: 2rem;
+}
+
+.stats-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--card-bg, white);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border-color, #e0e0e0);
+}
+
+.stat-card.error .stat-value {
+    color: var(--error-color, #dc2626);
+}
+
+.stat-value {
+    display: block;
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary-color, #0066cc);
+}
+
+.stat-label {
+    display: block;
+    color: var(--muted-color, #666);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+.watches-section {
+    background: var(--card-bg, white);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border-color, #e0e0e0);
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.section-header h2 {
+    margin: 0;
+}
+
+.section-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.loading-state,
+.error-state,
+.empty-state {
+    text-align: center;
+    padding: 3rem 2rem;
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--border-color, #e0e0e0);
+    border-top-color: var(--primary-color, #0066cc);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 1rem;
+}
+
+.spinner-small {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color, #e0e0e0);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.empty-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+}
+
+.empty-state h3 {
+    margin-bottom: 0.5rem;
+    color: var(--text-color, #333);
+}
+
+.empty-state p {
+    color: var(--muted-color, #666);
+}
+
+.watches-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+}
+
+.watch-card {
+    position: relative;
+    background: var(--card-bg, white);
+    border-radius: 12px;
+    padding: 1.25rem;
+    border: 1px solid var(--border-color, #e0e0e0);
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.watch-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.watch-card.disabled {
+    opacity: 0.6;
+}
+
+.watch-card.error {
+    border-color: var(--error-color, #ef4444);
+    background-color: rgba(239, 68, 68, 0.05);
+}
+
+.watch-card.changed {
+    border-color: var(--success-color, #22c55e);
+    background-color: rgba(34, 197, 94, 0.05);
+}
+
+.watch-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.status-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-indicator.idle,
+.status-indicator.ok {
+    background-color: var(--success-color, #22c55e);
+}
+
+.status-indicator.checking {
+    background-color: var(--warning-color, #f59e0b);
+    animation: pulse 1s infinite;
+}
+
+.status-indicator.error {
+    background-color: var(--error-color, #ef4444);
+}
+
+.status-indicator.paused {
+    background-color: var(--muted-color, #999);
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.watch-title {
+    flex: 1;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.watch-actions {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.btn-icon {
+    padding: 0.375rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+    font-size: 1rem;
+}
+
+.btn-icon:hover {
+    background-color: var(--hover-bg, #f0f0f0);
+}
+
+.watch-url {
+    margin: 0 0 0.5rem;
+    font-size: 0.875rem;
+    color: var(--muted-color, #666);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.watch-selector {
+    margin: 0 0 0.5rem;
+    font-size: 0.75rem;
+    color: var(--info-color, #8b5cf6);
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.watch-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.meta-item {
+    font-size: 0.75rem;
+    color: var(--muted-color, #666);
+}
+
+.meta-item.changes {
+    color: var(--success-color, #16a34a);
+    font-weight: 500;
+}
+
+.change-badge {
+    position: absolute;
+    top: -8px;
+    right: 12px;
+    background: var(--success-color, #22c55e);
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    border: none;
+}
+
+.btn-primary {
+    background-color: var(--primary-color, #0066cc);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-dark, #0052a3);
+}
+
+.btn-outline {
+    background-color: transparent;
+    color: var(--primary-color, #0066cc);
+    border: 1px solid var(--primary-color, #0066cc);
+}
+
+.btn-outline:hover {
+    background-color: var(--primary-color, #0066cc);
+    color: white;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}

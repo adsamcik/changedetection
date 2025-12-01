@@ -1,0 +1,323 @@
+.change-detail {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.loading-state,
+.error-state {
+    text-align: center;
+    padding: 4rem 2rem;
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--border-color, #e0e0e0);
+    border-top-color: var(--primary-color, #0066cc);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.detail-header {
+    margin-bottom: 2rem;
+}
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--muted-color, #666);
+    margin-bottom: 1rem;
+}
+
+.breadcrumb a {
+    color: var(--primary-color, #0066cc);
+    text-decoration: none;
+}
+
+.breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+.detail-header h1 {
+    margin: 0 0 0.75rem;
+}
+
+.change-meta {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.meta-item {
+    font-size: 0.875rem;
+    color: var(--muted-color, #666);
+}
+
+.meta-item.importance-critical {
+    color: var(--error-color, #dc2626);
+    font-weight: 500;
+}
+
+.meta-item.importance-high {
+    color: #ea580c;
+    font-weight: 500;
+}
+
+.meta-item.importance-medium {
+    color: #ca8a04;
+}
+
+section {
+    background: var(--card-bg, white);
+    border-radius: 12px;
+    padding: 1.5rem;
+    border: 1px solid var(--border-color, #e0e0e0);
+    margin-bottom: 1.5rem;
+}
+
+section h2 {
+    margin: 0 0 1rem;
+    font-size: 1.125rem;
+}
+
+.summary-text {
+    margin: 0 0 1.5rem;
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+.change-stats {
+    display: flex;
+    gap: 2rem;
+}
+
+.change-stats .stat {
+    text-align: center;
+    padding: 1rem 2rem;
+    border-radius: 8px;
+}
+
+.change-stats .stat.added {
+    background-color: rgba(34, 197, 94, 0.1);
+}
+
+.change-stats .stat.removed {
+    background-color: rgba(239, 68, 68, 0.1);
+}
+
+.change-stats .stat-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: bold;
+    font-family: monospace;
+}
+
+.change-stats .stat.added .stat-value {
+    color: var(--success-color, #16a34a);
+}
+
+.change-stats .stat.removed .stat-value {
+    color: var(--error-color, #dc2626);
+}
+
+.change-stats .stat-label {
+    font-size: 0.75rem;
+    color: var(--muted-color, #666);
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.section-header h2 {
+    margin: 0;
+}
+
+.view-toggle {
+    display: flex;
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.toggle-btn {
+    padding: 0.375rem 0.75rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: var(--muted-color, #666);
+    transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+    background-color: var(--hover-bg, #f0f0f0);
+}
+
+.toggle-btn.active {
+    background-color: var(--primary-color, #0066cc);
+    color: white;
+}
+
+.diff-container {
+    background-color: var(--code-bg, #f8f9fa);
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+.diff-content {
+    margin: 0;
+    padding: 1rem;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Diff line styles */
+.diff-container :deep(.diff-line-added),
+.diff-container :deep(.line-added) {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #166534;
+}
+
+.diff-container :deep(.diff-line-removed),
+.diff-container :deep(.line-removed) {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #991b1b;
+}
+
+.diff-container :deep(.diff-line-context),
+.diff-container :deep(.line-context) {
+    color: var(--muted-color, #666);
+}
+
+.snapshots-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .snapshots-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.snapshot-card {
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.snapshot-card h3 {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    background-color: var(--hover-bg, #f5f5f5);
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.snapshot-time {
+    margin: 0;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    color: var(--muted-color, #666);
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.snapshot-content {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.snapshot-content pre {
+    margin: 0;
+    padding: 1rem;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.no-snapshot {
+    padding: 2rem;
+    text-align: center;
+    color: var(--muted-color, #666);
+    font-style: italic;
+}
+
+.screenshots-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .screenshots-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.screenshot-card {
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.screenshot-card h3 {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    background-color: var(--hover-bg, #f5f5f5);
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.screenshot-card img {
+    width: 100%;
+    display: block;
+}
+
+.actions {
+    margin-top: 2rem;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    border: none;
+}
+
+.btn-outline {
+    background-color: transparent;
+    color: var(--primary-color, #0066cc);
+    border: 1px solid var(--primary-color, #0066cc);
+}
+
+.btn-outline:hover {
+    background-color: var(--primary-color, #0066cc);
+    color: white;
+}
