@@ -150,7 +150,7 @@ public class NotificationSettingsTests
             WebhookUrl = "https://webhook.example.com",
             DiscordEnabled = true,
             DiscordWebhookUrl = "https://discord.com/api/webhooks/123",
-            NotifyOnlyOnImportantChanges = true,
+            UseLlmSummary = true,
             MinimumImportance = ChangeImportance.High
         };
 
@@ -161,7 +161,7 @@ public class NotificationSettingsTests
         settings.WebhookUrl.ShouldBe("https://webhook.example.com");
         settings.DiscordEnabled.ShouldBeTrue();
         settings.DiscordWebhookUrl.ShouldBe("https://discord.com/api/webhooks/123");
-        settings.NotifyOnlyOnImportantChanges.ShouldBeTrue();
+        settings.UseLlmSummary.ShouldBeTrue();
         settings.MinimumImportance.ShouldBe(ChangeImportance.High);
     }
 }
