@@ -68,12 +68,14 @@ public class LiteDbContext : IDisposable
             .Field(x => x.Name, "Name")
             .Field(x => x.ApiKey, "ApiKey")
             .Field(x => x.Endpoint, "Endpoint")
-            .Field(x => x.ModelId, "ModelId");
+            .Field(x => x.Model, "Model");
 
         // Configure LlmUsageRecord entity
         BsonMapper.Global.Entity<Core.Entities.LlmUsageRecord>()
             .Id(x => x.Id)
-            .Field(x => x.ProviderId, "ProviderId");
+            .Field(x => x.ProviderId, "ProviderId")
+            .Field(x => x.ProviderName, "ProviderName")
+            .Field(x => x.Model, "Model");
     }
 
     private void ConfigureCollections()
