@@ -55,8 +55,11 @@ public class ChangeDetectionHubTests
     [Fact]
     public void Hub_CanBeInstantiated()
     {
+        // Arrange
+        var logger = Substitute.For<ILogger<ChangeDetectionHub>>();
+        
         // Act
-        var hub = new ChangeDetectionHub();
+        var hub = new ChangeDetectionHub(logger);
 
         // Assert
         hub.ShouldNotBeNull();
