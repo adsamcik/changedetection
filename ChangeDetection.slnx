@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ChangeDetection.Core/ChangeDetection.Core.csproj" />
+    <Project Path="src/ChangeDetection.Shared/ChangeDetection.Shared.csproj" />
+  </Folder>
+  <Folder Name="/src/ChangeDetection/">
+    <Project Path="src/ChangeDetection/ChangeDetection.Client/ChangeDetection.Client.csproj" />
+    <Project Path="src/ChangeDetection/ChangeDetection/ChangeDetection.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ChangeDetection.Tests/ChangeDetection.Tests.csproj" />
+  </Folder>
+</Solution>
