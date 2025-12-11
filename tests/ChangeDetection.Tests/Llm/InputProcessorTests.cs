@@ -27,6 +27,7 @@ public class InputProcessorTests
     [InlineData("https://www.example.com/page")]
     [InlineData("http://localhost:8080")]
     [InlineData("https://example.com/path?query=value")]
+    [InlineData("https://www.img.cas.cz/novinky/akce/")]
     public void Analyze_ValidUrl_ReturnsUrlType(string input)
     {
         // Act
@@ -36,6 +37,23 @@ public class InputProcessorTests
         result.Type.ShouldBe(InputType.Url);
         result.IsValid.ShouldBeTrue();
         result.NormalizedUrl.ShouldNotBeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page", "https://www.img.cas.cz/novinky/akce/")]
+    [InlineData("https://example.com watch for changes every hour", "https://example.com")]
+    [InlineData("http://news.ycombinator.com/ monitor for new stories", "http://news.ycombinator.com/")]
+    [InlineData("https://shop.com/product check price changes daily", "https://shop.com/product")]
+    public void Analyze_UrlFollowedByNaturalLanguage_ReturnsNaturalLanguageWithExtractedUrl(string input, string expectedUrl)
+    {
+        // Act
+        var result = _sut.Analyze(input);
+
+        // Assert - Should be treated as natural language with the URL extracted
+        result.Type.ShouldBe(InputType.NaturalLanguage);
+        result.IsValid.ShouldBeTrue();
+        result.DetectedUrl.ShouldBe(expectedUrl);
+        result.NormalizedUrl.ShouldBe(expectedUrl);
     }
 
     [Theory]
@@ -118,8 +136,8 @@ public class InputProcessorTests
 
         // Assert
         result.Type.ShouldBe(InputType.Url);
-        result.NormalizedUrl.ShouldContain("q=test");
-        result.NormalizedUrl.ShouldContain("page=1");
+        result.NormalizedUrl!.ShouldContain("q=test");
+        result.NormalizedUrl!.ShouldContain("page=1");
     }
 
     [Fact]
@@ -133,7 +151,7 @@ public class InputProcessorTests
 
         // Assert
         result.Type.ShouldBe(InputType.Url);
-        result.NormalizedUrl.ShouldContain("#section");
+        result.NormalizedUrl!.ShouldContain("#section");
     }
 
     [Theory]
