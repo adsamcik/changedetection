@@ -57,6 +57,13 @@ public class LlmRequestOptions
     /// Whether to parse response as JSON.
     /// </summary>
     public bool ExpectJson { get; set; }
+
+    /// <summary>
+    /// Enable compact mode for smaller models. When true, reduces MaxTokens by 40%
+    /// and sets temperature to 0.1 for more deterministic outputs.
+    /// Auto-detected based on model name if null.
+    /// </summary>
+    public bool? CompactMode { get; set; }
 }
 
 /// <summary>

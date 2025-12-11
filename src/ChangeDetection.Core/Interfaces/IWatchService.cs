@@ -31,6 +31,9 @@ public class CreateWatchRequest
     public TimeSpan? CheckInterval { get; set; }
     public bool UseJavaScript { get; set; }
     public List<string>? Tags { get; set; }
+    public List<string>? IgnorePatterns { get; set; }
+    public Dictionary<string, string>? TagColors { get; set; }
+    public Guid? CategoryId { get; set; }
     public NotificationSettings? Notifications { get; set; }
     public FetchSettings? FetchSettings { get; set; }
     public string? LlmProviderOverride { get; set; }
