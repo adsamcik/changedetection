@@ -50,11 +50,11 @@ public static class ChangeEndpoints
             events = await eventRepo.GetAllAsync(ct);
         }
         
-        var orderedEvents = events.OrderByDescending(e => e.DetectedAt);
+        IEnumerable<ChangeEvent> orderedEvents = events.OrderByDescending(e => e.DetectedAt);
         
         if (limit.HasValue && limit.Value > 0)
         {
-            orderedEvents = (IOrderedEnumerable<ChangeEvent>)orderedEvents.Take(limit.Value);
+            orderedEvents = orderedEvents.Take(limit.Value);
         }
 
         var watches = (await watchRepo.GetAllAsync(ct)).ToDictionary(w => w.Id);

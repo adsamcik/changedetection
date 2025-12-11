@@ -1,3 +1,4 @@
+using ChangeDetection.Core;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
@@ -55,15 +56,25 @@ public static class WatchEndpoints
     private static async Task<IResult> GetAllWatches(
         IWatchService watchService,
         IRepository<ChangeEvent> eventRepo,
+        ICategoryService categoryService,
         CancellationToken ct)
     {
         var watches = await watchService.GetAllAsync(ct);
+        var categories = (await categoryService.GetAllAsync(ct)).ToDictionary(c => c.Id);
         var dtos = new List<WatchListItemDto>();
 
         foreach (var watch in watches)
         {
             var changeCount = await eventRepo.CountAsync(e => e.WatchedSiteId == watch.Id, ct);
-            var recentChange = await eventRepo.FindAsync(e => e.WatchedSiteId == watch.Id && !e.IsViewed, ct);
+            var unviewedChanges = (await eventRepo.FindAsync(e => e.WatchedSiteId == watch.Id && !e.IsViewed, ct)).ToList();
+            var latestChange = (await eventRepo.FindAsync(e => e.WatchedSiteId == watch.Id, ct))
+                .OrderByDescending(e => e.DetectedAt)
+                .FirstOrDefault();
+            
+            // Get category info
+            Category? category = null;
+            if (watch.CategoryId.HasValue && categories.TryGetValue(watch.CategoryId.Value, out var cat))
+                category = cat;
             
             dtos.Add(new WatchListItemDto
             {
@@ -76,7 +87,21 @@ public static class WatchEndpoints
                 Status = watch.Status.ToString(),
                 IsEnabled = watch.IsEnabled,
                 ChangeCount = changeCount,
-                HasRecentChanges = recentChange.Any()
+                HasRecentChanges = unviewedChanges.Count > 0,
+                LastError = watch.LastError,
+                LatestChangeId = latestChange?.Id.ToString(),
+                LatestChangeSummary = latestChange?.DiffSummary,
+                LatestChangeAt = latestChange?.DetectedAt,
+                UnviewedChangeCount = unviewedChanges.Count,
+                CategoryId = category?.Id.ToString(),
+                CategoryName = category?.Name,
+                CategoryColor = category?.Color,
+                Tags = watch.Tags.Select(t => new TagDto
+                {
+                    Name = t,
+                    Color = TagColorGenerator.GetColor(t, watch.TagColors),
+                    IsColorOverridden = watch.TagColors.ContainsKey(t)
+                }).ToList()
             });
         }
 
@@ -87,6 +112,7 @@ public static class WatchEndpoints
         string id,
         IWatchService watchService,
         IRepository<ChangeSnapshot> snapshotRepo,
+        ICategoryService categoryService,
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guidId))
@@ -99,13 +125,19 @@ public static class WatchEndpoints
         // Get latest snapshot
         var snapshots = await snapshotRepo.FindAsync(s => s.WatchedSiteId == watch.Id, ct);
         var latestSnapshot = snapshots.OrderByDescending(s => s.CapturedAt).FirstOrDefault();
+        
+        // Get category info
+        Category? category = null;
+        if (watch.CategoryId.HasValue)
+            category = await categoryService.GetByIdAsync(watch.CategoryId.Value, ct);
 
-        return Results.Ok(MapToDetailDto(watch, latestSnapshot));
+        return Results.Ok(MapToDetailDto(watch, latestSnapshot, category));
     }
 
     private static async Task<IResult> CreateWatch(
         WatchCreateDto dto,
         IWatchService watchService,
+        ICategoryService categoryService,
         CancellationToken ct)
     {
         var request = new CreateWatchRequest
@@ -115,7 +147,10 @@ public static class WatchEndpoints
             CssSelector = dto.CssSelector,
             XPathSelector = dto.XpathSelector,
             CheckInterval = dto.CheckInterval,
-            Tags = dto.IgnorePatterns // Using tags for ignore patterns
+            Tags = TagNormalizer.NormalizeList(dto.Tags),
+            IgnorePatterns = dto.IgnorePatterns,
+            TagColors = dto.TagColors,
+            CategoryId = dto.CategoryId != null ? Guid.Parse(dto.CategoryId) : null
         };
 
         if (dto.FetchSettings != null)
@@ -140,13 +175,21 @@ public static class WatchEndpoints
                 EmailAddress = dto.NotificationSettings.EmailRecipients?.FirstOrDefault(),
                 WebhookEnabled = dto.NotificationSettings.WebhookEnabled,
                 WebhookUrl = dto.NotificationSettings.WebhookUrl,
+                DiscordEnabled = dto.NotificationSettings.DiscordEnabled,
+                DiscordWebhookUrl = dto.NotificationSettings.DiscordWebhookUrl,
                 MinimumImportance = Enum.TryParse<ChangeImportance>(dto.NotificationSettings.MinimumImportanceToNotify, out var imp) 
                     ? imp : ChangeImportance.Medium
             };
         }
 
         var watch = await watchService.CreateWatchAsync(request, ct);
-        return Results.Created($"/api/watches/{watch.Id}", MapToDetailDto(watch, null));
+        
+        // Get category info for response
+        Category? category = null;
+        if (watch.CategoryId.HasValue)
+            category = await categoryService.GetByIdAsync(watch.CategoryId.Value, ct);
+        
+        return Results.Created($"/api/watches/{watch.Id}", MapToDetailDto(watch, null, category));
     }
 
     private static async Task<IResult> UpdateWatch(
@@ -154,6 +197,7 @@ public static class WatchEndpoints
         WatchCreateDto dto,
         IWatchService watchService,
         IRepository<ChangeSnapshot> snapshotRepo,
+        ICategoryService categoryService,
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guidId))
@@ -166,7 +210,10 @@ public static class WatchEndpoints
         watch.Name = dto.Title;
         watch.CssSelector = dto.CssSelector;
         watch.XPathSelector = dto.XpathSelector;
-        watch.Tags = dto.IgnorePatterns ?? new(); // Using tags for ignore patterns
+        watch.Tags = TagNormalizer.NormalizeList(dto.Tags);
+        watch.IgnorePatterns = dto.IgnorePatterns ?? [];
+        watch.TagColors = dto.TagColors ?? [];
+        watch.CategoryId = dto.CategoryId != null ? Guid.Parse(dto.CategoryId) : null;
         watch.CheckInterval = dto.CheckInterval;
         watch.IsEnabled = dto.IsEnabled;
 
@@ -191,6 +238,8 @@ public static class WatchEndpoints
                 EmailAddress = dto.NotificationSettings.EmailRecipients?.FirstOrDefault(),
                 WebhookEnabled = dto.NotificationSettings.WebhookEnabled,
                 WebhookUrl = dto.NotificationSettings.WebhookUrl,
+                DiscordEnabled = dto.NotificationSettings.DiscordEnabled,
+                DiscordWebhookUrl = dto.NotificationSettings.DiscordWebhookUrl,
                 MinimumImportance = Enum.TryParse<ChangeImportance>(dto.NotificationSettings.MinimumImportanceToNotify, out var imp) 
                     ? imp : ChangeImportance.Medium
             };
@@ -201,7 +250,11 @@ public static class WatchEndpoints
         var snapshots = await snapshotRepo.FindAsync(s => s.WatchedSiteId == watch.Id, ct);
         var latestSnapshot = snapshots.OrderByDescending(s => s.CapturedAt).FirstOrDefault();
 
-        return Results.Ok(MapToDetailDto(watch, latestSnapshot));
+        Category? category = null;
+        if (watch.CategoryId.HasValue)
+            category = await categoryService.GetByIdAsync(watch.CategoryId.Value, ct);
+
+        return Results.Ok(MapToDetailDto(watch, latestSnapshot, category));
     }
 
     private static async Task<IResult> DeleteWatch(
@@ -284,7 +337,7 @@ public static class WatchEndpoints
         return Results.NoContent();
     }
 
-    private static WatchDetailDto MapToDetailDto(WatchedSite watch, ChangeSnapshot? snapshot)
+    private static WatchDetailDto MapToDetailDto(WatchedSite watch, ChangeSnapshot? snapshot, Category? category)
     {
         // Calculate next check time
         var nextCheck = watch.LastChecked.HasValue 
@@ -298,7 +351,16 @@ public static class WatchEndpoints
             Title = watch.Name,
             CssSelector = watch.CssSelector,
             XpathSelector = watch.XPathSelector,
-            IgnorePatterns = watch.Tags, // Using Tags as IgnorePatterns
+            Tags = watch.Tags.Select(t => new TagDto
+            {
+                Name = t,
+                Color = TagColorGenerator.GetColor(t, watch.TagColors),
+                IsColorOverridden = watch.TagColors.ContainsKey(t)
+            }).ToList(),
+            IgnorePatterns = watch.IgnorePatterns,
+            CategoryId = category?.Id.ToString(),
+            CategoryName = category?.Name,
+            CategoryColor = category?.Color,
             CheckInterval = watch.CheckInterval,
             LastCheck = watch.LastChecked,
             NextCheck = nextCheck,
@@ -321,6 +383,8 @@ public static class WatchEndpoints
                 EmailRecipients = watch.Notifications.EmailAddress != null ? new List<string> { watch.Notifications.EmailAddress } : new(),
                 WebhookEnabled = watch.Notifications.WebhookEnabled,
                 WebhookUrl = watch.Notifications.WebhookUrl,
+                DiscordEnabled = watch.Notifications.DiscordEnabled,
+                DiscordWebhookUrl = watch.Notifications.DiscordWebhookUrl,
                 MinimumImportanceToNotify = watch.Notifications.MinimumImportance.ToString()
             },
             LatestSnapshot = snapshot != null ? new SnapshotDto
