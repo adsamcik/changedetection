@@ -1,0 +1,224 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="tag-input-container">
+    <div class="tags-display">
+        @foreach (var tag in Tags)
+        {
+            <span class="tag" style="--tag-color: @GetTagColor(tag.Name);">
+                <span class="tag-name">@tag.Name</span>
+                @if (AllowColorOverride)
+                {
+                    <button type="button" class="tag-color-btn" @onclick="() => ShowColorPicker(tag.Name)" @onclick:stopPropagation="true" title="Change color">
+                        🎨
+                    </button>
+                }
+                @if (AllowRemove)
+                {
+                    <button type="button" class="tag-remove-btn" @onclick="() => RemoveTag(tag.Name)" @onclick:stopPropagation="true" title="Remove tag">
+                        ×
+                    </button>
+                }
+            </span>
+        }
+    </div>
+
+    @if (AllowAdd)
+    {
+        <div class="tag-add-form">
+            <input type="text"
+                   @bind="newTagInput"
+                   @bind:event="oninput"
+                   @onkeydown="HandleKeyDown"
+                   placeholder="@Placeholder"
+                   class="tag-input" />
+            <button type="button" class="btn btn-small" @onclick="AddTag" disabled="@string.IsNullOrWhiteSpace(newTagInput)">
+                Add
+            </button>
+        </div>
+    }
+
+    @if (showColorPicker)
+    {
+        <div class="color-picker-overlay" @onclick="CloseColorPicker">
+            <div class="color-picker-popup" @onclick:stopPropagation="true">
+                <h4>Choose color for "@selectedTagForColor"</h4>
+                <div class="color-grid">
+                    @foreach (var color in AvailableColors)
+                    {
+                        <button type="button"
+                                class="color-option @(IsSelectedColor(color) ? "selected" : "")"
+                                style="background-color: @color;"
+                                @onclick="() => SelectColor(color)">
+                        </button>
+                    }
+                </div>
+                <div class="color-picker-actions">
+                    <button type="button" class="btn btn-small btn-outline" @onclick="ResetColor">Reset to default</button>
+                    <button type="button" class="btn btn-small" @onclick="CloseColorPicker">Close</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<TagDto> Tags { get; set; } = [];
+    [Parameter] public EventCallback<List<TagDto>> TagsChanged { get; set; }
+    
+    [Parameter] public Dictionary<string, string> TagColors { get; set; } = [];
+    [Parameter] public EventCallback<Dictionary<string, string>> TagColorsChanged { get; set; }
+    
+    [Parameter] public bool AllowAdd { get; set; } = true;
+    [Parameter] public bool AllowRemove { get; set; } = true;
+    [Parameter] public bool AllowColorOverride { get; set; } = true;
+    [Parameter] public string Placeholder { get; set; } = "Add tag...";
+
+    private string newTagInput = "";
+    private bool showColorPicker = false;
+    private string? selectedTagForColor;
+
+    private static readonly string[] AvailableColors =
+    [
+        "#3b82f6", // Blue
+        "#10b981", // Emerald
+        "#f59e0b", // Amber
+        "#ef4444", // Red
+        "#8b5cf6", // Violet
+        "#ec4899", // Pink
+        "#06b6d4", // Cyan
+        "#84cc16", // Lime
+        "#f97316", // Orange
+        "#6366f1", // Indigo
+        "#14b8a6", // Teal
+        "#a855f7", // Purple
+        "#22c55e", // Green
+        "#eab308", // Yellow
+        "#0ea5e9", // Sky
+        "#d946ef"  // Fuchsia
+    ];
+
+    private string GetTagColor(string tagName)
+    {
+        // Check for user override first
+        if (TagColors.TryGetValue(tagName, out var overrideColor))
+        {
+            return overrideColor;
+        }
+
+        // Find in the Tags list
+        var tag = Tags.FirstOrDefault(t => t.Name == tagName);
+        return tag?.Color ?? GenerateDefaultColor(tagName);
+    }
+
+    private static string GenerateDefaultColor(string tagName)
+    {
+        // Simple hash-based color selection
+        var hash = tagName.GetHashCode();
+        var index = Math.Abs(hash) % AvailableColors.Length;
+        return AvailableColors[index];
+    }
+
+    private async Task AddTag()
+    {
+        var normalizedTag = newTagInput.Trim().ToLowerInvariant();
+        normalizedTag = System.Text.RegularExpressions.Regex.Replace(normalizedTag, @"\s+", " ");
+
+        if (string.IsNullOrWhiteSpace(normalizedTag) || Tags.Any(t => t.Name == normalizedTag))
+        {
+            newTagInput = "";
+            return;
+        }
+
+        var newTag = new TagDto
+        {
+            Name = normalizedTag,
+            Color = GenerateDefaultColor(normalizedTag),
+            IsColorOverridden = false
+        };
+
+        Tags.Add(newTag);
+        await TagsChanged.InvokeAsync(Tags);
+        newTagInput = "";
+    }
+
+    private async Task RemoveTag(string tagName)
+    {
+        var tag = Tags.FirstOrDefault(t => t.Name == tagName);
+        if (tag != null)
+        {
+            Tags.Remove(tag);
+            await TagsChanged.InvokeAsync(Tags);
+
+            // Also remove any color override
+            if (TagColors.ContainsKey(tagName))
+            {
+                TagColors.Remove(tagName);
+                await TagColorsChanged.InvokeAsync(TagColors);
+            }
+        }
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            _ = AddTag();
+        }
+    }
+
+    private void ShowColorPicker(string tagName)
+    {
+        selectedTagForColor = tagName;
+        showColorPicker = true;
+    }
+
+    private void CloseColorPicker()
+    {
+        showColorPicker = false;
+        selectedTagForColor = null;
+    }
+
+    private bool IsSelectedColor(string color)
+    {
+        if (selectedTagForColor == null) return false;
+        return GetTagColor(selectedTagForColor) == color;
+    }
+
+    private async Task SelectColor(string color)
+    {
+        if (selectedTagForColor == null) return;
+
+        TagColors[selectedTagForColor] = color;
+        
+        // Update the tag's color and override flag
+        var tag = Tags.FirstOrDefault(t => t.Name == selectedTagForColor);
+        if (tag != null)
+        {
+            tag.Color = color;
+            tag.IsColorOverridden = true;
+        }
+
+        await TagColorsChanged.InvokeAsync(TagColors);
+        await TagsChanged.InvokeAsync(Tags);
+        CloseColorPicker();
+    }
+
+    private async Task ResetColor()
+    {
+        if (selectedTagForColor == null) return;
+
+        TagColors.Remove(selectedTagForColor);
+
+        // Reset the tag's color to default
+        var tag = Tags.FirstOrDefault(t => t.Name == selectedTagForColor);
+        if (tag != null)
+        {
+            tag.Color = GenerateDefaultColor(selectedTagForColor);
+            tag.IsColorOverridden = false;
+        }
+
+        await TagColorsChanged.InvokeAsync(TagColors);
+        await TagsChanged.InvokeAsync(Tags);
+        CloseColorPicker();
+    }
+}

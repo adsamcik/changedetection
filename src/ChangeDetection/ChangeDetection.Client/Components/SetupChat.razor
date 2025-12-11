@@ -1,0 +1,442 @@
+@using ChangeDetection.Shared.Dtos
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<div class="setup-chat-container">
+    @* Message History *@
+    <div class="message-history" @ref="_messageContainer">
+        @foreach (var message in _messagesSnapshot)
+        {
+            <div class="message @message.Role.ToLower()">
+                @if (message.Role == "user")
+                {
+                    <div class="message-content user-message">
+                        @message.Content
+                    </div>
+                }
+                else
+                {
+                    <div class="message-content assistant-message">
+                        @* Agent activity indicators *@
+                        @if (message.AgentChunks.Count > 0)
+                        {
+                            <div class="agent-activity">
+                                @foreach (var agentGroup in message.AgentChunks.GroupBy(c => c.AgentName))
+                                {
+                                    <div class="agent-section">
+                                        <div class="agent-header">
+                                            <span class="agent-icon">@GetAgentIcon(agentGroup.Key)</span>
+                                            <span class="agent-name">@GetAgentDisplayName(agentGroup.Key)</span>
+                                            @if (agentGroup.Any(c => c.Confidence.HasValue))
+                                            {
+                                                <span class="confidence">
+                                                    @(agentGroup.Where(c => c.Confidence.HasValue).Select(c => c.Confidence!.Value).Max().ToString("P0"))
+                                                </span>
+                                            }
+                                        </div>
+                                        
+                                        @* Collapsible thinking sections *@
+                                        @{ var thinkingChunks = agentGroup.Where(c => c.IsCollapsible).ToList(); }
+                                        @if (thinkingChunks.Count > 0)
+                                        {
+                                            <details class="thinking-section" open="@ShowThinking">
+                                                <summary>
+                                                    <span class="toggle-icon">🧠</span>
+                                                    Show thinking (@thinkingChunks.Count items)
+                                                </summary>
+                                                <div class="thinking-content">
+                                                    @foreach (var chunk in thinkingChunks)
+                                                    {
+                                                        <div class="thinking-item @chunk.ChunkType">
+                                                            @chunk.Content
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </details>
+                                        }
+                                        
+                                        @* Non-collapsible results *@
+                                        @foreach (var chunk in agentGroup.Where(c => !c.IsCollapsible))
+                                        {
+                                            <div class="result-chunk @chunk.ChunkType">
+                                                @if (chunk.ChunkType == "question")
+                                                {
+                                                    <div class="question-chunk">
+                                                        <span class="question-icon">❓</span>
+                                                        @((MarkupString)FormatMarkdown(chunk.Content))
+                                                    </div>
+                                                }
+                                                else if (chunk.ChunkType == "result")
+                                                {
+                                                    <div class="result-content">
+                                                        @((MarkupString)FormatMarkdown(chunk.Content))
+                                                    </div>
+                                                }
+                                                else if (chunk.ChunkType == "error")
+                                                {
+                                                    <div class="error-chunk">
+                                                        <span class="error-icon">⚠️</span>
+                                                        @chunk.Content
+                                                    </div>
+                                                }
+                                                else if (chunk.ChunkType == "validation")
+                                                {
+                                                    <div class="validation-chunk @(chunk.Confidence >= 0.5 ? "valid" : "invalid")">
+                                                        <span class="validation-icon">@(chunk.Confidence >= 0.5 ? "✅" : "❌")</span>
+                                                        @chunk.Content
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            @((MarkupString)FormatMarkdown(message.Content))
+                        }
+                    </div>
+                }
+            </div>
+        }
+        
+        @* Streaming indicator *@
+        @if (IsStreaming)
+        {
+            <div class="streaming-indicator">
+                <div class="agent-activity-live">
+                    @foreach (var agent in _activeAgentsSnapshot)
+                    {
+                        <span class="active-agent">
+                            <span class="agent-icon pulse">@GetAgentIcon(agent)</span>
+                            @GetAgentDisplayName(agent)
+                        </span>
+                    }
+                </div>
+                <span class="streaming-dots">
+                    <span>.</span><span>.</span><span>.</span>
+                </span>
+            </div>
+        }
+    </div>
+
+    @* Input Area *@
+    <div class="input-area">
+        <div class="input-controls">
+            <label class="show-thinking-toggle">
+                <input type="checkbox" @bind="ShowThinking" />
+                Show thinking
+            </label>
+        </div>
+        <div class="input-wrapper">
+            <textarea @ref="_inputElement"
+                      @bind="InputText"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      placeholder="@Placeholder"
+                      class="chat-input"
+                      rows="2"
+                      disabled="@(IsStreaming || !IsConnected)" />
+            <button class="send-button" 
+                    @onclick="SendMessage"
+                    disabled="@(IsStreaming || !IsConnected || string.IsNullOrWhiteSpace(InputText))">
+                @if (IsStreaming)
+                {
+                    <span class="spinner-small"></span>
+                }
+                else
+                {
+                    <span>Send</span>
+                }
+            </button>
+        </div>
+        @if (!IsConnected)
+        {
+            <div class="connection-status disconnected">
+                <span>⚠️ Connecting...</span>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(ConnectionError))
+        {
+            <div class="connection-status error">
+                <span>❌ @ConnectionError</span>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Placeholder { get; set; } = "Describe what you want to monitor...";
+    [Parameter] public EventCallback<SetupCompletedDto> OnSetupCompleted { get; set; }
+    [Parameter] public EventCallback<string> OnError { get; set; }
+    [Parameter] public string HubUrl { get; set; } = "/hubs/setup";
+    [Parameter] public string? InitialInput { get; set; }
+
+    private HubConnection? _hubConnection;
+    private ElementReference _inputElement;
+    private ElementReference _messageContainer;
+    private string InputText = "";
+    private bool IsStreaming;
+    private bool IsConnected;
+    private bool ShowThinking;
+    private Guid? SessionId;
+    private List<ChatMessage> Messages = [];
+    private List<ChatMessage> _messagesSnapshot = [];
+    private List<string> ActiveAgents = [];
+    private List<string> _activeAgentsSnapshot = [];
+    private ChatMessage? CurrentAssistantMessage;
+    private bool _initialInputSent;
+    private string? ConnectionError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ConnectToHub();
+    }
+
+    private async Task ConnectToHub()
+    {
+        // Build absolute URL for SignalR hub
+        var hubUrl = Navigation.ToAbsoluteUri(HubUrl).ToString();
+        
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(hubUrl)
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<AgentStreamChunkDto>("ReceiveChunk", OnChunkReceived);
+        _hubConnection.Reconnecting += _ =>
+        {
+            IsConnected = false;
+            StateHasChanged();
+            return Task.CompletedTask;
+        };
+        _hubConnection.Reconnected += _ =>
+        {
+            IsConnected = true;
+            StateHasChanged();
+            return Task.CompletedTask;
+        };
+
+        try
+        {
+            await _hubConnection.StartAsync();
+            IsConnected = true;
+            
+            // Start a new session
+            var response = await _hubConnection.InvokeAsync<StartSetupSessionResponse>("StartSession");
+            SessionId = response.SessionId;
+            
+            // Add welcome message
+            Messages.Add(new ChatMessage
+            {
+                Role = "assistant",
+                Content = "👋 Hi! I'll help you set up a website monitor. " +
+                         "Just paste a URL or describe what you'd like to track, and I'll guide you through the process."
+            });
+            _messagesSnapshot = [.. Messages];
+            
+            // If we have initial input from SmartInput, send it automatically
+            if (!string.IsNullOrWhiteSpace(InitialInput) && !_initialInputSent)
+            {
+                _initialInputSent = true;
+                InputText = InitialInput;
+                StateHasChanged();
+                await Task.Delay(100); // Brief delay so user sees their message
+                await SendMessage();
+            }
+        }
+        catch (Exception ex)
+        {
+            ConnectionError = $"Failed to connect: {ex.Message}";
+            await OnError.InvokeAsync(ConnectionError);
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessage();
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(InputText) || IsStreaming || !IsConnected || !SessionId.HasValue)
+            return;
+
+        var message = InputText.Trim();
+        InputText = "";
+
+        // Add user message
+        Messages.Add(new ChatMessage
+        {
+            Role = "user",
+            Content = message
+        });
+
+        // Prepare assistant message for streaming
+        CurrentAssistantMessage = new ChatMessage
+        {
+            Role = "assistant",
+            Content = "",
+            AgentChunks = []
+        };
+        Messages.Add(CurrentAssistantMessage);
+
+        IsStreaming = true;
+        ActiveAgents = [];
+        // Update snapshots for thread-safe rendering
+        _messagesSnapshot = [.. Messages];
+        _activeAgentsSnapshot = [];
+        StateHasChanged();
+
+        try
+        {
+            var request = new SendSetupMessageRequest
+            {
+                SessionId = SessionId.Value,
+                Message = message
+            };
+
+            // Stream responses from the hub
+            var stream = _hubConnection!.StreamAsync<AgentStreamChunkDto>("SendMessage", request);
+            
+            await foreach (var chunk in stream)
+            {
+                OnChunkReceived(chunk);
+                StateHasChanged();
+                await ScrollToBottom();
+            }
+
+            // Check for completion
+            if (CurrentAssistantMessage.AgentChunks.Any(c => 
+                c.ChunkType == ChunkTypeNames.Completed && 
+                c.AgentName == AgentNamesDtos.Synthesis))
+            {
+                // Session might be complete - check state
+                var state = await _hubConnection!.InvokeAsync<SetupSessionStateDto?>("GetSessionState", SessionId);
+                if (state?.Stage == "Completed")
+                {
+                    var completed = new SetupCompletedDto
+                    {
+                        SessionId = SessionId.Value,
+                        Configuration = state.Configuration
+                    };
+                    await OnSetupCompleted.InvokeAsync(completed);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CurrentAssistantMessage.AgentChunks.Add(new AgentStreamChunkDto
+            {
+                AgentName = "system",
+                ChunkType = ChunkTypeNames.Error,
+                Content = $"Error: {ex.Message}",
+                Timestamp = DateTimeOffset.UtcNow
+            });
+        }
+        finally
+        {
+            IsStreaming = false;
+            ActiveAgents = [];
+            _activeAgentsSnapshot = [];
+            CurrentAssistantMessage = null;
+            _messagesSnapshot = [.. Messages];
+            StateHasChanged();
+        }
+    }
+
+    private void OnChunkReceived(AgentStreamChunkDto chunk)
+    {
+        if (CurrentAssistantMessage == null)
+            return;
+
+        CurrentAssistantMessage.AgentChunks.Add(chunk);
+
+        // Update active agents
+        if (chunk.ChunkType == ChunkTypeNames.Started)
+        {
+            if (!ActiveAgents.Contains(chunk.AgentName))
+                ActiveAgents.Add(chunk.AgentName);
+        }
+        else if (chunk.ChunkType == ChunkTypeNames.Completed)
+        {
+            ActiveAgents.Remove(chunk.AgentName);
+        }
+        
+        // Update snapshots for thread-safe rendering
+        _messagesSnapshot = [.. Messages];
+        _activeAgentsSnapshot = [.. ActiveAgents];
+    }
+
+    private async Task ScrollToBottom()
+    {
+        // JavaScript interop would go here for scrolling
+        await Task.CompletedTask;
+    }
+
+    private static string GetAgentIcon(string agentName) => agentName switch
+    {
+        AgentNamesDtos.UrlExtraction or "url-extraction" => "🔗",
+        AgentNamesDtos.ContentAnalysis or "content-analysis" => "🔍",
+        AgentNamesDtos.SelectorGeneration or "selector-generation" => "🎯",
+        AgentNamesDtos.Validation or "validation" => "✔️",
+        AgentNamesDtos.Synthesis or "synthesis" => "🧩",
+        AgentNamesDtos.Resolution or "resolution" => "⚖️",
+        _ => "🤖"
+    };
+
+    private static string GetAgentDisplayName(string agentName) => agentName switch
+    {
+        AgentNamesDtos.UrlExtraction or "url-extraction" => "URL Detection",
+        AgentNamesDtos.ContentAnalysis or "content-analysis" => "Content Analysis",
+        AgentNamesDtos.SelectorGeneration or "selector-generation" => "Selector Generation",
+        AgentNamesDtos.Validation or "validation" => "Validation",
+        AgentNamesDtos.Synthesis or "synthesis" => "Summary",
+        AgentNamesDtos.Resolution or "resolution" => "Conflict Resolution",
+        _ => agentName
+    };
+
+    private static string FormatMarkdown(string content)
+    {
+        if (string.IsNullOrEmpty(content))
+            return content;
+
+        // Basic markdown formatting
+        var result = content
+            .Replace("**", "<strong>").Replace("**", "</strong>")
+            .Replace("*", "<em>").Replace("*", "</em>")
+            .Replace("`", "<code>").Replace("`", "</code>")
+            .Replace("\n", "<br />");
+
+        return result;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            if (SessionId.HasValue)
+            {
+                try
+                {
+                    await _hubConnection.InvokeAsync("EndSession", SessionId.Value);
+                }
+                catch { }
+            }
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    private class ChatMessage
+    {
+        public string Role { get; set; } = "";
+        public string Content { get; set; } = "";
+        public List<AgentStreamChunkDto> AgentChunks { get; set; } = [];
+    }
+}

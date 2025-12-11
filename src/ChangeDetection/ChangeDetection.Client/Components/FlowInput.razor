@@ -1,0 +1,244 @@
+@using System.Text.RegularExpressions
+@using ChangeDetection.Shared.Dtos
+
+<div class="flow-input">
+    <div class="flow-input-question">
+        @Question
+    </div>
+
+    @if (_parsedInputType == ParsedInputType.Binary)
+    {
+        <div class="flow-input-binary">
+            @foreach (var option in _binaryOptions)
+            {
+                <button class="choice-button @(option == _binaryOptions[0] ? "primary" : "secondary")"
+                        @onclick="() => SubmitResponse(option.Value)"
+                        disabled="@IsProcessing">
+                    @option.Label
+                </button>
+            }
+        </div>
+    }
+    else if (_parsedInputType == ParsedInputType.MultiChoice)
+    {
+        <div class="flow-input-choices">
+            @foreach (var option in _selectOptions)
+            {
+                <button class="choice-card @(_selectedOption == option ? "selected" : "") @(option.IsRecommended ? "recommended" : "")"
+                        @onclick="() => SelectOption(option)"
+                        disabled="@IsProcessing">
+                    <span class="choice-text">@option.Label</span>
+                    @if (option.IsRecommended)
+                    {
+                        <span class="choice-recommended">Recommended</span>
+                    }
+                    @if (_selectedOption == option)
+                    {
+                        <span class="choice-check">✓</span>
+                    }
+                </button>
+            }
+        </div>
+        @if (_selectedOption is not null)
+        {
+            <button class="btn-confirm" @onclick="ConfirmSelection" disabled="@IsProcessing">
+                Confirm Selection
+            </button>
+        }
+    }
+    else
+    {
+        @* Default to freetext input *@
+        <div class="flow-input-freetext">
+            <textarea @bind="_freetextValue"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      placeholder="Type your response..."
+                      rows="3"
+                      disabled="@IsProcessing"></textarea>
+            <button class="btn-send" 
+                    @onclick="SubmitFreetext"
+                    disabled="@(IsProcessing || string.IsNullOrWhiteSpace(_freetextValue))">
+                @if (IsProcessing)
+                {
+                    <span class="spinner-small"></span>
+                }
+                else
+                {
+                    <span>Send</span>
+                }
+            </button>
+        </div>
+    }
+
+    @* Always show option to type custom response for non-freetext modes *@
+    @if (_parsedInputType != ParsedInputType.Freetext && !_showCustomInput)
+    {
+        <button class="btn-link" @onclick="ShowCustomInput">
+            Type something else...
+        </button>
+    }
+
+    @if (_showCustomInput && _parsedInputType != ParsedInputType.Freetext)
+    {
+        <div class="flow-input-custom">
+            <textarea @bind="_customValue"
+                      @bind:event="oninput"
+                      placeholder="Type your custom response..."
+                      rows="2"
+                      disabled="@IsProcessing"></textarea>
+            <div class="custom-actions">
+                <button class="btn-cancel" @onclick="HideCustomInput">Cancel</button>
+                <button class="btn-send" 
+                        @onclick="SubmitCustom"
+                        disabled="@(IsProcessing || string.IsNullOrWhiteSpace(_customValue))">
+                    Send
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Question { get; set; }
+    [Parameter] public string? InputType { get; set; }
+    [Parameter] public List<FlowOption>? Options { get; set; }
+    [Parameter] public EventCallback<string> OnResponse { get; set; }
+    [Parameter] public bool IsProcessing { get; set; }
+
+    private ParsedInputType _parsedInputType = ParsedInputType.Freetext;
+    private List<FlowOption> _binaryOptions = [new("Yes", "yes"), new("No", "no")];
+    private List<FlowOption> _selectOptions = [];
+    private FlowOption? _selectedOption;
+    private string _freetextValue = "";
+    private string _customValue = "";
+    private bool _showCustomInput;
+
+    private enum ParsedInputType
+    {
+        Binary,
+        MultiChoice,
+        Freetext
+    }
+
+    protected override void OnParametersSet()
+    {
+        ParseInputType();
+    }
+
+    private void ParseInputType()
+    {
+        // First, use provided Options if available
+        if (Options is { Count: > 0 })
+        {
+            if (Options.Count == 2)
+            {
+                _parsedInputType = ParsedInputType.Binary;
+                _binaryOptions = Options;
+            }
+            else
+            {
+                _parsedInputType = ParsedInputType.MultiChoice;
+                _selectOptions = Options;
+            }
+            return;
+        }
+
+        // Fall back to parsing markers from InputType or Question
+        var textToParse = InputType ?? Question ?? "";
+
+        // Check for [YES/NO] marker
+        if (Regex.IsMatch(textToParse, @"\[YES\s*/\s*NO\]", RegexOptions.IgnoreCase))
+        {
+            _parsedInputType = ParsedInputType.Binary;
+            _binaryOptions = [new("Yes", "yes"), new("No", "no")];
+            return;
+        }
+
+        // Check for [SELECT: option1, option2, ...] marker
+        var selectMatch = Regex.Match(textToParse, @"\[SELECT:\s*([^\]]+)\]", RegexOptions.IgnoreCase);
+        if (selectMatch.Success)
+        {
+            _parsedInputType = ParsedInputType.MultiChoice;
+            _selectOptions = selectMatch.Groups[1].Value
+                .Split(',')
+                .Select(o => o.Trim())
+                .Where(o => !string.IsNullOrEmpty(o))
+                .Select(o => new FlowOption(o, o.ToLowerInvariant()))
+                .ToList();
+            return;
+        }
+
+        // Check for [CONFIRM/MODIFY] marker (common pattern)
+        if (Regex.IsMatch(textToParse, @"\[CONFIRM\s*/\s*MODIFY\]", RegexOptions.IgnoreCase))
+        {
+            _parsedInputType = ParsedInputType.Binary;
+            _binaryOptions = [new("Confirm", "confirm"), new("Modify", "modify")];
+            return;
+        }
+
+        // Default to freetext
+        _parsedInputType = ParsedInputType.Freetext;
+    }
+
+    private async Task SubmitResponse(string response)
+    {
+        if (OnResponse.HasDelegate)
+        {
+            await OnResponse.InvokeAsync(response);
+        }
+    }
+
+    private void SelectOption(FlowOption option)
+    {
+        _selectedOption = option;
+    }
+
+    private async Task ConfirmSelection()
+    {
+        if (_selectedOption is not null)
+        {
+            await SubmitResponse(_selectedOption.Value);
+        }
+    }
+
+    private async Task SubmitFreetext()
+    {
+        if (!string.IsNullOrWhiteSpace(_freetextValue))
+        {
+            var value = _freetextValue;
+            _freetextValue = "";
+            await SubmitResponse(value);
+        }
+    }
+
+    private async Task SubmitCustom()
+    {
+        if (!string.IsNullOrWhiteSpace(_customValue))
+        {
+            var value = _customValue;
+            _customValue = "";
+            _showCustomInput = false;
+            await SubmitResponse(value);
+        }
+    }
+
+    private void ShowCustomInput()
+    {
+        _showCustomInput = true;
+    }
+
+    private void HideCustomInput()
+    {
+        _showCustomInput = false;
+        _customValue = "";
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SubmitFreetext();
+        }
+    }
+}

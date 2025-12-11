@@ -1,0 +1,180 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="ambiguous-identity-resolver">
+    @if (AmbiguousIdentities.Count == 0)
+    {
+        <div class="no-conflicts">
+            <p>✅ No identity conflicts to resolve.</p>
+        </div>
+    }
+    else
+    {
+        <div class="conflicts-header">
+            <h4>⚠️ Ambiguous Identities (@AmbiguousIdentities.Count)</h4>
+            <p class="conflicts-description">
+                These items have the same identity values but different content. 
+                This may indicate the identity fields need adjustment.
+            </p>
+        </div>
+
+        <div class="conflicts-list">
+            @foreach (var conflict in AmbiguousIdentities)
+            {
+                <div class="conflict-card">
+                    <div class="conflict-header">
+                        <span class="identity-badge">Identity: @conflict.Identity</span>
+                        <span class="match-count">
+                            @conflict.PreviousMatches.Count previous × 
+                            @conflict.CurrentMatches.Count current
+                        </span>
+                    </div>
+
+                    <div class="conflict-comparison">
+                        <div class="conflict-column previous">
+                            <h5>Previous Snapshot</h5>
+                            @foreach (var obj in conflict.PreviousMatches)
+                            {
+                                <div class="object-preview">
+                                    @foreach (var field in obj.Fields.Take(5))
+                                    {
+                                        <div class="field-row">
+                                            <span class="field-name">@field.Key:</span>
+                                            <span class="field-value">@TruncateValue(field.Value)</span>
+                                        </div>
+                                    }
+                                    @if (obj.Fields.Count > 5)
+                                    {
+                                        <div class="more-fields">+@(obj.Fields.Count - 5) more fields</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="conflict-column current">
+                            <h5>Current Snapshot</h5>
+                            @foreach (var obj in conflict.CurrentMatches)
+                            {
+                                <div class="object-preview">
+                                    @foreach (var field in obj.Fields.Take(5))
+                                    {
+                                        <div class="field-row">
+                                            <span class="field-name">@field.Key:</span>
+                                            <span class="field-value">@TruncateValue(field.Value)</span>
+                                        </div>
+                                    }
+                                    @if (obj.Fields.Count > 5)
+                                    {
+                                        <div class="more-fields">+@(obj.Fields.Count - 5) more fields</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(conflict.SuggestedResolution))
+                    {
+                        <div class="suggested-resolution">
+                            <span class="suggestion-label">🤖 Suggestion:</span>
+                            <span class="suggestion-text">@conflict.SuggestedResolution</span>
+                        </div>
+                    }
+
+                    <div class="conflict-actions">
+                        <label class="resolution-option">
+                            <input type="radio" 
+                                   name="@($"resolution-{conflict.Identity}")"
+                                   checked="@(GetResolution(conflict.Identity) == TreatAsDifferent)"
+                                   @onchange="@(() => SetResolution(conflict.Identity, TreatAsDifferent))" />
+                            <span>Treat as different items (add more identity fields)</span>
+                        </label>
+                        <label class="resolution-option">
+                            <input type="radio" 
+                                   name="@($"resolution-{conflict.Identity}")"
+                                   checked="@(GetResolution(conflict.Identity) == TreatAsSame)"
+                                   @onchange="@(() => SetResolution(conflict.Identity, TreatAsSame))" />
+                            <span>Treat as same item (use first match)</span>
+                        </label>
+                        <label class="resolution-option">
+                            <input type="radio" 
+                                   name="@($"resolution-{conflict.Identity}")"
+                                   checked="@(GetResolution(conflict.Identity) == Ignore)"
+                                   @onchange="@(() => SetResolution(conflict.Identity, Ignore))" />
+                            <span>Ignore this conflict</span>
+                        </label>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="resolver-summary">
+            <p>
+                <strong>Resolutions:</strong>
+                @GetResolutionSummary()
+            </p>
+            <div class="resolver-actions">
+                <button class="apply-btn" @onclick="ApplyResolutions">Apply Resolutions</button>
+                <button class="suggest-fields-btn" @onclick="SuggestIdentityFields">🤖 Suggest Better Identity Fields</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<AmbiguousIdentityDto> AmbiguousIdentities { get; set; } = [];
+    [Parameter] public EventCallback<List<IdentityResolutionDto>> OnResolutionsApplied { get; set; }
+    [Parameter] public EventCallback OnSuggestIdentityFields { get; set; }
+
+    private const string TreatAsDifferent = "treat-as-different";
+    private const string TreatAsSame = "treat-as-same";
+    private const string Ignore = "ignore";
+
+    private Dictionary<string, string> resolutions = new();
+
+    private string GetResolution(string identity)
+    {
+        return resolutions.TryGetValue(identity, out var resolution) ? resolution : TreatAsDifferent;
+    }
+
+    private void SetResolution(string identity, string resolution)
+    {
+        resolutions[identity] = resolution;
+    }
+
+    private string GetResolutionSummary()
+    {
+        var different = resolutions.Count(r => r.Value == TreatAsDifferent);
+        var same = resolutions.Count(r => r.Value == TreatAsSame);
+        var ignored = resolutions.Count(r => r.Value == Ignore);
+        var unresolved = AmbiguousIdentities.Count - resolutions.Count;
+
+        var parts = new List<string>();
+        if (different > 0) parts.Add($"{different} as different");
+        if (same > 0) parts.Add($"{same} as same");
+        if (ignored > 0) parts.Add($"{ignored} ignored");
+        if (unresolved > 0) parts.Add($"{unresolved} pending");
+
+        return string.Join(", ", parts);
+    }
+
+    private async Task ApplyResolutions()
+    {
+        var resolutionList = AmbiguousIdentities.Select(ai => new IdentityResolutionDto
+        {
+            Identity = ai.Identity,
+            Resolution = GetResolution(ai.Identity)
+        }).ToList();
+
+        await OnResolutionsApplied.InvokeAsync(resolutionList);
+    }
+
+    private async Task SuggestIdentityFields()
+    {
+        await OnSuggestIdentityFields.InvokeAsync();
+    }
+
+    private static string TruncateValue(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(empty)";
+        return value.Length > 50 ? value[..47] + "..." : value;
+    }
+}

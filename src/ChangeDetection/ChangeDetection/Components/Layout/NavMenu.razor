@@ -1,4 +1,8 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@using System.Net.Http.Json
+@using ChangeDetection.Shared.Dtos
+@inject HttpClient Http
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">ChangeDetection</a>
     </div>
@@ -14,6 +18,31 @@
             </NavLink>
         </div>
 
+        @* Saved Views *@
+        @if (views.Any())
+        {
+            <div class="nav-section-header px-3">
+                <span>Views</span>
+            </div>
+            @foreach (var view in views)
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link view-link" href="@($"/{view.Id}")">
+                        <span class="view-icon" aria-hidden="true">@(view.Icon ?? "📋")</span> 
+                        @view.Name
+                        @if (view.IsBuiltIn)
+                        {
+                            <span class="built-in-badge" title="Built-in view">🔒</span>
+                        }
+                    </NavLink>
+                </div>
+            }
+        }
+
+        <div class="nav-section-header px-3">
+            <span>Actions</span>
+        </div>
+
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="watches/new">
                 <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Add Watch
@@ -27,4 +56,26 @@
         </div>
     </nav>
 </div>
+
+@code {
+    private List<ViewDto> views = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadViews();
+    }
+
+    private async Task LoadViews()
+    {
+        try
+        {
+            views = await Http.GetFromJsonAsync<List<ViewDto>>("/api/views") ?? [];
+        }
+        catch
+        {
+            // Silent fail, views are optional
+            views = [];
+        }
+    }
+}
 

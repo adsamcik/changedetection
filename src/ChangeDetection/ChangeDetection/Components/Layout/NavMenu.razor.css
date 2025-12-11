@@ -103,3 +103,31 @@
         overflow-y: auto;
     }
 }
+
+/* Views Section */
+.nav-section-header {
+    padding-top: 1rem;
+    padding-bottom: 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.view-link {
+    position: relative;
+}
+
+.view-icon {
+    display: inline-block;
+    width: 1.25rem;
+    margin-right: 0.5rem;
+    text-align: center;
+}
+
+.built-in-badge {
+    font-size: 0.625rem;
+    margin-left: auto;
+    opacity: 0.7;
+}

@@ -1,0 +1,14 @@
+@page "/setup"
+@page "/setup/{SessionId:guid}"
+@layout EmptyLayout
+@rendermode InteractiveWebAssembly
+
+<ChangeDetection.Client.Pages.SetupFlow SessionId="@SessionId" InitialInput="@InitialInput" />
+
+@code {
+    [Parameter]
+    public Guid? SessionId { get; set; }
+
+    [SupplyParameterFromQuery]
+    public string? InitialInput { get; set; }
+}

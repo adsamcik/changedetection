@@ -1,0 +1,117 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="state-timeline">
+    @if (Entries.Count == 0)
+    {
+        <div class="timeline-empty">
+            <span class="empty-icon">🔄</span>
+            <span>Waiting to start...</span>
+        </div>
+    }
+    else
+    {
+        @* Render entries in reverse order so newest is at bottom (visually centered) *@
+        @foreach (var entry in Entries)
+        {
+            <div class="timeline-entry @GetStatusClass(entry.Status) @(entry.IsCurrentState ? "current" : "")">
+                <span class="timeline-icon">@GetStatusIcon(entry.Status)</span>
+                <div class="timeline-content">
+                    <span class="timeline-summary">@entry.Summary</span>
+                    @if (!string.IsNullOrEmpty(entry.Details) && entry.Status is FlowStateStatus.Failed or FlowStateStatus.Recovery)
+                    {
+                        <span class="timeline-details">@TruncateDetails(entry.Details)</span>
+                    }
+                </div>
+                <span class="timeline-time">@FormatTime(entry.Timestamp)</span>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public List<FlowStateEntry> Entries { get; set; } = [];
+
+    private static string GetStatusIcon(FlowStateStatus status) => status switch
+    {
+        FlowStateStatus.InProgress => "→",
+        FlowStateStatus.Completed => "✓",
+        FlowStateStatus.Failed => "✗",
+        FlowStateStatus.Recovery => "⟳",
+        FlowStateStatus.Question => "❓",
+        _ => "•"
+    };
+
+    private static string GetStatusClass(FlowStateStatus status) => status switch
+    {
+        FlowStateStatus.InProgress => "in-progress",
+        FlowStateStatus.Completed => "completed",
+        FlowStateStatus.Failed => "failed",
+        FlowStateStatus.Recovery => "recovery",
+        FlowStateStatus.Question => "question",
+        _ => ""
+    };
+
+    private static string TruncateDetails(string details, int maxLength = 50)
+    {
+        if (string.IsNullOrEmpty(details) || details.Length <= maxLength)
+            return details;
+        return details[..maxLength] + "...";
+    }
+
+    private static string FormatTime(DateTimeOffset timestamp)
+    {
+        var elapsed = DateTimeOffset.UtcNow - timestamp;
+        
+        if (elapsed.TotalSeconds < 5)
+            return "now";
+        if (elapsed.TotalSeconds < 60)
+            return $"{(int)elapsed.TotalSeconds}s ago";
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        
+        return timestamp.ToLocalTime().ToString("HH:mm");
+    }
+
+    /// <summary>
+    /// Creates a summary one-liner for a pipeline stage.
+    /// Called by the hub to generate user-friendly summaries.
+    /// </summary>
+    public static string CreateStageSummary(string stage, string? detail = null) => stage switch
+    {
+        "UrlExtraction" when detail != null => $"URL: {TruncateUrl(detail)}",
+        "UrlExtraction" => "Extracting URL...",
+        "ContentFetching" => "Fetching page content...",
+        "ContentAnalysis" when detail != null => $"Page type: {detail}",
+        "ContentAnalysis" => "Analyzing content...",
+        "SelectorGeneration" when detail != null => $"{detail} selectors generated",
+        "SelectorGeneration" => "Generating selectors...",
+        "SelectorValidation" => "Validating selectors...",
+        "Recovery" when detail != null => $"Troubleshooting: {TruncateDetails(detail)}",
+        "Recovery" => "Attempting recovery...",
+        "Confirmation" => "Ready for confirmation",
+        "Complete" => "Watch created successfully",
+        "Failed" when detail != null => $"Failed: {TruncateDetails(detail)}",
+        "Failed" => "Setup failed",
+        _ => stage
+    };
+
+    private static string TruncateUrl(string url, int maxLength = 35)
+    {
+        if (string.IsNullOrEmpty(url) || url.Length <= maxLength)
+            return url;
+        
+        // Try to keep the domain visible
+        try
+        {
+            var uri = new Uri(url);
+            var domain = uri.Host;
+            if (domain.Length < maxLength - 3)
+            {
+                return domain + "/...";
+            }
+        }
+        catch { /* Ignore URI parsing errors */ }
+        
+        return url[..maxLength] + "...";
+    }
+}

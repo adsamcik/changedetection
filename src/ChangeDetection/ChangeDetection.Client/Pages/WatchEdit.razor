@@ -1,5 +1,6 @@
 @page "/watches/new"
 @page "/watches/{Id}/edit"
+@rendermode InteractiveWebAssembly
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -49,6 +50,21 @@
                     <label for="title">Title (optional)</label>
                     <InputText id="title" @bind-Value="model.Title" class="form-control" placeholder="My Watch" />
                     <p class="form-hint">A friendly name for this watch. If empty, the domain will be used.</p>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>Organization</h2>
+                <p class="section-description">Organize this watch with categories and tags for easier management.</p>
+
+                <div class="form-group">
+                    <CategorySelector @bind-SelectedCategoryId="model.CategoryId" Label="Category" />
+                </div>
+
+                <div class="form-group">
+                    <label>Tags</label>
+                    <TagInput @bind-Tags="tagsList" @bind-TagColors="tagColorsDictionary" />
+                    <p class="form-hint">Add descriptive tags to help organize and filter your watches.</p>
                 </div>
             </section>
 
@@ -172,6 +188,22 @@
                     </div>
                 }
 
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.NotificationSettings.DiscordEnabled" />
+                        <span>Send Discord notifications</span>
+                    </label>
+                </div>
+
+                @if (model.NotificationSettings.DiscordEnabled)
+                {
+                    <div class="form-group">
+                        <label for="discordWebhookUrl">Discord Webhook URL</label>
+                        <InputText id="discordWebhookUrl" @bind-Value="model.NotificationSettings.DiscordWebhookUrl" class="form-control" placeholder="https://discord.com/api/webhooks/..." />
+                        <small class="form-text">Create a webhook in Discord: Server Settings → Integrations → Webhooks</small>
+                    </div>
+                }
+
                 <div class="form-group">
                     <label for="minImportance">Minimum Importance to Notify</label>
                     <InputSelect id="minImportance" @bind-Value="model.NotificationSettings.MinimumImportanceToNotify" class="form-control">
@@ -229,6 +261,8 @@
     private string checkIntervalUnit = "minutes";
     private string ignorePatternsText = "";
     private string emailRecipientsText = "";
+    private List<TagDto> tagsList = [];
+    private Dictionary<string, string> tagColorsDictionary = [];
     private bool isLoading = false;
     private bool isSubmitting = false;
     private string? errorMessage;
@@ -275,6 +309,8 @@
                             EmailRecipients = watch.NotificationSettings?.EmailRecipients ?? new(),
                             WebhookEnabled = watch.NotificationSettings?.WebhookEnabled ?? false,
                             WebhookUrl = watch.NotificationSettings?.WebhookUrl,
+                            DiscordEnabled = watch.NotificationSettings?.DiscordEnabled ?? false,
+                            DiscordWebhookUrl = watch.NotificationSettings?.DiscordWebhookUrl,
                             MinimumImportanceToNotify = watch.NotificationSettings?.MinimumImportanceToNotify ?? "Medium"
                         }
                     };
@@ -299,6 +335,15 @@
 
                     ignorePatternsText = string.Join("\n", watch.IgnorePatterns ?? new());
                     emailRecipientsText = string.Join(", ", watch.NotificationSettings?.EmailRecipients ?? new());
+                    
+                    // Set tags and category
+                    tagsList = watch.Tags?.ToList() ?? [];
+                    model.CategoryId = watch.CategoryId;
+
+                    // Build tag colors dictionary from tags that have overrides
+                    tagColorsDictionary = tagsList
+                        .Where(t => t.IsColorOverridden && !string.IsNullOrEmpty(t.Color))
+                        .ToDictionary(t => t.Name, t => t.Color);
                 }
             }
         }
@@ -336,6 +381,10 @@
                 .Select(e => e.Trim())
                 .Where(e => !string.IsNullOrEmpty(e))
                 .ToList();
+
+            // Set tags and tag colors
+            model.Tags = tagsList.Select(t => t.Name).ToList();
+            model.TagColors = tagColorsDictionary;
 
             HttpResponseMessage response;
             if (IsEditMode)

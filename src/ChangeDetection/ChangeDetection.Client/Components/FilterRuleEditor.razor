@@ -1,0 +1,323 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="filter-rule-editor">
+    <div class="filter-header">
+        <h4>🔍 Filter Rules</h4>
+        <button class="add-rule-btn" @onclick="AddRule">+ Add Rule</button>
+    </div>
+
+    @if (Rules.Count == 0)
+    {
+        <div class="no-rules">
+            <p>No filter rules defined. Rules let you suppress, tag, or route notifications based on object properties.</p>
+        </div>
+    }
+    else
+    {
+        <div class="rules-list">
+            @foreach (var rule in Rules)
+            {
+                <div class="rule-card @(rule.IsEnabled ? "" : "disabled")">
+                    <div class="rule-header">
+                        <input type="text" 
+                               class="rule-name"
+                               value="@rule.Name"
+                               placeholder="Rule name..."
+                               @onchange="@(e => HandleRuleName(rule, e))" />
+                        <div class="rule-controls">
+                            <label class="toggle">
+                                <input type="checkbox" 
+                                       checked="@rule.IsEnabled"
+                                       @onchange="@(e => HandleRuleToggle(rule, e))" />
+                                <span>Enabled</span>
+                            </label>
+                            <button class="delete-btn" @onclick="() => RemoveRule(rule)" title="Delete rule">🗑️</button>
+                        </div>
+                    </div>
+
+                    <div class="conditions-section">
+                        <div class="section-header">
+                            <span>When</span>
+                            <select class="logic-select" 
+                                    value="@rule.Logic"
+                                    @onchange="@(e => HandleLogicChange(rule, e))">
+                                <option value="All">ALL conditions match</option>
+                                <option value="Any">ANY condition matches</option>
+                            </select>
+                        </div>
+
+                        <div class="conditions-list">
+                            @foreach (var condition in rule.Conditions)
+                            {
+                                <div class="condition-row">
+                                    <select class="field-select"
+                                            value="@condition.FieldName"
+                                            @onchange="@(e => HandleConditionField(condition, e))">
+                                        <option value="">Select field...</option>
+                                        @foreach (var field in AvailableFields)
+                                        {
+                                            <option value="@field">@field</option>
+                                        }
+                                    </select>
+
+                                    <select class="operator-select"
+                                            value="@condition.Operator"
+                                            @onchange="@(e => HandleConditionOperator(condition, e))">
+                                        @foreach (var op in Operators)
+                                        {
+                                            <option value="@op.Key">@op.Value</option>
+                                        }
+                                    </select>
+
+                                    <input type="text" 
+                                           class="value-input"
+                                           value="@condition.Value"
+                                           placeholder="Value..."
+                                           @onchange="@(e => HandleConditionValue(condition, e))" />
+
+                                    <button class="remove-condition" @onclick="() => RemoveCondition(rule, condition)">×</button>
+                                </div>
+                            }
+                        </div>
+
+                        <button class="add-condition-btn" @onclick="() => AddCondition(rule)">+ Add condition</button>
+                    </div>
+
+                    <div class="actions-section">
+                        <div class="section-header">
+                            <span>Then</span>
+                        </div>
+
+                        <div class="actions-list">
+                            @foreach (var action in rule.Actions)
+                            {
+                                <div class="action-row">
+                                    <select class="action-type-select"
+                                            value="@action.Type"
+                                            @onchange="@(e => HandleActionType(action, e))">
+                                        @foreach (var actionType in ActionTypes)
+                                        {
+                                            <option value="@actionType.Key">@actionType.Value</option>
+                                        }
+                                    </select>
+
+                                    @if (action.Type == "AddTag")
+                                    {
+                                        <input type="text" 
+                                               class="action-value-input"
+                                               value="@(action.Parameters.GetValueOrDefault("tag", ""))"
+                                               placeholder="Tag name..."
+                                               @onchange="@(e => HandleTagParameter(action, e))" />
+                                    }
+                                    else if (action.Type == "SetImportance")
+                                    {
+                                        <select class="importance-select"
+                                                value="@(action.Parameters.GetValueOrDefault("importance", "Medium"))"
+                                                @onchange="@(e => HandleImportanceParameter(action, e))">
+                                            <option value="Low">Low</option>
+                                            <option value="Medium">Medium</option>
+                                            <option value="High">High</option>
+                                            <option value="Critical">Critical</option>
+                                        </select>
+                                    }
+                                    else if (action.Type == "RouteToChannel")
+                                    {
+                                        <select class="channel-select"
+                                                value="@(action.Parameters.GetValueOrDefault("channel", ""))"
+                                                @onchange="@(e => HandleChannelParameter(action, e))">
+                                            <option value="">Select channel...</option>
+                                            @foreach (var channel in AvailableChannels)
+                                            {
+                                                <option value="@channel">@channel</option>
+                                            }
+                                        </select>
+                                    }
+
+                                    <button class="remove-action" @onclick="() => RemoveAction(rule, action)">×</button>
+                                </div>
+                            }
+                        </div>
+
+                        <button class="add-action-btn" @onclick="() => AddAction(rule)">+ Add action</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<FilterRuleDto> Rules { get; set; } = [];
+    [Parameter] public EventCallback<List<FilterRuleDto>> RulesChanged { get; set; }
+    
+    [Parameter] public List<string> AvailableFields { get; set; } = [];
+    [Parameter] public List<string> AvailableChannels { get; set; } = [];
+
+    private static readonly Dictionary<string, string> Operators = new()
+    {
+        ["Contains"] = "contains",
+        ["NotContains"] = "does not contain",
+        ["Equals"] = "equals",
+        ["NotEquals"] = "does not equal",
+        ["StartsWith"] = "starts with",
+        ["EndsWith"] = "ends with",
+        ["GreaterThan"] = "greater than",
+        ["LessThan"] = "less than",
+        ["IsEmpty"] = "is empty",
+        ["IsNotEmpty"] = "is not empty",
+        ["MatchesRegex"] = "matches regex",
+        ["DateBefore"] = "date before",
+        ["DateAfter"] = "date after"
+    };
+
+    private static readonly Dictionary<string, string> ActionTypes = new()
+    {
+        ["SuppressNotification"] = "Suppress notification",
+        ["AddTag"] = "Add tag",
+        ["SetImportance"] = "Set importance",
+        ["RouteToChannel"] = "Route to channel"
+    };
+
+    private async Task AddRule()
+    {
+        var newRule = new FilterRuleDto
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = $"Rule {Rules.Count + 1}",
+            IsEnabled = true,
+            Logic = "And",
+            Conditions = [],
+            Actions = []
+        };
+        Rules.Add(newRule);
+        await NotifyChanged();
+    }
+
+    private async Task RemoveRule(FilterRuleDto rule)
+    {
+        Rules.Remove(rule);
+        await NotifyChanged();
+    }
+
+    private async Task ToggleRule(FilterRuleDto rule, bool enabled)
+    {
+        rule.IsEnabled = enabled;
+        await NotifyChanged();
+    }
+
+    private async Task UpdateRuleName(FilterRuleDto rule, string name)
+    {
+        rule.Name = name;
+        await NotifyChanged();
+    }
+
+    private async Task UpdateLogic(FilterRuleDto rule, string logic)
+    {
+        rule.Logic = logic;
+        await NotifyChanged();
+    }
+
+    private async Task AddCondition(FilterRuleDto rule)
+    {
+        rule.Conditions.Add(new FilterConditionDto
+        {
+            FieldName = "",
+            Operator = "Contains",
+            Value = ""
+        });
+        await NotifyChanged();
+    }
+
+    private async Task RemoveCondition(FilterRuleDto rule, FilterConditionDto condition)
+    {
+        rule.Conditions.Remove(condition);
+        await NotifyChanged();
+    }
+
+    private async Task UpdateConditionField(FilterConditionDto condition, string field)
+    {
+        condition.FieldName = field;
+        await NotifyChanged();
+    }
+
+    private async Task UpdateConditionOperator(FilterConditionDto condition, string op)
+    {
+        condition.Operator = op;
+        await NotifyChanged();
+    }
+
+    private async Task UpdateConditionValue(FilterConditionDto condition, string value)
+    {
+        condition.Value = value;
+        await NotifyChanged();
+    }
+
+    private async Task AddAction(FilterRuleDto rule)
+    {
+        rule.Actions.Add(new FilterActionDto
+        {
+            Type = "AddTag",
+            Parameters = new Dictionary<string, string>()
+        });
+        await NotifyChanged();
+    }
+
+    private async Task RemoveAction(FilterRuleDto rule, FilterActionDto action)
+    {
+        rule.Actions.Remove(action);
+        await NotifyChanged();
+    }
+
+    private async Task UpdateActionType(FilterActionDto action, string type)
+    {
+        action.Type = type;
+        action.Parameters = type switch
+        {
+            "SuppressNotification" => [],
+            "SetImportance" => new Dictionary<string, string> { ["importance"] = "Medium" },
+            "AddTag" => new Dictionary<string, string> { ["tag"] = "" },
+            "RouteToChannel" => new Dictionary<string, string> { ["channel"] = "" },
+            _ => []
+        };
+        await NotifyChanged();
+    }
+
+    private async Task UpdateActionParameter(FilterActionDto action, string key, string value)
+    {
+        action.Parameters[key] = value;
+        await NotifyChanged();
+    }
+
+    // Handler wrapper methods for Razor event binding
+    private Task HandleRuleName(FilterRuleDto rule, ChangeEventArgs e) 
+        => UpdateRuleName(rule, e.Value?.ToString() ?? "");
+
+    private Task HandleRuleToggle(FilterRuleDto rule, ChangeEventArgs e) 
+        => ToggleRule(rule, e.Value is bool b && b);
+
+    private Task HandleLogicChange(FilterRuleDto rule, ChangeEventArgs e) 
+        => UpdateLogic(rule, e.Value?.ToString() ?? "And");
+
+    private Task HandleConditionField(FilterConditionDto condition, ChangeEventArgs e) 
+        => UpdateConditionField(condition, e.Value?.ToString() ?? "");
+
+    private Task HandleConditionOperator(FilterConditionDto condition, ChangeEventArgs e) 
+        => UpdateConditionOperator(condition, e.Value?.ToString() ?? "Contains");
+
+    private Task HandleConditionValue(FilterConditionDto condition, ChangeEventArgs e) 
+        => UpdateConditionValue(condition, e.Value?.ToString() ?? "");
+
+    private Task HandleActionType(FilterActionDto action, ChangeEventArgs e) 
+        => UpdateActionType(action, e.Value?.ToString() ?? "AddTag");
+
+    private Task HandleTagParameter(FilterActionDto action, ChangeEventArgs e) 
+        => UpdateActionParameter(action, "tag", e.Value?.ToString() ?? "");
+
+    private Task HandleImportanceParameter(FilterActionDto action, ChangeEventArgs e) 
+        => UpdateActionParameter(action, "importance", e.Value?.ToString() ?? "Medium");
+
+    private Task HandleChannelParameter(FilterActionDto action, ChangeEventArgs e) 
+        => UpdateActionParameter(action, "channel", e.Value?.ToString() ?? "");
+
+    private Task NotifyChanged() => RulesChanged.InvokeAsync(Rules);
+}

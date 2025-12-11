@@ -1,0 +1,205 @@
+@using ChangeDetection.Shared.Dtos
+@inject HttpClient Http
+
+<div class="category-selector">
+    <label class="category-label">@Label</label>
+    
+    @if (isLoading)
+    {
+        <div class="loading">Loading categories...</div>
+    }
+    else
+    {
+        <div class="category-options">
+            @foreach (var category in categories)
+            {
+                <button type="button"
+                        class="category-option @(IsSelected(category.Id) ? "selected" : "")"
+                        style="--category-color: @category.Color;"
+                        @onclick="() => SelectCategory(category.Id)">
+                    <span class="category-indicator" style="background-color: @category.Color;"></span>
+                    <span class="category-name">@category.Name</span>
+                    @if (!string.IsNullOrEmpty(category.Description))
+                    {
+                        <span class="category-description">@category.Description</span>
+                    }
+                </button>
+            }
+        </div>
+
+        @if (AllowCreate)
+        {
+            @if (showCreateForm)
+            {
+                <div class="create-category-form">
+                    <input type="text"
+                           @bind="newCategoryName"
+                           @bind:event="oninput"
+                           placeholder="Category name"
+                           class="category-input" />
+                    <input type="text"
+                           @bind="newCategoryDescription"
+                           placeholder="Description (optional)"
+                           class="category-input" />
+                    <div class="color-picker-inline">
+                        @foreach (var color in AvailableColors.Take(8))
+                        {
+                            <button type="button"
+                                    class="color-dot @(newCategoryColor == color ? "selected" : "")"
+                                    style="background-color: @color;"
+                                    @onclick="() => newCategoryColor = color">
+                            </button>
+                        }
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-small btn-outline" @onclick="CancelCreate">Cancel</button>
+                        <button type="button" class="btn btn-small" @onclick="CreateCategory" disabled="@string.IsNullOrWhiteSpace(newCategoryName)">
+                            Create
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button type="button" class="add-category-btn" @onclick="ShowCreateForm">
+                    + Add new category
+                </button>
+            }
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string? SelectedCategoryId { get; set; }
+    [Parameter] public EventCallback<string?> SelectedCategoryIdChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Category";
+    [Parameter] public bool AllowCreate { get; set; } = true;
+    [Parameter] public bool AllowNone { get; set; } = true;
+
+    private List<CategoryDto> categories = [];
+    private bool isLoading = true;
+    private bool showCreateForm = false;
+    private string newCategoryName = "";
+    private string newCategoryDescription = "";
+    private string newCategoryColor = "#3b82f6";
+
+    private static readonly string[] AvailableColors =
+    [
+        "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
+        "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        isLoading = true;
+        try
+        {
+            var response = await Http.GetAsync("/api/categories");
+            if (response.IsSuccessStatusCode)
+            {
+                categories = await response.Content.ReadFromJsonAsync<List<CategoryDto>>() ?? [];
+            }
+        }
+        catch
+        {
+            // Silently fail - categories are optional
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private bool IsSelected(string categoryId)
+    {
+        return SelectedCategoryId == categoryId;
+    }
+
+    private async Task SelectCategory(string categoryId)
+    {
+        // Toggle selection if already selected and AllowNone is true
+        if (IsSelected(categoryId) && AllowNone)
+        {
+            SelectedCategoryId = null;
+        }
+        else
+        {
+            SelectedCategoryId = categoryId;
+        }
+        
+        await SelectedCategoryIdChanged.InvokeAsync(SelectedCategoryId);
+    }
+
+    private void ShowCreateForm()
+    {
+        showCreateForm = true;
+        newCategoryName = "";
+        newCategoryDescription = "";
+        newCategoryColor = AvailableColors[0];
+    }
+
+    private void CancelCreate()
+    {
+        showCreateForm = false;
+    }
+
+    private async Task CreateCategory()
+    {
+        if (string.IsNullOrWhiteSpace(newCategoryName)) return;
+
+        var request = new CategoryCreateDto
+        {
+            Name = newCategoryName.Trim(),
+            Description = string.IsNullOrWhiteSpace(newCategoryDescription) ? null : newCategoryDescription.Trim(),
+            Color = newCategoryColor
+        };
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/categories", request);
+            if (response.IsSuccessStatusCode)
+            {
+                var newCategory = await response.Content.ReadFromJsonAsync<CategoryDto>();
+                if (newCategory != null)
+                {
+                    categories.Add(newCategory);
+                    await SelectCategory(newCategory.Id);
+                }
+            }
+        }
+        catch
+        {
+            // Handle error silently for now
+        }
+
+        showCreateForm = false;
+    }
+
+    /// <summary>
+    /// DTO for creating categories inline.
+    /// </summary>
+    public class CategoryCreateDto
+    {
+        public required string Name { get; set; }
+        public string? Description { get; set; }
+        public string Color { get; set; } = "#3b82f6";
+    }
+
+    /// <summary>
+    /// DTO for displaying categories.
+    /// </summary>
+    public class CategoryDto
+    {
+        public required string Id { get; set; }
+        public required string Name { get; set; }
+        public string? Description { get; set; }
+        public string Color { get; set; } = "#3b82f6";
+        public bool IsDefault { get; set; }
+        public int WatchCount { get; set; }
+    }
+}

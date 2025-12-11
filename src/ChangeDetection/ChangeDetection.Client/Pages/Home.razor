@@ -1,144 +1,331 @@
 @page "/"
+@page "/{ViewId?}"
+@rendermode InteractiveWebAssembly
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.SignalR.Client
 @using ChangeDetection.Shared.Dtos
 @using ChangeDetection.Client.Components
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@implements IAsyncDisposable
 
-<PageTitle>Change Detection - Dashboard</PageTitle>
+<PageTitle>Command Center - Change Detection</PageTitle>
 
-<div class="dashboard">
-    <header class="dashboard-header">
-        <h1>Website Change Detection</h1>
-        <p class="subtitle">Monitor websites for changes with AI-powered analysis</p>
-    </header>
+<div class="command-center">
+    <!-- Hero Add Watch Section -->
+    <section class="add-watch-hero">
+        <div class="hero-content">
+            <h1 class="hero-title">Add a new web page change detection watch</h1>
+            
+            <div class="add-watch-form">
+                <SmartInput Placeholder="https://... or describe what you want to watch" />
 
-    <section class="smart-input-section">
-        <SmartInput OnWatchCreated="HandleWatchCreated" />
-    </section>
-
-    <section class="stats-section">
-        <div class="stat-card">
-            <span class="stat-value">@watches.Count</span>
-            <span class="stat-label">Watched Sites</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-value">@watches.Count(w => w.Status == "Checking")</span>
-            <span class="stat-label">Currently Checking</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-value">@watches.Count(w => w.HasRecentChanges)</span>
-            <span class="stat-label">Changed Recently</span>
-        </div>
-        <div class="stat-card error">
-            <span class="stat-value">@watches.Count(w => w.Status == "Error")</span>
-            <span class="stat-label">Errors</span>
-        </div>
-    </section>
-
-    <section class="watches-section">
-        <div class="section-header">
-            <h2>Your Watches</h2>
-            <div class="section-actions">
-                <button class="btn btn-outline" @onclick="LoadWatches" disabled="@isLoading">
-                    @if (isLoading)
-                    {
-                        <span class="spinner-small"></span>
-                    }
-                    Refresh
-                </button>
-                <a href="/watches/new" class="btn btn-primary">+ Add Watch</a>
-            </div>
-        </div>
-
-        @if (isLoading)
-        {
-            <div class="loading-state">
-                <div class="spinner"></div>
-                <p>Loading watches...</p>
-            </div>
-        }
-        else if (error != null)
-        {
-            <div class="error-state">
-                <p>@error</p>
-                <button class="btn btn-outline" @onclick="LoadWatches">Retry</button>
-            </div>
-        }
-        else if (!watches.Any())
-        {
-            <div class="empty-state">
-                <div class="empty-icon">📡</div>
-                <h3>No watches yet</h3>
-                <p>Start monitoring websites by entering a URL or describing what you want to track above.</p>
-            </div>
-        }
-        else
-        {
-            <div class="watches-grid">
-                @foreach (var watch in watches.OrderByDescending(w => w.HasRecentChanges).ThenByDescending(w => w.LastCheck))
+                @if (creationMessage is not null)
                 {
-                    <div class="watch-card @GetCardClass(watch)" @onclick="() => ViewWatch(watch.Id)">
-                        <div class="watch-header">
-                            <span class="status-indicator @watch.Status.ToLower()"></span>
-                            <h3 class="watch-title">@GetDisplayTitle(watch)</h3>
-                            <div class="watch-actions" @onclick:stopPropagation="true">
-                                <button class="btn-icon" title="@(watch.IsEnabled ? "Pause" : "Resume")" 
-                                        @onclick="() => ToggleWatch(watch)">
-                                    @if (watch.IsEnabled)
-                                    {
-                                        <span>⏸️</span>
-                                    }
-                                    else
-                                    {
-                                        <span>▶️</span>
-                                    }
-                                </button>
-                                <button class="btn-icon" title="Check now" @onclick="() => TriggerCheck(watch.Id)">
-                                    🔄
-                                </button>
-                            </div>
-                        </div>
-                        <p class="watch-url">@TruncateUrl(watch.Url)</p>
-                        @if (!string.IsNullOrEmpty(watch.CssSelector))
-                        {
-                            <p class="watch-selector">Selector: @watch.CssSelector</p>
-                        }
-                        <div class="watch-meta">
-                            <span class="meta-item">
-                                ⏱️ Every @FormatInterval(watch.CheckInterval)
-                            </span>
-                            @if (watch.LastCheck.HasValue)
-                            {
-                                <span class="meta-item">
-                                    📅 @FormatTimeAgo(watch.LastCheck.Value)
-                                </span>
-                            }
-                            @if (watch.ChangeCount > 0)
-                            {
-                                <span class="meta-item changes">
-                                    🔔 @watch.ChangeCount changes
-                                </span>
-                            }
-                        </div>
-                        @if (watch.HasRecentChanges)
-                        {
-                            <div class="change-badge">New Changes!</div>
-                        }
+                    <div class="alert @(creationIsError ? "alert-error" : "alert-success")">
+                        @creationMessage
+                        <button class="alert-dismiss" @onclick="ClearCreationMessage">✕</button>
                     </div>
                 }
             </div>
-        }
+
+            <p class="hero-hint">💡 Paste a URL or describe what you want to monitor in plain English</p>
+        </div>
     </section>
+
+    <!-- Top Bar -->
+    <header class="cmd-bar">
+        <div class="cmd-search">
+            <span class="search-icon">🔍</span>
+            <input type="text" placeholder="Filter watches..." @bind="searchText" @bind:event="oninput" />
+        </div>
+
+        <div class="cmd-actions">
+            <button class="btn-cmd" @onclick="RunAllChecks" disabled="@isCheckingAll">
+                <span class="icon">@(isCheckingAll ? "⏳" : "▶")</span> Run All
+            </button>
+            <button class="btn-cmd" @onclick="GoToSettings">
+                <span class="icon">⚙️</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="cmd-main">
+        <!-- Watch List Panel -->
+        <div class="watch-panel">
+            <div class="panel-toolbar">
+                <div class="filter-group">
+                    <button class="filter-chip @(activeStatusFilter == null && !changedRecentlyFilter ? "active" : "")" @onclick="() => SetFilter(null)">All</button>
+                    <button class="filter-chip @(activeStatusFilter == "Active" ? "active" : "")" @onclick='() => SetFilter("Active")'>Active</button>
+                    <button class="filter-chip @(activeStatusFilter == "Error" ? "active" : "")" @onclick='() => SetFilter("Error")'>Errors</button>
+                    <button class="filter-chip @(changedRecentlyFilter ? "active" : "")" @onclick="ToggleChangedFilter">Changed Recently</button>
+                </div>
+                <div class="stats-summary">
+                    <span>@watches.Count Total</span>
+                    @if (pendingSetups.Any())
+                    {
+                        <span class="separator">|</span>
+                        <span class="text-warning">@pendingSetups.Count Setting up</span>
+                    }
+                    <span class="separator">|</span>
+                    <span class="text-success">@watches.Count(w => w.Status == "Active") Active</span>
+                    <span class="separator">|</span>
+                    <span class="text-danger">@watches.Count(w => w.Status == "Error") Errors</span>
+                </div>
+            </div>
+
+            <div class="data-grid-container">
+                @if (isLoading)
+                {
+                    <div class="loading-state">Loading watches...</div>
+                }
+                else if (FilteredWatches.Any() || pendingSetups.Any())
+                {
+                    <table class="data-grid">
+                        <thead>
+                            <tr>
+                                <th width="40">St</th>
+                                <th>Name / URL</th>
+                                <th width="120">Last Check</th>
+                                <th width="120">Last Change</th>
+                                <th>Tags</th>
+                                <th width="120" class="text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @* Pending setup sessions appear first *@
+                            @foreach (var setup in pendingSetups)
+                            {
+                                <tr class="grid-row pending-setup-row" @onclick="() => ResumeSetup(setup.SessionId)">
+                                    <td class="status-cell">
+                                        <div class="status-indicator pending" title="Setup in progress">
+                                            @if (!string.IsNullOrEmpty(setup.CurrentPrompt))
+                                            {
+                                                <span class="needs-input-badge">!</span>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td class="name-cell">
+                                        <div class="watch-title pending-title">
+                                            <span class="pending-icon">⏳</span>
+                                            @(setup.DisplayName ?? "New Watch")
+                                            @if (!string.IsNullOrEmpty(setup.CurrentPrompt))
+                                            {
+                                                <span class="needs-input-label">Needs input</span>
+                                            }
+                                        </div>
+                                        <div class="watch-url pending-prompt">@(setup.CurrentPrompt ?? "Setting up...")</div>
+                                    </td>
+                                    <td class="meta-cell">
+                                        <span class="text-muted">-</span>
+                                    </td>
+                                    <td class="meta-cell">
+                                        <span class="text-muted">-</span>
+                                    </td>
+                                    <td class="tags-cell">
+                                        <span class="tag-badge pending-tag">Setting up</span>
+                                    </td>
+                                    <td class="actions-cell" @onclick:stopPropagation>
+                                        <button class="btn-icon btn-resume" title="Resume Setup" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
+                                        <button class="btn-icon btn-cancel" title="Cancel Setup" @onclick="() => CancelSetup(setup.SessionId)">✕</button>
+                                    </td>
+                                </tr>
+                            }
+                            @* Regular watches *@
+                            @foreach (var watch in FilteredWatches)
+                            {
+                                <tr class="grid-row @(watch.HasRecentChanges ? "highlight-change" : "")" @onclick="() => NavigateToWatch(watch.Id)">
+                                    <td class="status-cell">
+                                        <div class="status-indicator @watch.Status.ToLower()" title="@watch.Status"></div>
+                                    </td>
+                                    <td class="name-cell">
+                                        <div class="watch-title">@GetDisplayTitle(watch)</div>
+                                        <div class="watch-url">@TruncateUrl(watch.Url)</div>
+                                    </td>
+                                    <td class="meta-cell">
+                                        @if (watch.LastCheck.HasValue)
+                                        {
+                                            <span title="@watch.LastCheck">@FormatTimeAgo(watch.LastCheck.Value)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">-</span>
+                                        }
+                                    </td>
+                                    <td class="meta-cell">
+                                        @if (watch.LatestChangeAt.HasValue)
+                                        {
+                                            <span class="change-time" title="@watch.LatestChangeAt">@FormatTimeAgo(watch.LatestChangeAt.Value)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">-</span>
+                                        }
+                                    </td>
+                                    <td class="tags-cell">
+                                        @foreach (var tag in watch.Tags.Take(3))
+                                        {
+                                            <span class="tag-badge" style="background-color: @tag.Color">@tag.Name</span>
+                                        }
+                                        @if (watch.Tags.Count > 3)
+                                        {
+                                            <span class="tag-more">+@(watch.Tags.Count - 3)</span>
+                                        }
+                                    </td>
+                                    <td class="actions-cell" @onclick:stopPropagation>
+                                        <button class="btn-icon" title="Check Now" @onclick="() => TriggerCheck(watch.Id)">▶</button>
+                                        <button class="btn-icon" title="Edit" @onclick="() => NavigateToEdit(watch.Id)">✎</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <div class="empty-state">
+                        <span>No watches found.</span>
+                        <span class="empty-hint">Use the form above to add your first watch.</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Sidebar: Recent Activity -->
+        <div class="sidebar-panel">
+            <div class="panel-header">
+                <h3>Recent Activity</h3>
+            </div>
+            <div class="activity-feed">
+                @if (recentChanges.Any())
+                {
+                    @foreach (var change in recentChanges)
+                    {
+                        <div class="feed-item" @onclick="() => NavigateToChange(change.Id)">
+                            <div class="feed-icon">@GetImportanceIcon(change.Importance)</div>
+                            <div class="feed-content">
+                                <div class="feed-title">@change.WatchTitle</div>
+                                <div class="feed-summary">@TruncateSummary(change.Summary, 60)</div>
+                                <div class="feed-time">@FormatTimeAgo(change.DetectedAt)</div>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="empty-feed">No recent activity</div>
+                }
+            </div>
+        </div>
+    </div>
+
 </div>
 
 @code {
-    private List<WatchListItemDto> watches = new();
+    [Parameter]
+    public string? ViewId { get; set; }
+
+    private List<WatchListItemDto> watches = [];
+    private List<ChangeListItemDto> recentChanges = [];
+    private List<PendingSetupDto> pendingSetups = [];
     private bool isLoading = true;
     private string? error;
+    private string? creationMessage;
+    private bool creationIsError;
+
+    // SignalR connection
+    private HubConnection? hubConnection;
+
+    // Filters
+    private string? activeStatusFilter;
+    private bool changedRecentlyFilter;
+    private string searchText = "";
+
+    // New fields
+    private bool isCheckingAll;
+
+    private IEnumerable<WatchListItemDto> FilteredWatches
+    {
+        get
+        {
+            var query = watches.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchText))
+            {
+                query = query.Where(w => 
+                    (w.Title?.Contains(searchText, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    w.Url.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+                    w.Tags.Any(t => t.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                );
+            }
+
+            if (changedRecentlyFilter)
+            {
+                query = query.Where(w => w.HasRecentChanges);
+            }
+            else if (activeStatusFilter != null)
+            {
+                query = query.Where(w => w.Status == activeStatusFilter);
+            }
+
+            return query.OrderByDescending(w => w.LastCheck);
+        }
+    }
+
+    private void SetFilter(string? status)
+    {
+        activeStatusFilter = status;
+        changedRecentlyFilter = false;
+    }
+
+    private void ToggleChangedFilter()
+    {
+        changedRecentlyFilter = !changedRecentlyFilter;
+        activeStatusFilter = null;
+    }
+
+    private void NavigateToEdit(string watchId)
+    {
+        Navigation.NavigateTo($"/watches/{watchId}/edit");
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        await InitializeSignalR();
         await LoadWatches();
+        await LoadRecentChanges();
+    }
+
+    private async Task InitializeSignalR()
+    {
+        var baseUri = Navigation.BaseUri.TrimEnd('/');
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl($"{baseUri}/hubs/changes")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<object>("ChangeDetected", async (data) =>
+        {
+            await LoadRecentChanges();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<object>("WatchStatusChanged", async (data) =>
+        {
+            // Refresh watches to get updated status
+            await LoadWatches();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            await hubConnection.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+        }
     }
 
     private async Task LoadWatches()
@@ -149,19 +336,28 @@
 
         try
         {
-            var response = await Http.GetAsync("/api/watches");
+            // Load watches and pending setups in parallel
+            var watchesTask = Http.GetAsync("/api/watches");
+            var pendingTask = Http.GetFromJsonAsync<List<PendingSetupDto>>("/api/llm/pending-setups");
+
+            await Task.WhenAll(watchesTask, pendingTask);
+
+            var response = await watchesTask;
             if (response.IsSuccessStatusCode)
             {
-                watches = await response.Content.ReadFromJsonAsync<List<WatchListItemDto>>() ?? new();
+                watches = await response.Content.ReadFromJsonAsync<List<WatchListItemDto>>() ?? [];
             }
             else
             {
                 error = "Failed to load watches.";
             }
+
+            pendingSetups = await pendingTask ?? [];
         }
         catch (Exception ex)
         {
             error = $"Error loading watches: {ex.Message}";
+            pendingSetups = [];
         }
         finally
         {
@@ -169,55 +365,124 @@
         }
     }
 
-    private void HandleWatchCreated(SmartInput.WatchCreatedEventArgs args)
-    {
-        Navigation.NavigateTo($"/watches/{args.WatchId}");
-    }
-
-    private void ViewWatch(string id)
-    {
-        Navigation.NavigateTo($"/watches/{id}");
-    }
-
-    private async Task ToggleWatch(WatchListItemDto watch)
+    private async Task LoadRecentChanges()
     {
         try
         {
-            var endpoint = watch.IsEnabled ? $"/api/watches/{watch.Id}/disable" : $"/api/watches/{watch.Id}/enable";
-            var response = await Http.PostAsync(endpoint, null);
-            if (response.IsSuccessStatusCode)
-            {
-                watch.IsEnabled = !watch.IsEnabled;
-                StateHasChanged();
-            }
+            recentChanges = await Http.GetFromJsonAsync<List<ChangeListItemDto>>("/api/changes?limit=10") ?? [];
         }
         catch
         {
-            // Silently fail, will refresh on next load
+            recentChanges = [];
         }
     }
 
+    // New Methods for Redesign
+    private void GoToSettings() => Navigation.NavigateTo("/settings");
+
+    private void ClearCreationMessage()
+    {
+        creationMessage = null;
+        creationIsError = false;
+    }
+
+    private async Task RunAllChecks()
+    {
+        if (isCheckingAll) return;
+        isCheckingAll = true;
+        StateHasChanged();
+
+        try
+        {
+            // Trigger check for all enabled watches
+            // Note: This might be heavy if there are many watches. Ideally backend should have a "Check All" endpoint.
+            // For now, we trigger them individually in parallel.
+            var tasks = watches.Where(w => w.IsEnabled).Select(w => TriggerCheck(w.Id));
+            await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            isCheckingAll = false;
+            StateHasChanged();
+        }
+    }
+
+    private int GetChangesTodayCount() => recentChanges.Count(c => c.DetectedAt.Date == DateTime.Today);
+    
+    private string GetAvgCheckDuration() => "5 s"; // Mock
+
+    private int GetActiveWatchesCount() => watches.Count(w => w.IsEnabled);
+
+    private int GetSuccessRate()
+    {
+        if (!watches.Any()) return 0;
+        var successCount = watches.Count(w => w.Status != "Error");
+        return (int)((double)successCount / watches.Count * 100);
+    }
+
+    private void ResumeSetup(Guid sessionId)
+    {
+        Navigation.NavigateTo($"/setup/{sessionId}");
+    }
+
+    private async Task CancelSetup(Guid sessionId)
+    {
+        try
+        {
+            await Http.DeleteAsync($"/api/llm/sessions/{sessionId}");
+            pendingSetups.RemoveAll(s => s.SessionId == sessionId);
+            StateHasChanged();
+        }
+        catch
+        {
+            // Just remove from local list - session will expire eventually
+            pendingSetups.RemoveAll(s => s.SessionId == sessionId);
+            StateHasChanged();
+        }
+    }
     private async Task TriggerCheck(string id)
     {
         try
         {
             await Http.PostAsync($"/api/watches/{id}/check", null);
-            // Refresh after a short delay to get updated status
-            await Task.Delay(500);
-            await LoadWatches();
         }
         catch
         {
-            // Silently fail
+            // Ignore errors for bulk check
         }
     }
 
-    private string GetCardClass(WatchListItemDto watch)
+    private void NavigateToChange(string changeId)
     {
-        if (!watch.IsEnabled) return "disabled";
-        if (watch.Status == "Error") return "error";
-        if (watch.HasRecentChanges) return "changed";
-        return "";
+        Navigation.NavigateTo($"/changes/{changeId}");
+    }
+
+    private void NavigateToWatch(string watchId)
+    {
+        Navigation.NavigateTo($"/watches/{watchId}");
+    }
+
+    private static string GetImportanceIcon(string importance) => importance switch
+    {
+        "High" => "🔴",
+        "Medium" => "🟡",
+        _ => "🟢"
+    };
+
+    private static string TruncateSummary(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        if (text.Length <= maxLength) return text;
+        return text[..(maxLength - 3)] + "...";
+    }
+
+    private static string FormatTimeAgo(DateTime dateTime)
+    {
+        var diff = DateTime.UtcNow - dateTime;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
     }
 
     private string GetDisplayTitle(WatchListItemDto watch)
@@ -236,27 +501,17 @@
         }
     }
 
-    private string TruncateUrl(string url)
+    private static string TruncateUrl(string url)
     {
         if (url.Length <= 50) return url;
         return url[..47] + "...";
     }
 
-    private string FormatInterval(TimeSpan interval)
+    public async ValueTask DisposeAsync()
     {
-        if (interval.TotalMinutes < 60)
-            return $"{(int)interval.TotalMinutes} min";
-        if (interval.TotalHours < 24)
-            return $"{(int)interval.TotalHours} hr";
-        return $"{(int)interval.TotalDays} days";
-    }
-
-    private string FormatTimeAgo(DateTime dateTime)
-    {
-        var diff = DateTime.UtcNow - dateTime;
-        if (diff.TotalMinutes < 1) return "just now";
-        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
-        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-        return $"{(int)diff.TotalDays}d ago";
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
     }
 }

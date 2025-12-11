@@ -1,6 +1,4 @@
-@using System.Text.RegularExpressions
-@using ChangeDetection.Shared.Dtos
-@inject HttpClient Http
+@inject NavigationManager Navigation
 
 <div class="smart-input-container">
     <div class="input-wrapper">
@@ -9,301 +7,56 @@
                   @bind:event="oninput"
                   @onkeydown="HandleKeyDown"
                   placeholder="@Placeholder"
-                  class="smart-input @ModeClass"
-                  rows="2"
-                  disabled="@IsProcessing" />
-        
-        @if (IsProcessing)
-        {
-            <div class="processing-indicator">
-                <span class="spinner"></span>
-                <span>Processing...</span>
-            </div>
-        }
+                  class="smart-input"
+                  rows="2" />
     </div>
 
-    @if (DetectedMode != InputMode.Unknown && !string.IsNullOrEmpty(InputText))
+    @if (!string.IsNullOrEmpty(InputText))
     {
-        <div class="mode-indicator @DetectedMode.ToString().ToLower()">
-            @if (DetectedMode == InputMode.Url)
-            {
-                <span>🔗 URL detected — press Enter to add watch</span>
-            }
-            else
-            {
-                <span>💬 Natural language — will process with AI</span>
-            }
-        </div>
-    }
-
-    @if (Suggestions.Count > 0)
-    {
-        <div class="suggestions">
-            @foreach (var suggestion in Suggestions)
-            {
-                <button class="suggestion-chip" 
-                        @onclick="() => HandleSuggestionClick(suggestion)"
-                        disabled="@IsProcessing">
-                    @suggestion.Label
-                </button>
-            }
-        </div>
-    }
-
-    @if (ClarificationQuestions.Count > 0)
-    {
-        <div class="clarifications">
-            @foreach (var question in ClarificationQuestions)
-            {
-                <p class="clarification-question">❓ @question</p>
-            }
-        </div>
-    }
-
-    @if (!string.IsNullOrEmpty(Summary))
-    {
-        <div class="summary @(IsError ? "error" : "success")">
-            @Summary
+        <div class="mode-indicator">
+            <span>✨ Press Enter to start setup</span>
         </div>
     }
 </div>
 
 @code {
     [Parameter] public string Placeholder { get; set; } = "Paste a URL or describe what you want to watch...";
-    [Parameter] public EventCallback<UrlDetectedEventArgs> OnUrlDetected { get; set; }
-    [Parameter] public EventCallback<WatchCreatedEventArgs> OnWatchCreated { get; set; }
-    [Parameter] public EventCallback<string> OnError { get; set; }
 
     private ElementReference _inputElement;
     private string _inputText = "";
-    private InputMode DetectedMode = InputMode.Unknown;
-    private bool IsProcessing;
-    private List<SuggestionChipDto> Suggestions = [];
-    private List<string> ClarificationQuestions = [];
-    private string? Summary;
-    private bool IsError;
-    private System.Threading.Timer? _debounceTimer;
 
     private string InputText
     {
         get => _inputText;
-        set
-        {
-            _inputText = value;
-            DetectMode();
-        }
+        set => _inputText = value;
     }
 
-    private string ModeClass => DetectedMode switch
-    {
-        InputMode.Url => "url-mode",
-        InputMode.NaturalLanguage => "nl-mode",
-        _ => ""
-    };
-
-    private void DetectMode()
-    {
-        ClearFeedback();
-
-        if (string.IsNullOrWhiteSpace(_inputText))
-        {
-            DetectedMode = InputMode.Unknown;
-            return;
-        }
-
-        var trimmed = _inputText.Trim();
-
-        // URL patterns
-        if (Regex.IsMatch(trimmed, @"^https?://", RegexOptions.IgnoreCase) ||
-            (Regex.IsMatch(trimmed, @"^(www\.)?[\w-]+\.(com|org|net|io|co|dev|app)", RegexOptions.IgnoreCase) && !trimmed.Contains(' ')))
-        {
-            DetectedMode = InputMode.Url;
-        }
-        else
-        {
-            DetectedMode = InputMode.NaturalLanguage;
-            StartDebounce();
-        }
-    }
-
-    private void StartDebounce()
-    {
-        _debounceTimer?.Dispose();
-        _debounceTimer = new System.Threading.Timer(async _ =>
-        {
-            await InvokeAsync(async () =>
-            {
-                if (DetectedMode == InputMode.NaturalLanguage && !string.IsNullOrWhiteSpace(_inputText))
-                {
-                    // Don't auto-process, wait for Enter
-                    // Just show that AI is ready
-                }
-            });
-        }, null, 500, Timeout.Infinite);
-    }
-
-    private async Task HandleKeyDown(KeyboardEventArgs e)
+    private Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !e.ShiftKey)
         {
-            await ProcessInput();
+            return ProcessInput();
         }
         else if (e.Key == "Escape")
         {
-            ClearInput();
-        }
-    }
-
-    private async Task ProcessInput()
-    {
-        if (string.IsNullOrWhiteSpace(_inputText) || IsProcessing)
-            return;
-
-        IsProcessing = true;
-        ClearFeedback();
-        StateHasChanged();
-
-        try
-        {
-            var response = await Http.PostAsJsonAsync("/api/llm/process-input", new ProcessInputRequest
-            {
-                Input = _inputText.Trim()
-            });
-
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<ProcessInputResponse>();
-                
-                if (result != null)
-                {
-                    await HandleProcessResult(result);
-                }
-            }
-            else
-            {
-                ShowError("Failed to process your request. Please try again.");
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowError($"Error: {ex.Message}");
-        }
-        finally
-        {
-            IsProcessing = false;
+            _inputText = "";
             StateHasChanged();
         }
+        return Task.CompletedTask;
     }
 
-    private async Task HandleProcessResult(ProcessInputResponse result)
+    private Task ProcessInput()
     {
-        if (!result.IsSuccess)
-        {
-            ShowError(result.ErrorMessage ?? "Unknown error");
-            return;
-        }
+        if (string.IsNullOrWhiteSpace(_inputText))
+            return Task.CompletedTask;
 
-        if (result.NeedsClarification)
-        {
-            ClarificationQuestions = result.ClarificationQuestions;
-            Suggestions = result.Suggestions;
-            return;
-        }
-
-        if (result.Intent == "CreateWatch" && result.ParsedRequest?.Url != null)
-        {
-            // Check if watch was created by the LLM pipeline
-            if (!string.IsNullOrEmpty(result.CreatedWatchId))
-            {
-                Summary = result.Summary ?? "Watch created successfully!";
-                await OnWatchCreated.InvokeAsync(new WatchCreatedEventArgs
-                {
-                    WatchId = result.CreatedWatchId,
-                    Url = result.ParsedRequest.Url
-                });
-                ClearInput();
-            }
-            else
-            {
-                // Trigger URL detected for manual flow
-                await OnUrlDetected.InvokeAsync(new UrlDetectedEventArgs
-                {
-                    Url = result.ParsedRequest.Url,
-                    ParsedRequest = result.ParsedRequest
-                });
-                ClearInput();
-            }
-        }
-        else if (!string.IsNullOrEmpty(result.Summary))
-        {
-            Summary = result.Summary;
-            Suggestions = result.Suggestions;
-        }
-    }
-
-    private async Task HandleSuggestionClick(SuggestionChipDto suggestion)
-    {
-        switch (suggestion.Type)
-        {
-            case "AppendText":
-                _inputText += suggestion.Value;
-                break;
-            case "SetValue":
-                _inputText = suggestion.Value;
-                break;
-            case "ExecuteAction":
-                _inputText = suggestion.Value;
-                await ProcessInput();
-                return;
-        }
-
-        DetectMode();
-        StateHasChanged();
-    }
-
-    private void ClearInput()
-    {
-        _inputText = "";
-        DetectedMode = InputMode.Unknown;
-        ClearFeedback();
-    }
-
-    private void ClearFeedback()
-    {
-        Suggestions = [];
-        ClarificationQuestions = [];
-        Summary = null;
-        IsError = false;
-    }
-
-    private void ShowError(string message)
-    {
-        Summary = message;
-        IsError = true;
-        OnError.InvokeAsync(message);
-    }
-
-    public void Dispose()
-    {
-        _debounceTimer?.Dispose();
-    }
-
-    public enum InputMode
-    {
-        Unknown,
-        Url,
-        NaturalLanguage
-    }
-
-    public class UrlDetectedEventArgs
-    {
-        public required string Url { get; set; }
-        public ParsedWatchRequestDto? ParsedRequest { get; set; }
-    }
-
-    public class WatchCreatedEventArgs
-    {
-        public string WatchId { get; set; } = "";
-        public required string Url { get; set; }
+        var trimmedInput = _inputText.Trim();
+        
+        // Immediately navigate to the setup flow - no HTTP call, no timeout
+        // The setup flow handles everything via SignalR streaming
+        var encodedInput = Uri.EscapeDataString(trimmedInput);
+        Navigation.NavigateTo($"/setup?input={encodedInput}");
+        
+        return Task.CompletedTask;
     }
 }

@@ -1,0 +1,205 @@
+/* StateTimeline component styles - Light theme with smooth animations */
+
+.state-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-width: 600px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 1rem 0;
+}
+
+/* Individual timeline entry */
+.timeline-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: #ffffff;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.7;
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    
+    /* Entry animation */
+    animation: entrySlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.timeline-entry.current {
+    opacity: 1;
+    border-color: #6366f1;
+    background: linear-gradient(135deg, #f8f7ff 0%, #ffffff 100%);
+    transform: scale(1.02);
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.12);
+}
+
+.timeline-entry.completed {
+    opacity: 0.65;
+}
+
+.timeline-entry.failed {
+    border-color: #fca5a5;
+    background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
+}
+
+.timeline-entry.recovery {
+    border-color: #fcd34d;
+    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
+}
+
+.timeline-entry.question {
+    border-color: #93c5fd;
+    background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.timeline-entry.in-progress {
+    border-color: #6366f1;
+}
+
+/* Status icon */
+.timeline-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 1rem;
+    flex-shrink: 0;
+    font-weight: 600;
+    background: #f3f4f6;
+    color: #6b7280;
+    transition: all 0.3s ease;
+}
+
+.timeline-entry.in-progress .timeline-icon {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: white;
+    animation: iconPulse 1.5s ease-in-out infinite;
+}
+
+.timeline-entry.completed .timeline-icon {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    color: white;
+}
+
+.timeline-entry.failed .timeline-icon {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    color: white;
+}
+
+.timeline-entry.recovery .timeline-icon {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    animation: iconPulse 1.5s ease-in-out infinite;
+}
+
+.timeline-entry.question .timeline-icon {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+}
+
+@keyframes iconPulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+    }
+}
+
+/* Content */
+.timeline-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.timeline-summary {
+    font-size: 0.9375rem;
+    color: #374151;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.timeline-entry.current .timeline-summary {
+    font-weight: 600;
+    color: #111827;
+}
+
+.timeline-details {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+    line-height: 1.4;
+}
+
+/* Timestamp */
+.timeline-time {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-weight: 500;
+}
+
+/* Empty state */
+.timeline-empty {
+    text-align: center;
+    padding: 3rem 2rem;
+    color: #9ca3af;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.empty-icon {
+    font-size: 2.5rem;
+    animation: emptyPulse 2s ease-in-out infinite;
+}
+
+@keyframes emptyPulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* Entry slide-in animation */
+@keyframes entrySlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.97);
+    }
+    to {
+        opacity: 0.7;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Current entry gets full opacity */
+.timeline-entry.current {
+    animation: entrySlideInCurrent 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes entrySlideInCurrent {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1.02);
+    }
+}
+
+/* Smooth list reordering - entries move up as new ones appear */
+.state-timeline {
+    /* Use CSS containment for better animation performance */
+    contain: layout;
+}

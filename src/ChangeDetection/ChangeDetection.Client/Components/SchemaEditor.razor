@@ -1,0 +1,332 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="schema-editor">
+    @if (Schema == null)
+    {
+        <div class="schema-empty">
+            <p>No schema discovered. Schema extraction is used for list-type content like events, products, or articles.</p>
+        </div>
+    }
+    else
+    {
+        <div class="schema-header">
+            <h4>📋 Extraction Schema</h4>
+            <div class="schema-meta">
+                <span class="item-count">@Schema.SampleItemCount items found</span>
+                <span class="confidence">@((Schema.Confidence * 100).ToString("F0"))% confidence</span>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Schema.Explanation))
+        {
+            <div class="schema-explanation">
+                <em>@Schema.Explanation</em>
+            </div>
+        }
+
+        <div class="schema-item-selector">
+            <label>Item Selector:</label>
+            <code>@Schema.ItemSelector</code>
+        </div>
+
+        <div class="schema-fields">
+            <h5>Fields</h5>
+            <table class="fields-table">
+                <thead>
+                    <tr>
+                        <th>Include</th>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Identity</th>
+                        <th>Required</th>
+                        <th>Sample</th>
+                        <th>Confidence</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var field in editableFields)
+                    {
+                        <tr class="@(field.Excluded ? "excluded" : "")">
+                            <td>
+                                <input type="checkbox" 
+                                       checked="@(!field.Excluded)" 
+                                       @onchange="@(e => HandleFieldExclusion(field, e))" />
+                            </td>
+                            <td>
+                                <input type="text" 
+                                       class="field-name-input"
+                                       value="@field.Name"
+                                       @onchange="@(e => HandleFieldName(field, e))"
+                                       disabled="@field.Excluded" />
+                            </td>
+                            <td>
+                                <select class="field-type-select"
+                                        value="@field.Type"
+                                        @onchange="@(e => HandleFieldType(field, e))"
+                                        disabled="@field.Excluded">
+                                    @foreach (var type in FieldTypes)
+                                    {
+                                        <option value="@type">@type</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <input type="checkbox" 
+                                       checked="@field.IsIdentityField" 
+                                       @onchange="@(e => HandleIdentityField(field, e))"
+                                       disabled="@field.Excluded"
+                                       title="Use this field to uniquely identify items for change detection" />
+                                @if (field.IsLlmSuggestedIdentity)
+                                {
+                                    <span class="llm-suggestion" title="LLM suggested this as an identity field">🤖</span>
+                                }
+                            </td>
+                            <td>
+                                <input type="checkbox" 
+                                       checked="@field.IsRequired" 
+                                       @onchange="@(e => HandleRequired(field, e))"
+                                       disabled="@field.Excluded" />
+                            </td>
+                            <td class="sample-cell">
+                                @if (field.SampleValues.Count > 0)
+                                {
+                                    <span class="sample-value" title="@string.Join(", ", field.SampleValues)">
+                                        @TruncateSample(field.SampleValues[0])
+                                    </span>
+                                }
+                            </td>
+                            <td>
+                                <span class="confidence-badge @GetConfidenceClass(field.Confidence)">
+                                    @((field.Confidence * 100).ToString("F0"))%
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="schema-identity-summary">
+            <strong>Identity Fields:</strong>
+            @if (GetIdentityFields().Any())
+            {
+                <span>@string.Join(", ", GetIdentityFields())</span>
+            }
+            else
+            {
+                <span class="warning">⚠️ No identity fields selected. Change detection may not work correctly.</span>
+            }
+        </div>
+
+        <div class="schema-diff-settings">
+            <h5>Diff Settings</h5>
+            <div class="setting-row">
+                <label>Granularity:</label>
+                <select @bind="diffGranularity">
+                    <option value="ItemsOnly">Items Only (new/removed items)</option>
+                    <option value="FieldLevel">Field Level (changes within items)</option>
+                    <option value="Both">Both (all changes)</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>
+                    <input type="checkbox" @bind="enableImportanceScoring" />
+                    Use LLM to score change importance
+                </label>
+            </div>
+        </div>
+
+        @if (ShowPreview && previewObjects.Count > 0)
+        {
+            <div class="schema-preview">
+                <h5>Preview (@previewObjects.Count items)</h5>
+                <div class="preview-objects">
+                    @foreach (var obj in previewObjects.Take(3))
+                    {
+                        <div class="preview-object">
+                            @foreach (var field in GetIncludedFields())
+                            {
+                                <div class="preview-field">
+                                    <span class="field-label">@field.Name:</span>
+                                    <span class="field-value">@(obj.Fields.GetValueOrDefault(field.Name) ?? "(empty)")</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public DiscoveredSchemaDto? Schema { get; set; }
+    [Parameter] public EventCallback<DiscoveredSchemaDto> SchemaChanged { get; set; }
+    
+    [Parameter] public bool ShowPreview { get; set; } = true;
+    [Parameter] public List<ExtractedObjectDto> PreviewObjects { get; set; } = [];
+    
+    [Parameter] public ObjectDiffSettingsDto? DiffSettings { get; set; }
+    [Parameter] public EventCallback<ObjectDiffSettingsDto> DiffSettingsChanged { get; set; }
+
+    private List<EditableField> editableFields = [];
+    private List<ExtractedObjectDto> previewObjects = [];
+    private string diffGranularity = "Both";
+    private bool enableImportanceScoring = true;
+
+    private static readonly string[] FieldTypes = ["String", "Date", "Url", "Number", "Image", "Html"];
+
+    protected override void OnParametersSet()
+    {
+        if (Schema?.Fields != null && editableFields.Count == 0)
+        {
+            editableFields = Schema.Fields.Select(f => new EditableField
+            {
+                OriginalName = f.Name,
+                Name = f.Name,
+                Type = f.Type,
+                Selector = f.Selector,
+                IsRequired = f.IsRequired,
+                IsIdentityField = f.IsIdentityField,
+                IsLlmSuggestedIdentity = Schema.InferredIdentityFields.Contains(f.Name),
+                SampleValues = f.SampleValues,
+                Confidence = (float)f.Confidence,
+                Excluded = false
+            }).ToList();
+        }
+
+        previewObjects = PreviewObjects;
+
+        if (DiffSettings != null)
+        {
+            diffGranularity = DiffSettings.Granularity;
+            enableImportanceScoring = DiffSettings.EnableImportanceScoring;
+        }
+    }
+
+    // Handler wrapper methods for Razor event binding
+    private void HandleFieldExclusion(EditableField field, ChangeEventArgs e)
+        => ToggleFieldExclusion(field, !(e.Value is bool b && b));
+
+    private void HandleFieldName(EditableField field, ChangeEventArgs e)
+        => UpdateFieldName(field, e.Value?.ToString() ?? "");
+
+    private void HandleFieldType(EditableField field, ChangeEventArgs e)
+        => UpdateFieldType(field, e.Value?.ToString() ?? "String");
+
+    private void HandleIdentityField(EditableField field, ChangeEventArgs e)
+        => UpdateIdentityField(field, e.Value is bool b && b);
+
+    private void HandleRequired(EditableField field, ChangeEventArgs e)
+        => UpdateRequired(field, e.Value is bool b && b);
+
+    private void ToggleFieldExclusion(EditableField field, bool excluded)
+    {
+        field.Excluded = excluded;
+        _ = NotifySchemaChanged();
+    }
+
+    private void UpdateFieldName(EditableField field, string newName)
+    {
+        field.Name = newName;
+        _ = NotifySchemaChanged();
+    }
+
+    private void UpdateFieldType(EditableField field, string newType)
+    {
+        field.Type = newType;
+        _ = NotifySchemaChanged();
+    }
+
+    private void UpdateIdentityField(EditableField field, bool isIdentity)
+    {
+        field.IsIdentityField = isIdentity;
+        _ = NotifySchemaChanged();
+    }
+
+    private void UpdateRequired(EditableField field, bool isRequired)
+    {
+        field.IsRequired = isRequired;
+        _ = NotifySchemaChanged();
+    }
+
+    private IEnumerable<string> GetIdentityFields()
+    {
+        return editableFields
+            .Where(f => !f.Excluded && f.IsIdentityField)
+            .Select(f => f.Name);
+    }
+
+    private IEnumerable<EditableField> GetIncludedFields()
+    {
+        return editableFields.Where(f => !f.Excluded);
+    }
+
+    private async Task NotifySchemaChanged()
+    {
+        if (Schema == null) return;
+
+        var updatedSchema = new DiscoveredSchemaDto
+        {
+            ItemSelector = Schema.ItemSelector,
+            Confidence = Schema.Confidence,
+            SampleItemCount = Schema.SampleItemCount,
+            Explanation = Schema.Explanation,
+            ContentType = Schema.ContentType,
+            InferredIdentityFields = GetIdentityFields().ToList(),
+            Fields = editableFields
+                .Where(f => !f.Excluded)
+                .Select(f => new DiscoveredFieldDto
+                {
+                    Name = f.Name,
+                    Type = f.Type,
+                    Selector = f.Selector,
+                    IsRequired = f.IsRequired,
+                    IsIdentityField = f.IsIdentityField,
+                    SampleValues = f.SampleValues,
+                    Confidence = f.Confidence
+                })
+                .ToList()
+        };
+
+        await SchemaChanged.InvokeAsync(updatedSchema);
+
+        var updatedDiffSettings = new ObjectDiffSettingsDto
+        {
+            Granularity = diffGranularity,
+            EnableImportanceScoring = enableImportanceScoring
+        };
+
+        await DiffSettingsChanged.InvokeAsync(updatedDiffSettings);
+    }
+
+    private static string TruncateSample(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.Length > 30 ? value[..27] + "..." : value;
+    }
+
+    private static string GetConfidenceClass(float confidence)
+    {
+        return confidence switch
+        {
+            >= 0.8f => "high",
+            >= 0.5f => "medium",
+            _ => "low"
+        };
+    }
+
+    private class EditableField
+    {
+        public string OriginalName { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "String";
+        public string Selector { get; set; } = "";
+        public bool IsRequired { get; set; }
+        public bool IsIdentityField { get; set; }
+        public bool IsLlmSuggestedIdentity { get; set; }
+        public List<string> SampleValues { get; set; } = [];
+        public float Confidence { get; set; }
+        public bool Excluded { get; set; }
+    }
+}
