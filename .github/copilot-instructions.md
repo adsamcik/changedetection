@@ -2,47 +2,32 @@
 
 ## Project Overview
 
-ChangeDetection is a .NET 10 Blazor application for monitoring website changes with AI-powered analysis:
-
-- **ASP.NET Core 10** with Blazor (Server and WebAssembly hybrid)
+.NET 10 Blazor application for monitoring website changes:
+- **ASP.NET Core 10** with Blazor (Server and WebAssembly)
 - **C# 14** with latest language features
-- **LiteDB** for embedded NoSQL persistence
-- **Playwright** for JavaScript-rendered page scraping
+- **LiteDB** for persistence
+- **Playwright** for browser-based scraping
 - **Semantic Kernel** for LLM integrations (OpenAI, Google Gemini)
-- **DiffPlex** for content diff generation
-- **HtmlAgilityPack** for HTML parsing
+- **DiffPlex** for diff generation
 - **MailKit** for email notifications
-- **Polly** for resilience and retry policies
 
 ## Solution Structure
 
 ```
 src/
 ├── ChangeDetection/              # Main Blazor Server host
-│   └── ChangeDetection/
-│       ├── Components/           # Blazor components (Pages, Layout)
-│       ├── Endpoints/            # Minimal API endpoints
-│       ├── Hubs/                 # SignalR hubs
-│       └── Services/             # Server-side implementations
-│           ├── Background/       # Background services
-│           ├── Content/          # Content extraction
-│           ├── LLM/              # LLM integration
-│           ├── Notifications/    # Email/webhook notifications
-│           ├── Persistence/      # LiteDB repositories
-│           └── Scraping/         # Playwright fetching
+│   ├── Components/               # Blazor components
+│   ├── Endpoints/                # Minimal API endpoints
+│   ├── Hubs/                     # SignalR hubs
+│   └── Services/                 # Server-side implementations
 ├── ChangeDetection.Client/       # Blazor WebAssembly client
-│   ├── Components/               # Client-side components
-│   └── Pages/                    # Client-routable pages
-├── ChangeDetection.Core/         # Domain layer (no dependencies)
-│   ├── Entities/                 # Domain entities
-│   └── Interfaces/               # Abstractions
-└── ChangeDetection.Shared/       # Shared between server and client
-    └── DTOs/                     # Data transfer objects
+├── ChangeDetection.Core/         # Domain entities and interfaces
+└── ChangeDetection.Shared/       # Shared DTOs
 tests/
 └── ChangeDetection.Tests/        # xUnit tests with Shouldly
 ```
 
-## C# 14 Features to Use
+## C# 14 Features
 
 ### Field-Backed Properties
 ```csharp
@@ -58,70 +43,19 @@ public string Name
 person?.Name = "Updated";  // Only assigns if person is not null
 ```
 
-### Lambda Parameter Modifiers
+## Code Style
+
+1. **File-scoped namespaces**
+2. **Primary constructors** for DI
+3. **Records** for DTOs
+4. **Collection expressions** `[]`
+5. **Pattern matching**
+6. **`required` modifier** for mandatory properties
+
+### Service Pattern
 ```csharp
-var increment = (ref int x) => x++;
-```
-
-### Unbound Generic Types in nameof
-```csharp
-var name = nameof(List<>);  // Returns "List"
-```
-
-## Code Style Guidelines
-
-### General Conventions
-1. **File-scoped namespaces** - Always use single-line namespace declarations
-2. **Primary constructors** - Prefer for services with dependency injection
-3. **Records** - Use for DTOs and immutable data structures
-4. **Collection expressions** - Use `[]` syntax for collection initialization
-5. **Pattern matching** - Use extensively for type checks and conditionals
-6. **`required` modifier** - Use for mandatory properties on classes/records
-7. **Nullable reference types** - Always enabled, handle nulls explicitly
-
-### Naming Conventions
-- Interfaces: `I` prefix (e.g., `IWatchService`, `IRepository<T>`)
-- DTOs: Suffix with `Dto` (e.g., `WatchDetailDto`, `WatchCreateDto`)
-- Endpoints: Static classes with `Endpoints` suffix
-- Tests: Suffix with `Tests` (e.g., `ContentExtractorTests`)
-
-### Entity Example
-```csharp
-namespace ChangeDetection.Core.Entities;
-
-public class WatchedSite
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public required string Url { get; set; }
-    public string? Name { get; set; }
-    public string? CssSelector { get; set; }
-    public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMinutes(30);
-    public WatchStatus Status { get; set; } = WatchStatus.Active;
-    public List<string> Tags { get; set; } = [];
-}
-```
-
-### DTO Example
-```csharp
-namespace ChangeDetection.Shared.Dtos;
-
-public class WatchCreateDto
-{
-    public required string Url { get; set; }
-    public string? Title { get; set; }
-    public TimeSpan CheckInterval { get; set; } = TimeSpan.FromHours(1);
-    public FetchSettingsDto FetchSettings { get; set; } = new();
-}
-```
-
-### Service Example (Primary Constructor)
-```csharp
-namespace ChangeDetection.Services;
-
 public class ServerWatchService(
     IRepository<WatchedSite> watchRepo,
-    IRepository<ChangeSnapshot> snapshotRepo,
-    IContentFetcher fetcher,
     ILogger<ServerWatchService> logger) : IWatchService
 {
     public async Task<WatchedSite?> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -130,91 +64,6 @@ public class ServerWatchService(
         return await watchRepo.GetByIdAsync(id, ct);
     }
 }
-```
-
-### Minimal API Endpoints Example
-```csharp
-namespace ChangeDetection.Endpoints;
-
-public static class WatchEndpoints
-{
-    public static RouteGroupBuilder MapWatchEndpoints(this RouteGroupBuilder group)
-    {
-        group.MapGet("/", GetAllWatches)
-            .WithName("GetAllWatches")
-            .Produces<List<WatchListItemDto>>();
-
-        group.MapGet("/{id}", GetWatchById)
-            .WithName("GetWatchById")
-            .Produces<WatchDetailDto>()
-            .Produces(404);
-
-        return group;
-    }
-
-    private static async Task<IResult> GetWatchById(
-        Guid id,
-        IWatchService watchService,
-        CancellationToken ct)
-    {
-        var watch = await watchService.GetByIdAsync(id, ct);
-        return watch is null ? Results.NotFound() : Results.Ok(MapToDetailDto(watch));
-    }
-}
-```
-
-## Testing Conventions
-
-Use **xUnit** with **Shouldly** assertions:
-
-```csharp
-namespace ChangeDetection.Tests.Content;
-
-public class ContentExtractorTests
-{
-    private readonly ContentExtractor _sut = new();
-
-    [Fact]
-    public void ExtractText_WithSimpleHtml_ReturnsTextContent()
-    {
-        // Arrange
-        var html = "<html><body><p>Hello World</p></body></html>";
-
-        // Act
-        var result = _sut.ExtractText(html);
-
-        // Assert
-        result.ShouldBe("Hello World");
-    }
-
-    [Theory]
-    [InlineData("<p>Test</p>", "Test")]
-    [InlineData("<div><span>Nested</span></div>", "Nested")]
-    public void ExtractText_WithVariousHtml_ExtractsCorrectly(string html, string expected)
-    {
-        _sut.ExtractText($"<html><body>{html}</body></html>").ShouldBe(expected);
-    }
-}
-```
-
-## Blazor Conventions
-
-### Component Structure
-- Use `@page` directive for routable components
-- Prefer `@rendermode InteractiveServer` for server-side interactivity
-- Use `NotFoundPage` parameter for 404 handling in Routes.razor
-
-### Form Handling
-```razor
-<EditForm Model="@model" OnValidSubmit="HandleSubmit">
-    <DataAnnotationsValidator />
-    <ValidationSummary />
-    
-    <InputText @bind-Value="model.Url" class="form-control" />
-    <ValidationMessage For="@(() => model.Url)" />
-    
-    <button type="submit">Save</button>
-</EditForm>
 ```
 
 ## Key Interfaces
@@ -226,28 +75,115 @@ public class ContentExtractorTests
 - `IDiffService` - Content comparison
 - `INotificationService` - Email/webhook delivery
 - `ILlmProviderChain` - AI change summarization
-- `IInputProcessor` - LLM input preprocessing
 
-## Configuration
+## Testing
 
-Settings are stored in `appsettings.json` and managed via `AppSettings` entity in LiteDB:
-- LLM provider configurations (API keys, models)
-- SMTP settings for email notifications
-- Default check intervals
-- Playwright browser options
+Use **xUnit** with **Shouldly** assertions.
 
-## Common Tasks
+## Watch Setup Pipeline
 
-### Adding a New Watch Feature
-1. Add property to `WatchedSite` entity in Core
-2. Add corresponding property to DTOs in Shared
-3. Update `IWatchService` interface if needed
-4. Implement in `ServerWatchService`
-5. Add/update endpoint in `WatchEndpoints`
-6. Update Blazor components
+The watch setup pipeline is **LLM-only** with **no heuristics or regex fallbacks**. All input processing, URL extraction, content analysis, and selector generation must go through LLM agents.
 
-### Adding LLM Provider Support
-1. Add configuration to `LlmProviderConfig` entity
-2. Implement provider in `Services/LLM/`
-3. Register in `LlmProviderChain`
-4. Add DTOs for provider-specific settings
+### Architecture Principles
+
+1. **No Heuristics** - Never use regex, pattern matching, or rule-based extraction. All understanding comes from LLM.
+2. **No Fallbacks** - If LLM is unavailable, the operation fails gracefully with a clear error. No degraded modes.
+3. **Multi-Agent Design** - Specialized agents handle focused tasks (URL extraction, content analysis, selector generation, validation, synthesis).
+4. **Parallel Execution** - Independent agents run in parallel via `IAsyncEnumerable.Merge()`.
+5. **Streaming Responses** - All agent outputs stream in real-time including intermediate reasoning.
+6. **In-Memory Sessions** - Conversation state lives only in memory with 30-minute sliding expiration. No persistence.
+7. **Input-Anchored Validation** - Only validation allowed is verifying extracted values exist in original input (URL not mangled, feedback matches presented options, no hallucinated values).
+
+### Agent Types
+
+| Agent | Responsibility |
+|-------|----------------|
+| `UrlExtractionAgent` | Extract URLs from natural language input |
+| `ContentAnalysisAgent` | Analyze fetched page structure and user intent |
+| `SelectorGenerationAgent` | Generate CSS/XPath selectors for target content |
+| `ValidationAgent` | Verify extracted config against original input |
+| `SynthesisAgent` | Combine agent outputs into final configuration |
+| `ResolutionAgent` | Reconcile conflicting outputs between agents |
+
+### Streaming Chunks
+
+```csharp
+public record AgentStreamChunk(
+    string AgentName,
+    ChunkType Type,      // Thinking, Intermediate, Question, Result, Validation
+    string Content,
+    float? Confidence,
+    bool IsCollapsible); // Reasoning is collapsible, results are not
+```
+
+### UI Guidelines
+
+- Reasoning is **collapsed by default** with "Show thinking" toggle
+- Per-agent activity indicators show parallel work
+- Final synthesized response displayed cleanly
+- User can expand any agent's reasoning for transparency
+
+## Blazor
+
+- Use `@rendermode InteractiveServer` for server-side interactivity
+- Use `NotFoundPage` parameter for 404 handling
+
+## Debugging Methodology
+
+### Complete Investigation Before Conclusions
+
+**CRITICAL**: Never stop investigating when something "looks like the problem." Real bugs often involve:
+- **Multiple contributing factors** - A "perfect storm" of conditions
+- **Cascading failures** - One issue triggering another
+- **Coincidental correlations** - Something suspicious that isn't actually the cause
+- **Hidden dependencies** - Implicit coupling between components
+
+### Investigation Workflow
+
+1. **Create investigation todos FIRST** - List ALL areas to investigate before starting
+2. **Complete ALL todos** - Even if an early finding looks like the answer
+3. **Use neutral observation language** during evidence collection:
+   - ✅ "Component X shows behavior Y"
+   - ❌ "Component X is broken" or "Found the bug in X"
+4. **NEVER short-circuit** - A "Synthesize findings" step must come AFTER all investigation
+5. **Multi-factor analysis** - Always ask: "What else could contribute to this?"
+
+### Evidence Collection Phase
+
+During investigation, record observations without conclusions:
+```
+Observation 1: ContentFetcher returns null when URL has trailing slash
+Observation 2: Repository query timeout set to 5s, average query takes 4.8s
+Observation 3: SignalR hub disconnects after 30s idle
+Observation 4: LLM provider rotates after 3 consecutive failures
+```
+
+### Synthesis Phase
+
+Only after ALL observations, ask:
+1. Which observations are **causally related**?
+2. Which are **coincidental**?
+3. Is there a **common root cause**?
+4. Could multiple factors create a **"perfect storm"**?
+5. What's the **minimal reproduction path**?
+
+### Multi-Factor Problem Patterns
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| Perfect Storm | Multiple conditions align to cause failure | Slow network + aggressive timeout + retry exhaustion |
+| Layered Failures | One issue masks/triggers another | Exception swallowed, then null propagates |
+| Coincidental Timing | Unrelated events occur together | Deploy + traffic spike (traffic was the issue) |
+| Hidden Coupling | Implicit dependencies between components | Shared static state, ambient context |
+
+### Anti-Patterns to Avoid
+
+| Anti-Pattern | Description |
+|--------------|-------------|
+| **Premature conclusion** | Stopping investigation when first issue found |
+| **Confirmation bias** | Only looking for evidence supporting initial theory |
+| **Single-cause assumption** | Believing bugs have exactly one cause |
+| **Satisfaction trap** | Feeling "done" before complete analysis |
+| **Echo chamber** | Re-reading same code expecting different insight |
+| **Scope creep** | Investigating unrelated areas without evidence |
+

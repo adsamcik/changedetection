@@ -10,6 +10,7 @@ using ChangeDetection.Services.Content;
 using ChangeDetection.Services.LLM;
 using ChangeDetection.Services.Notifications;
 using ChangeDetection.Services.Persistence;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.Scraping;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,6 +25,24 @@ builder.Services.AddSignalR();
 
 // Add HttpClient factory
 builder.Services.AddHttpClient();
+
+// Add HttpContextAccessor for getting the current request's base address
+builder.Services.AddHttpContextAccessor();
+
+// Add HttpClient with base address for Blazor WASM prerendering
+builder.Services.AddScoped(sp =>
+{
+    var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
+    var httpContext = httpContextAccessor.HttpContext;
+    
+    var httpClient = new HttpClient();
+    if (httpContext?.Request != null)
+    {
+        var request = httpContext.Request;
+        httpClient.BaseAddress = new Uri($"{request.Scheme}://{request.Host}");
+    }
+    return httpClient;
+});
 
 // Configure LiteDB
 var dbPath = builder.Configuration.GetValue<string>("LiteDb:Path") ?? "changedetection.db";
@@ -42,6 +61,10 @@ builder.Services.AddScoped<IRepository<LlmUsageRecord>>(sp =>
     new LiteDbRepository<LlmUsageRecord>(sp.GetRequiredService<LiteDbContext>(), "llm_usage"));
 builder.Services.AddScoped<IRepository<AppSettings>>(sp => 
     new LiteDbRepository<AppSettings>(sp.GetRequiredService<LiteDbContext>(), "settings"));
+builder.Services.AddScoped<IRepository<Category>>(sp => 
+    new LiteDbRepository<Category>(sp.GetRequiredService<LiteDbContext>(), "categories"));
+builder.Services.AddScoped<IRepository<View>>(sp => 
+    new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
 
 // Register services
 builder.Services.AddSingleton<PlaywrightFetcher>();
@@ -49,9 +72,27 @@ builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<Playw
 builder.Services.AddScoped<IContentExtractor, ContentExtractor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
+builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
+
+// Watch setup pipeline stages and orchestrator
+builder.Services.AddScoped<UrlExtractionStage>();
+builder.Services.AddScoped<ContentFetchingStage>();
+builder.Services.AddScoped<ContentAnalysisStage>();
+builder.Services.AddScoped<SelectorGenerationStage>();
+builder.Services.AddScoped<SelectorValidationStage>();
+builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
+
+// Pipeline support services
+builder.Services.AddSingleton<IConversationSessionManager, ConversationSessionManager>();
+builder.Services.AddScoped<IInputAnchorValidator, InputAnchorValidator>();
+
+// Object extraction and filtering services
+builder.Services.AddScoped<IObjectExtractionService, ObjectExtractionService>();
+builder.Services.AddScoped<IObjectDiffService, ObjectDiffService>();
+builder.Services.AddScoped<IFilterEvaluationService, FilterEvaluationService>();
 
 // Background services
 builder.Services.AddHostedService<ChangeCheckBackgroundService>();
@@ -80,10 +121,13 @@ app.UseAntiforgery();
 // Map API endpoints
 app.MapGroup("/api/watches").MapWatchEndpoints();
 app.MapGroup("/api/changes").MapChangeEndpoints();
+app.MapGroup("/api/categories").MapCategoryEndpoints();
 app.MapGroup("/api/llm").MapLlmEndpoints();
+app.MapGroup("/api/views").MapViewEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes");
+app.MapHub<SetupConversationHub>("/hubs/setup");
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
