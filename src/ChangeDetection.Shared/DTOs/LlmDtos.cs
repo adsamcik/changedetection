@@ -23,6 +23,10 @@ public class ProcessInputResponse
     public string? Summary { get; set; }
     public string? ErrorMessage { get; set; }
     public string? CreatedWatchId { get; set; }
+    /// <summary>
+    /// Indicates whether the request should be handed off to the multi-agent setup flow.
+    /// </summary>
+    public bool RequiresSetupFlow { get; set; }
 }
 
 /// <summary>
