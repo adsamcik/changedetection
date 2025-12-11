@@ -58,9 +58,27 @@ public class WatchedSite
     public bool IsEnabled { get; set; } = true;
     
     /// <summary>
-    /// Tags for organizing watches.
+    /// Category ID for organizing watches.
+    /// If null, the watch belongs to the default "Uncategorized" category.
+    /// </summary>
+    public Guid? CategoryId { get; set; }
+    
+    /// <summary>
+    /// LLM-generated tags for organizing and searching watches.
+    /// Tags are automatically normalized (lowercase, trimmed, deduped).
     /// </summary>
     public List<string> Tags { get; set; } = [];
+    
+    /// <summary>
+    /// User-overridden colors for specific tags (tag name -> hex color).
+    /// If a tag is not in this dictionary, its color is auto-generated from a hash.
+    /// </summary>
+    public Dictionary<string, string> TagColors { get; set; } = [];
+    
+    /// <summary>
+    /// Regex patterns to ignore when comparing content (e.g., timestamps, session IDs).
+    /// </summary>
+    public List<string> IgnorePatterns { get; set; } = [];
     
     /// <summary>
     /// Notification settings for this watch.
@@ -102,6 +120,24 @@ public class WatchedSite
     /// Number of consecutive failures.
     /// </summary>
     public int ConsecutiveFailures { get; set; }
+
+    /// <summary>
+    /// Whether structured object extraction is enabled for this watch.
+    /// When enabled, pages are parsed into objects using the schema.
+    /// </summary>
+    public bool SchemaEnabled { get; set; }
+
+    /// <summary>
+    /// Schema for extracting structured objects from the page.
+    /// Null if schema extraction is not configured.
+    /// </summary>
+    public ExtractionSchema? Schema { get; set; }
+
+    /// <summary>
+    /// Filter rules applied to extracted objects and changes.
+    /// Rules are evaluated in priority order.
+    /// </summary>
+    public List<FilterRule> FilterRules { get; set; } = [];
 }
 
 public enum WatchStatus

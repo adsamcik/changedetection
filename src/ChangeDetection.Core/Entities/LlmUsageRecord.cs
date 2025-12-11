@@ -75,5 +75,11 @@ public enum LlmUsageType
     Validation,
     ChangeSummary,
     NotificationGeneration,
+    ContentAnalysis,
+    SelectorGeneration,
+    WatchSetup,
+    SchemaDiscovery,
+    ObjectExtraction,
+    ImportanceScoring,
     Other
 }

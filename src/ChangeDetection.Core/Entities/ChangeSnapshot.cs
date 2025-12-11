@@ -46,4 +46,32 @@ public class ChangeSnapshot
     /// Size of the content in bytes.
     /// </summary>
     public long ContentSizeBytes { get; set; }
+
+    /// <summary>
+    /// JSON-serialized array of extracted objects when schema extraction is enabled.
+    /// Null if schema extraction is not enabled or failed.
+    /// </summary>
+    public string? ExtractedObjectsJson { get; set; }
+
+    /// <summary>
+    /// Version of the schema used for extraction.
+    /// Used to detect schema drift.
+    /// </summary>
+    public int? SchemaVersion { get; set; }
+
+    /// <summary>
+    /// Whether the page structure no longer matches the schema.
+    /// </summary>
+    public bool SchemaDriftDetected { get; set; }
+
+    /// <summary>
+    /// Error message if object extraction failed.
+    /// No fallback to text diff - extraction failures are explicit.
+    /// </summary>
+    public string? ExtractionError { get; set; }
+
+    /// <summary>
+    /// Warnings about objects with ambiguous/duplicate identity values.
+    /// </summary>
+    public List<string> AmbiguousIdentityWarnings { get; set; } = [];
 }

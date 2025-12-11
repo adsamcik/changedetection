@@ -71,6 +71,23 @@ public class ChangeEvent
     /// Whether the user has viewed this change.
     /// </summary>
     public bool IsViewed { get; set; }
+
+    /// <summary>
+    /// Object-level diff result when schema extraction is enabled.
+    /// Contains added, removed, and modified objects with field changes.
+    /// </summary>
+    public ObjectDiffResult? ObjectsDiff { get; set; }
+
+    /// <summary>
+    /// Filter actions that were applied to this change.
+    /// </summary>
+    public List<AppliedFilterAction> AppliedActions { get; set; } = [];
+
+    /// <summary>
+    /// Whether any extracted objects had ambiguous identity matches.
+    /// Requires user review to resolve.
+    /// </summary>
+    public bool HasAmbiguousIdentities { get; set; }
 }
 
 public enum ChangeType
@@ -79,5 +96,11 @@ public enum ChangeType
     Added,
     Removed,
     Modified,
-    Restructured
+    Restructured,
+    /// <summary>Schema extraction failed - requires user intervention.</summary>
+    SchemaExtractionFailed,
+    /// <summary>Page structure changed - schema needs re-discovery.</summary>
+    SchemaDriftDetected,
+    /// <summary>Multiple objects matched same identity - requires user resolution.</summary>
+    AmbiguousIdentity
 }
