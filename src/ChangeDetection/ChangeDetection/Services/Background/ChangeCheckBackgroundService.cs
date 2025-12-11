@@ -64,23 +64,47 @@ public class ChangeCheckBackgroundService : BackgroundService
 
             try
             {
+                // Broadcast that we're checking this watch
+                await hubContext.Clients.Group("dashboard").SendAsync("WatchStatusChanged", new
+                {
+                    WatchId = watch.Id,
+                    WatchName = watch.Name ?? watch.Url,
+                    Status = "Checking",
+                    LastError = (string?)null,
+                    LastCheck = watch.LastChecked
+                }, ct);
+
                 var changeEvent = await watchService.CheckForChangesAsync(watch.Id, ct);
+                
+                // Get updated watch status
+                var updatedWatch = await watchService.GetByIdAsync(watch.Id, ct);
+                
+                // Broadcast status update after check
+                await hubContext.Clients.Group("dashboard").SendAsync("WatchStatusChanged", new
+                {
+                    WatchId = watch.Id,
+                    WatchName = updatedWatch?.Name ?? watch.Url,
+                    Status = updatedWatch?.Status.ToString() ?? "Idle",
+                    LastError = updatedWatch?.LastError,
+                    LastCheck = updatedWatch?.LastChecked
+                }, ct);
 
                 if (changeEvent != null)
                 {
-                    // Notify via SignalR
-                    await hubContext.Clients.All.SendAsync("ChangeDetected", new
+                    // Notify via SignalR - change detected
+                    await hubContext.Clients.Group("dashboard").SendAsync("ChangeDetected", new
                     {
                         WatchId = watch.Id,
                         WatchName = watch.Name ?? watch.Url,
                         ChangeId = changeEvent.Id,
                         Summary = changeEvent.DiffSummary,
                         DetectedAt = changeEvent.DetectedAt,
-                        Importance = changeEvent.Importance.ToString()
+                        Importance = changeEvent.Importance.ToString(),
+                        LinesAdded = changeEvent.LinesAdded,
+                        LinesRemoved = changeEvent.LinesRemoved
                     }, ct);
 
                     // Send notifications if configured
-                    var updatedWatch = await watchService.GetByIdAsync(watch.Id, ct);
                     if (updatedWatch != null && ShouldNotify(updatedWatch.Notifications, changeEvent))
                     {
                         try
@@ -101,6 +125,16 @@ public class ChangeCheckBackgroundService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error checking watch {WatchId} ({Url})", watch.Id, watch.Url);
+                
+                // Broadcast error status
+                await hubContext.Clients.Group("dashboard").SendAsync("WatchStatusChanged", new
+                {
+                    WatchId = watch.Id,
+                    WatchName = watch.Name ?? watch.Url,
+                    Status = "Error",
+                    LastError = ex.Message,
+                    LastCheck = DateTime.UtcNow
+                }, ct);
             }
         }
     }

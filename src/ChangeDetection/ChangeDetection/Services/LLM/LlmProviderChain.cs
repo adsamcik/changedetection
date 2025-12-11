@@ -51,6 +51,10 @@ public class LlmProviderChain : ILlmProviderChain
             };
         }
 
+        // Apply compact mode adjustments for small models
+        var firstProvider = providers.First();
+        var effectiveOptions = ApplyCompactModeIfNeeded(options, firstProvider);
+
         foreach (var provider in providers)
         {
             try
@@ -59,7 +63,7 @@ public class LlmProviderChain : ILlmProviderChain
                 
                 var result = await circuitBreaker.ExecuteAsync(async token =>
                 {
-                    return await ExecuteWithProviderAsync(provider, prompt, options, token);
+                    return await ExecuteWithProviderAsync(provider, prompt, effectiveOptions, token);
                 }, ct);
 
                 if (result.IsSuccess)
@@ -68,7 +72,7 @@ public class LlmProviderChain : ILlmProviderChain
                     result.DurationMs = stopwatch.ElapsedMilliseconds;
                     
                     // Record usage
-                    await RecordUsageAsync(provider, result, options, ct);
+                    await RecordUsageAsync(provider, result, effectiveOptions, ct);
                     
                     return result;
                 }
@@ -339,5 +343,56 @@ public class LlmProviderChain : ILlmProviderChain
             LastError = p.LastError,
             LastErrorAt = p.LastErrorAt
         });
+    }
+
+    /// <summary>
+    /// Applies compact mode adjustments for small models.
+    /// Reduces MaxTokens by 40% and sets temperature to 0.1 for determinism.
+    /// </summary>
+    private LlmRequestOptions ApplyCompactModeIfNeeded(LlmRequestOptions options, LlmProviderConfig provider)
+    {
+        // Determine if compact mode should be enabled
+        var useCompactMode = options.CompactMode ?? IsSmallModel(provider.Model);
+        
+        if (!useCompactMode)
+        {
+            return options;
+        }
+
+        _logger.LogDebug("Applying compact mode for model {Model}", provider.Model);
+
+        // Create new options with compact mode adjustments
+        return new LlmRequestOptions
+        {
+            ProviderName = options.ProviderName,
+            Temperature = 0.1f, // Low temperature for deterministic outputs
+            MaxTokens = (int)(options.MaxTokens * 0.6), // Reduce by 40%
+            UsageType = options.UsageType,
+            WatchedSiteId = options.WatchedSiteId,
+            ExpectJson = options.ExpectJson,
+            CompactMode = true
+        };
+    }
+
+    /// <summary>
+    /// Detects if a model is considered "small" based on naming conventions.
+    /// </summary>
+    private static bool IsSmallModel(string modelName)
+    {
+        if (string.IsNullOrEmpty(modelName))
+            return false;
+
+        var lowerModel = modelName.ToLowerInvariant();
+        
+        // Check for size indicators in model name
+        return lowerModel.Contains("3b") ||
+               lowerModel.Contains("7b") ||
+               lowerModel.Contains("8b") ||
+               lowerModel.Contains("ministral") ||
+               lowerModel.Contains("small") ||
+               lowerModel.Contains("mini") ||
+               lowerModel.Contains("tiny") ||
+               lowerModel.Contains("nano") ||
+               lowerModel.Contains("lite");
     }
 }

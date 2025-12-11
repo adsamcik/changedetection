@@ -44,6 +44,9 @@ public class ServerWatchService : IWatchService
             XPathSelector = request.XPathSelector,
             CheckInterval = request.CheckInterval ?? TimeSpan.FromMinutes(30),
             Tags = request.Tags ?? [],
+            IgnorePatterns = request.IgnorePatterns ?? [],
+            TagColors = request.TagColors ?? [],
+            CategoryId = request.CategoryId,
             Description = request.Description,
             LlmProviderOverride = request.LlmProviderOverride,
             FetchSettings = request.FetchSettings ?? new FetchSettings

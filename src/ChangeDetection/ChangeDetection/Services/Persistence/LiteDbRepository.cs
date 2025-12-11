@@ -21,28 +21,28 @@ public class LiteDbRepository<T> : IRepository<T> where T : class
     {
         ct.ThrowIfCancellationRequested();
         var result = _collection.FindById(id);
-        return Task.FromResult(result);
+        return Task.FromResult<T?>(result);
     }
 
     public Task<IEnumerable<T>> GetAllAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var results = _collection.FindAll();
-        return Task.FromResult(results);
+        var results = _collection.FindAll().ToList();
+        return Task.FromResult<IEnumerable<T>>(results);
     }
 
     public Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var results = _collection.Find(predicate);
-        return Task.FromResult(results);
+        var results = _collection.Find(predicate).ToList();
+        return Task.FromResult<IEnumerable<T>>(results);
     }
 
     public Task<T?> FirstOrDefaultAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         var result = _collection.FindOne(predicate);
-        return Task.FromResult(result);
+        return Task.FromResult<T?>(result);
     }
 
     public Task<bool> ExistsAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)

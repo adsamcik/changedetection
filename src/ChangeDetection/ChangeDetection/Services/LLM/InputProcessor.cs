@@ -38,23 +38,42 @@ public partial class InputProcessor : IInputProcessor
 
         var trimmed = input.Trim();
 
-        // Check for URL patterns
+        // Check for URL patterns (starting with http:// or https://)
         if (UrlRegex().IsMatch(trimmed))
         {
-            var normalizedUrl = NormalizeUrl(trimmed);
-            var isValid = Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var uri);
-
-            return new InputAnalysis
+            // Try to extract the URL portion if there's trailing text
+            var extractedUrl = ExtractUrlFromText(trimmed);
+            
+            if (extractedUrl != null)
             {
-                Type = InputType.Url,
-                DetectedUrl = trimmed,
-                NormalizedUrl = normalizedUrl,
-                IsValid = isValid,
-                ValidationMessage = isValid ? null : "Invalid URL format"
-            };
+                var normalizedUrl = NormalizeUrl(extractedUrl);
+                var isValid = Uri.TryCreate(normalizedUrl, UriKind.Absolute, out _);
+
+                // If there's additional text after the URL, treat as natural language with embedded URL
+                if (trimmed.Length > extractedUrl.Length && trimmed[extractedUrl.Length..].Trim().Length > 0)
+                {
+                    return new InputAnalysis
+                    {
+                        Type = InputType.NaturalLanguage,
+                        DetectedUrl = extractedUrl,
+                        NormalizedUrl = isValid ? normalizedUrl : null,
+                        IsValid = true
+                    };
+                }
+
+                // Pure URL input
+                return new InputAnalysis
+                {
+                    Type = InputType.Url,
+                    DetectedUrl = extractedUrl,
+                    NormalizedUrl = normalizedUrl,
+                    IsValid = isValid,
+                    ValidationMessage = isValid ? null : "Invalid URL format"
+                };
+            }
         }
 
-        // Check for URL-like patterns (www., domain.tld)
+        // Check for URL-like patterns (www., domain.tld) without scheme
         if (DomainRegex().IsMatch(trimmed) && !trimmed.Contains(' '))
         {
             var normalizedUrl = $"https://{trimmed}";
@@ -70,12 +89,57 @@ public partial class InputProcessor : IInputProcessor
             };
         }
 
+        // Check for natural language containing a domain pattern
+        var embeddedUrl = ExtractEmbeddedUrl(trimmed);
+        if (embeddedUrl != null)
+        {
+            return new InputAnalysis
+            {
+                Type = InputType.NaturalLanguage,
+                DetectedUrl = embeddedUrl,
+                NormalizedUrl = NormalizeUrl(embeddedUrl),
+                IsValid = true
+            };
+        }
+
         // Otherwise, treat as natural language
         return new InputAnalysis
         {
             Type = InputType.NaturalLanguage,
             IsValid = true
         };
+    }
+
+    /// <summary>
+    /// Extracts a URL from text that starts with http:// or https://.
+    /// Stops at whitespace or common natural language terminators.
+    /// </summary>
+    private static string? ExtractUrlFromText(string text)
+    {
+        var match = UrlExtractRegex().Match(text);
+        return match.Success ? match.Value : null;
+    }
+
+    /// <summary>
+    /// Looks for an embedded URL or domain anywhere in the text.
+    /// </summary>
+    private static string? ExtractEmbeddedUrl(string text)
+    {
+        // First check for full URLs
+        var urlMatch = UrlExtractRegex().Match(text);
+        if (urlMatch.Success)
+        {
+            return urlMatch.Value;
+        }
+
+        // Check for domain patterns
+        var domainMatch = EmbeddedDomainRegex().Match(text);
+        if (domainMatch.Success)
+        {
+            return domainMatch.Value;
+        }
+
+        return null;
     }
 
     public async Task<LlmProcessResult> ProcessWithLlmAsync(string input, CancellationToken ct = default)
@@ -369,8 +433,30 @@ public partial class InputProcessor : IInputProcessor
     [GeneratedRegex(@"^https?://", RegexOptions.IgnoreCase)]
     private static partial Regex UrlRegex();
 
-    [GeneratedRegex(@"^(www\.)?[\w-]+\.(com|org|net|io|co|dev|app|edu|gov|mil|int|eu|uk|de|fr|jp|cn|au|ca|br|in|ru|nl|se|no|fi|dk|pl|es|it|ch|at|be|pt|gr|cz|hu|ro|bg|hr|sk|si|lt|lv|ee)(/|$)", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// Extracts a URL from text - matches http(s):// followed by valid URL characters until whitespace or end.
+    /// </summary>
+    // Allow IPv6 URLs with square brackets while still stopping at whitespace and common terminators
+    [GeneratedRegex(@"https?://[^\s<>""'\)]+", RegexOptions.IgnoreCase)]
+    private static partial Regex UrlExtractRegex();
+
+    // Comprehensive TLD list - includes common gTLDs, ccTLDs, and new TLDs
+    // Note: This is URL detection for routing purposes only (not validation), so we use a broad pattern
+    private const string TldPattern = @"com|org|net|io|co|dev|app|edu|gov|mil|int|info|biz|name|pro|museum|aero|coop|jobs|travel|mobi|cat|asia|tel|xxx|" +
+        @"eu|uk|de|fr|jp|cn|au|ca|br|in|ru|nl|se|no|fi|dk|pl|es|it|ch|at|be|pt|gr|cz|hu|ro|bg|hr|sk|si|lt|lv|ee|ie|is|lu|mt|cy|" +
+        @"us|mx|ar|cl|co\.uk|com\.au|co\.nz|co\.za|com\.br|" +
+        @"xyz|tech|club|online|site|website|store|shop|blog|news|live|world|today|space|fun|top|win|vip|work|" +
+        @"ai|cloud|digital|media|network|solutions|systems|agency|studio|design|consulting|services|" +
+        @"tv|fm|am|cc|ws|me|ly|gg|to|gl|link|click|page|one|email";
+
+    [GeneratedRegex(@$"^(www\.)?[\w-]+\.({TldPattern})(/|$)", RegexOptions.IgnoreCase)]
     private static partial Regex DomainRegex();
+
+    /// <summary>
+    /// Matches domain patterns anywhere in text (for embedded URL detection in natural language).
+    /// </summary>
+    [GeneratedRegex(@$"(?<![:/\w])(www\.)?[\w-]+\.({TldPattern})(/[\w\-._~:/?#\[\]@!$&'()*+,;=]*)?", RegexOptions.IgnoreCase)]
+    private static partial Regex EmbeddedDomainRegex();
 
     private class ValidationResult
     {

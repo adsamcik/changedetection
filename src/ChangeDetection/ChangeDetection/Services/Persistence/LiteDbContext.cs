@@ -9,11 +9,13 @@ public class LiteDbContext : IDisposable
 {
     private readonly ILiteDatabase _database;
     private bool _disposed;
+    private static bool _mapperConfigured;
+    private static readonly object _mapperLock = new();
 
     public LiteDbContext(string connectionString)
     {
-        // Configure BsonMapper for entities with 'required' properties
-        ConfigureBsonMapper();
+        // Ensure BsonMapper is configured only once
+        EnsureBsonMapperConfigured();
         
         var connection = new ConnectionString(connectionString)
         {
@@ -26,56 +28,60 @@ public class LiteDbContext : IDisposable
 
     public ILiteDatabase Database => _database;
 
-    private static void ConfigureBsonMapper()
+    private static void EnsureBsonMapperConfigured()
     {
-        // Configure ChangeSnapshot entity
-        BsonMapper.Global.Entity<Core.Entities.ChangeSnapshot>()
-            .Id(x => x.Id)
-            .Field(x => x.WatchedSiteId, "WatchedSiteId")
-            .Field(x => x.CapturedAt, "CapturedAt")
-            .Field(x => x.ContentHash, "ContentHash")
-            .Field(x => x.Content, "Content")
-            .Field(x => x.ScreenshotPath, "ScreenshotPath")
-            .Field(x => x.HttpStatusCode, "HttpStatusCode")
-            .Field(x => x.FetchDurationMs, "FetchDurationMs")
-            .Field(x => x.ContentSizeBytes, "ContentSizeBytes");
+        if (_mapperConfigured) return;
+        
+        lock (_mapperLock)
+        {
+            if (_mapperConfigured) return;
+            
+            // LiteDB requires special handling for entities with 'required' keyword
+            var mapper = BsonMapper.Global;
+            
+            // Enable automatic ID detection
+            mapper.EmptyStringToNull = true;
+            mapper.TrimWhitespace = true;
 
-        // Configure ChangeEvent entity
-        BsonMapper.Global.Entity<Core.Entities.ChangeEvent>()
-            .Id(x => x.Id)
-            .Field(x => x.WatchedSiteId, "WatchedSiteId")
-            .Field(x => x.PreviousSnapshotId, "PreviousSnapshotId")
-            .Field(x => x.CurrentSnapshotId, "CurrentSnapshotId")
-            .Field(x => x.DetectedAt, "DetectedAt")
-            .Field(x => x.DiffSummary, "DiffSummary")
-            .Field(x => x.DiffHtml, "DiffHtml")
-            .Field(x => x.ChangeType, "ChangeType")
-            .Field(x => x.Importance, "Importance")
-            .Field(x => x.IsNotified, "IsNotified")
-            .Field(x => x.NotifiedAt, "NotifiedAt")
-            .Field(x => x.LinesAdded, "LinesAdded")
-            .Field(x => x.LinesRemoved, "LinesRemoved")
-            .Field(x => x.IsViewed, "IsViewed");
+            // Register entity types with required properties to ensure proper serialization
+            // WatchedSite
+            mapper.Entity<Core.Entities.WatchedSite>()
+                .Id(x => x.Id)
+                .Field(x => x.Url, "Url");
 
-        // Configure WatchedSite entity
-        BsonMapper.Global.Entity<Core.Entities.WatchedSite>()
-            .Id(x => x.Id)
-            .Field(x => x.Url, "Url");
+            // ChangeSnapshot
+            mapper.Entity<Core.Entities.ChangeSnapshot>()
+                .Id(x => x.Id)
+                .Field(x => x.WatchedSiteId, "WatchedSiteId")
+                .Field(x => x.ContentHash, "ContentHash")
+                .Field(x => x.Content, "Content");
 
-        // Configure LlmProviderConfig entity
-        BsonMapper.Global.Entity<Core.Entities.LlmProviderConfig>()
-            .Id(x => x.Id)
-            .Field(x => x.Name, "Name")
-            .Field(x => x.ApiKey, "ApiKey")
-            .Field(x => x.Endpoint, "Endpoint")
-            .Field(x => x.Model, "Model");
+            // ChangeEvent
+            mapper.Entity<Core.Entities.ChangeEvent>()
+                .Id(x => x.Id)
+                .Field(x => x.WatchedSiteId, "WatchedSiteId")
+                .Field(x => x.PreviousSnapshotId, "PreviousSnapshotId")
+                .Field(x => x.CurrentSnapshotId, "CurrentSnapshotId");
 
-        // Configure LlmUsageRecord entity
-        BsonMapper.Global.Entity<Core.Entities.LlmUsageRecord>()
-            .Id(x => x.Id)
-            .Field(x => x.ProviderId, "ProviderId")
-            .Field(x => x.ProviderName, "ProviderName")
-            .Field(x => x.Model, "Model");
+            // LlmProviderConfig
+            mapper.Entity<Core.Entities.LlmProviderConfig>()
+                .Id(x => x.Id)
+                .Field(x => x.Name, "Name")
+                .Field(x => x.Model, "Model");
+
+            // LlmUsageRecord
+            mapper.Entity<Core.Entities.LlmUsageRecord>()
+                .Id(x => x.Id)
+                .Field(x => x.ProviderId, "ProviderId")
+                .Field(x => x.ProviderName, "ProviderName")
+                .Field(x => x.Model, "Model");
+
+            // AppSettings
+            mapper.Entity<Core.Entities.AppSettings>()
+                .Id(x => x.Id);
+            
+            _mapperConfigured = true;
+        }
     }
 
     private void ConfigureCollections()
