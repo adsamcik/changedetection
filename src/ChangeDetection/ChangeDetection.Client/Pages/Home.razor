@@ -372,6 +372,11 @@
         hubConnection = new HubConnectionBuilder()
             .WithUrl($"{baseUri}/hubs/changes")
             .WithAutomaticReconnect()
+            .AddJsonProtocol(options =>
+            {
+                options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+                options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+            })
             .Build();
 
         hubConnection.On<object>("ChangeDetected", async (data) =>
@@ -383,9 +388,9 @@
         hubConnection.On<System.Text.Json.JsonElement>("WatchStatusChanged", async (data) =>
         {
             // Track processing events for Recent Activity
-            var watchId = data.GetProperty("WatchId").GetString() ?? data.GetProperty("WatchId").GetGuid().ToString();
-            var watchName = data.GetProperty("WatchName").GetString() ?? "";
-            var status = data.GetProperty("Status").GetString() ?? "";
+            var watchId = data.GetProperty("watchId").GetString() ?? data.GetProperty("watchId").GetGuid().ToString();
+            var watchName = data.GetProperty("watchName").GetString() ?? "";
+            var status = data.GetProperty("status").GetString() ?? "";
             
             if (status == "Checking")
             {

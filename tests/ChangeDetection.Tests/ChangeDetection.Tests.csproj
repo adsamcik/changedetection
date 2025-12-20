@@ -36,6 +36,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="EndToEnd\Resources\*.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\ChangeDetection.Core\ChangeDetection.Core.csproj" />
     <ProjectReference Include="..\..\src\ChangeDetection.Shared\ChangeDetection.Shared.csproj" />
     <ProjectReference Include="..\..\src\ChangeDetection\ChangeDetection\ChangeDetection.csproj" />

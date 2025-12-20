@@ -532,10 +532,15 @@ section h2 {
     padding: 1.5rem;
     max-width: 400px;
     width: 90%;
+    z-index: 1001;
+    position: relative;
+    color: var(--text-color, #333);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
 
 .modal h3 {
     margin: 0 0 0.75rem;
+    color: var(--text-color, #333);
 }
 
 .modal p {

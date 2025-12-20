@@ -340,6 +340,11 @@ public class SetupSessionStateDto
     public bool AwaitingInput { get; set; }
 
     /// <summary>
+    /// Whether the session is running in the background.
+    /// </summary>
+    public bool IsBackgrounded { get; set; }
+
+    /// <summary>
     /// The current question/prompt awaiting user response (when AwaitingInput is true).
     /// </summary>
     public string? CurrentPrompt { get; set; }

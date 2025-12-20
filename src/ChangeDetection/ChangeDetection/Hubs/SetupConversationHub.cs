@@ -218,11 +218,51 @@ public class SetupConversationHub(
         // Get or create pipeline session
         PipelineSessions.TryGetValue(request.SessionId, out var pipelineSession);
 
-        // Stream pipeline updates
-        await foreach (var entry in StreamPipelineAsync(request.SessionId, request.Message, pipelineSession, ct))
+        // Stream pipeline updates with exception handling
+        // Note: We can't use try-catch around yield return, so we use a channel-based approach
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<FlowStateEntryDto>();
+        
+        var streamTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var entry in StreamPipelineAsync(request.SessionId, request.Message, pipelineSession, ct))
+                {
+                    await channel.Writer.WriteAsync(entry, ct);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when client disconnects
+                logger.LogDebug("Pipeline streaming cancelled for session {SessionId}", request.SessionId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Pipeline streaming failed for session {SessionId}", request.SessionId);
+                
+                // Write error entry before completing
+                await channel.Writer.WriteAsync(new FlowStateEntryDto
+                {
+                    Stage = "Failed",
+                    Status = FlowStateStatusDto.Failed,
+                    Summary = $"An error occurred: {ex.Message}",
+                    Details = ex.GetType().Name,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    IsCurrentState = true
+                }, CancellationToken.None);
+            }
+            finally
+            {
+                channel.Writer.Complete();
+            }
+        }, ct);
+
+        await foreach (var entry in channel.Reader.ReadAllAsync(ct))
         {
             yield return RecordStateEntry(request.SessionId, entry);
         }
+
+        await streamTask;
     }
 
     /// <summary>
@@ -652,8 +692,9 @@ public class SetupConversationHub(
         return new SetupSessionStateDto
         {
             SessionId = session.SessionId,
-            Stage = pipelineSession?.BestSelector != null ? "Complete" : "InProgress",
+            Stage = pipelineSession?.BestSelector != null ? "Complete" : (session.CurrentPipelineStage ?? "InProgress"),
             AwaitingInput = session.AwaitingUserInput,
+            IsBackgrounded = session.IsBackgrounded,
             CurrentPrompt = session.CurrentPrompt,
             Configuration = pipelineSession?.BestSelector != null 
                 ? new PartialWatchConfigurationDto
