@@ -90,3 +90,46 @@ dotnet test --filter "..."
 # ❌ WRONG - Partial output only!  
 dotnet test ... | Select-Object -Last 20
 ```
+
+## Debugging Test Failures
+
+When tests fail:
+1. **Check `test-output.log`** - Contains full stack traces and diagnostic output
+2. **Review `TestResults/results.trx`** - Structured results for CI parsing
+3. **Use `Log()` method** - Add diagnostic logging in TestBase-derived tests
+4. **Check `LogCollector.GetSnapshot()`** - Verify expected log messages
+
+## Test Writing Best Practices
+
+### Naming Convention
+```csharp
+[Fact]
+public void MethodName_Scenario_ExpectedBehavior()
+{
+    // Arrange, Act, Assert
+}
+
+[Theory]
+[InlineData("input1", "expected1")]
+[InlineData("input2", "expected2")]
+public void MethodName_WithVariousInputs_ReturnsExpected(string input, string expected)
+{
+}
+```
+
+### Async Tests
+```csharp
+[Fact]
+public async Task AsyncMethod_Scenario_ExpectedBehavior()
+{
+    // Use proper async/await
+    var result = await sut.DoWorkAsync();
+    result.ShouldNotBeNull();
+}
+```
+
+### Mocking with NSubstitute
+```csharp
+var mockRepo = Substitute.For<IRepository<WatchedSite>>();
+mockRepo.GetByIdAsync(Arg.Any<Guid>()).Returns(expectedSite);
+```

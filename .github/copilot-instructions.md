@@ -32,15 +32,29 @@ tests/
 ```powershell
 # Build
 dotnet build
+```
 
-# ⚠️ MANDATORY: Run tests via test.ps1 script - NEVER use dotnet test directly!
+### ⚠️ CRITICAL: Test Execution Rules
+
+**ALWAYS use `./test.ps1`** - NEVER call `dotnet test` directly!
+
+```powershell
 ./test.ps1                                           # All tests
 ./test.ps1 -Filter "FullyQualifiedName~TestName"     # Specific test
 ./test.ps1 -Filter "Category=Unit" -NoBuild          # By category, skip build
+./test.ps1 -TailLines 100                            # Show more console output
 ```
 
-> **Why test.ps1?** It ensures all output is logged to `test-output.log` for debugging.
-> Direct `dotnet test` calls lose important diagnostic information.
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `-Filter` | xUnit filter expression | (all tests) |
+| `-NoBuild` | Skip build step | `$false` |
+| `-TailLines` | Console output lines | `50` |
+
+> **Why test.ps1?** It captures ALL output to `test-output.log` for debugging.
+> Direct `dotnet test` loses critical diagnostic information including stack traces.
+> 
+> **After test failures:** Check `test-output.log` for full details.
 
 ## Key Interfaces
 
@@ -85,10 +99,19 @@ The watch setup pipeline is **LLM-only**:
 ## Specialized Instructions
 
 Domain-specific guidance is in `.github/instructions/`:
-- `testing.instructions.md` - Test patterns, TestBase usage
+- `testing.instructions.md` - **Test patterns, TestBase usage, test.ps1 script**
 - `csharp.instructions.md` - C# 14 features, code style
 - `blazor.instructions.md` - Blazor/SignalR streaming patterns
 - `llm-pipeline.instructions.md` - LLM agent architecture
 - `debugging.instructions.md` - Investigation methodology
 - `implementation.instructions.md` - Quality standards
+
+## Test Files Reference
+
+| File | Purpose |
+|------|---------|
+| `test.ps1` | **REQUIRED** test runner script |
+| `test-output.log` | Full test output (check after failures) |
+| `TestResults/results.trx` | Structured XML results |
+| `tests/ChangeDetection.Tests/TestBase.cs` | Base class for all tests |
 
