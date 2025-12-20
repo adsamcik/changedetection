@@ -81,5 +81,30 @@ public enum LlmUsageType
     SchemaDiscovery,
     ObjectExtraction,
     ImportanceScoring,
+    ErrorResolution,
+    /// <summary>
+    /// LLM-powered semantic summarization of detected changes.
+    /// </summary>
+    SemanticSummary,
+    /// <summary>
+    /// Scoring relevance of changes against user's monitoring intent.
+    /// </summary>
+    RelevanceScoring,
+    /// <summary>
+    /// Entity and metadata enrichment during content ingestion.
+    /// </summary>
+    EntityEnrichment,
+    /// <summary>
+    /// Anomaly detection by comparing against historical patterns.
+    /// </summary>
+    AnomalyDetection,
+    /// <summary>
+    /// Content type and category classification.
+    /// </summary>
+    ContentClassification,
+    /// <summary>
+    /// Sentiment analysis of content changes.
+    /// </summary>
+    SentimentAnalysis,
     Other
 }
