@@ -38,4 +38,25 @@ public class CreateWatchRequest
     public FetchSettings? FetchSettings { get; set; }
     public string? LlmProviderOverride { get; set; }
     public string? Description { get; set; }
+    
+    /// <summary>
+    /// Schedule settings for check frequency control.
+    /// If null, defaults to fixed mode with the specified CheckInterval.
+    /// </summary>
+    public CheckScheduleSettings? ScheduleSettings { get; set; }
+
+    /// <summary>
+    /// Whether structured object extraction is enabled for this watch.
+    /// </summary>
+    public bool SchemaEnabled { get; set; }
+
+    /// <summary>
+    /// Schema for extracting structured objects from the page.
+    /// </summary>
+    public ExtractionSchema? Schema { get; set; }
+
+    /// <summary>
+    /// Filter rules to apply to extracted objects and changes.
+    /// </summary>
+    public List<FilterRule>? FilterRules { get; set; }
 }

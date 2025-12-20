@@ -1,10 +1,13 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.SemanticKernel.Connectors.Anthropic;
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.Timeout;
 
 namespace ChangeDetection.Services.LLM;
 
@@ -17,6 +20,7 @@ public class LlmProviderChain : ILlmProviderChain
     private readonly IRepository<LlmUsageRecord> _usageRepo;
     private readonly ILogger<LlmProviderChain> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ILlmLogService _llmLog;
     private readonly Dictionary<Guid, ResiliencePipeline> _circuitBreakers = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -24,12 +28,14 @@ public class LlmProviderChain : ILlmProviderChain
         IRepository<LlmProviderConfig> providerRepo,
         IRepository<LlmUsageRecord> usageRepo,
         ILogger<LlmProviderChain> logger,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        ILlmLogService llmLogService)
     {
         _providerRepo = providerRepo;
         _usageRepo = usageRepo;
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _llmLog = llmLogService;
     }
 
     public async Task<LlmResponse> ExecuteAsync(string prompt, LlmRequestOptions? options = null, CancellationToken ct = default)
@@ -59,6 +65,9 @@ public class LlmProviderChain : ILlmProviderChain
         {
             try
             {
+                // Log the request attempt
+                _llmLog.LogRequest(provider.Name, provider.Model, prompt);
+                
                 var circuitBreaker = await GetOrCreateCircuitBreakerAsync(provider);
                 
                 var result = await circuitBreaker.ExecuteAsync(async token =>
@@ -71,6 +80,21 @@ public class LlmProviderChain : ILlmProviderChain
                     result.FailedProviderCount = failedProviders;
                     result.DurationMs = stopwatch.ElapsedMilliseconds;
                     
+                    // Log successful response
+                    _llmLog.LogResponse(
+                        provider.Name,
+                        provider.Model,
+                        result.Content ?? "",
+                        result.DurationMs,
+                        result.InputTokens,
+                        result.OutputTokens);
+                    
+                    // Restore health if previously unhealthy
+                    if (!provider.IsHealthy)
+                    {
+                        await UpdateProviderHealthAsync(provider, isHealthy: true, null, ct);
+                    }
+                    
                     // Record usage
                     await RecordUsageAsync(provider, result, effectiveOptions, ct);
                     
@@ -79,19 +103,35 @@ public class LlmProviderChain : ILlmProviderChain
                 
                 failedProviders++;
                 _logger.LogWarning("Provider {Provider} returned unsuccessful result, trying next", provider.Name);
+                
+                // Log unsuccessful result and try fallback
+                var nextProvider = providers.Skip(failedProviders).FirstOrDefault();
+                if (nextProvider != null)
+                {
+                    _llmLog.LogFallback(provider.Name, nextProvider.Name, "Provider returned unsuccessful result");
+                }
             }
             catch (BrokenCircuitException)
             {
                 failedProviders++;
                 _logger.LogWarning("Provider {Provider} circuit breaker is open, skipping", provider.Name);
+                _llmLog.LogCircuitBreakerBlocked(provider.Name);
             }
             catch (Exception ex)
             {
                 failedProviders++;
                 _logger.LogError(ex, "Provider {Provider} failed with exception", provider.Name);
+                _llmLog.LogError(provider.Name, provider.Model, ex, prompt);
                 
                 // Update provider health
                 await UpdateProviderHealthAsync(provider, false, ex.Message, ct);
+                
+                // Log fallback if there's a next provider
+                var nextProvider = providers.Skip(failedProviders).FirstOrDefault();
+                if (nextProvider != null)
+                {
+                    _llmLog.LogFallback(provider.Name, nextProvider.Name, ex.Message);
+                }
             }
         }
 
@@ -104,12 +144,207 @@ public class LlmProviderChain : ILlmProviderChain
         };
     }
 
+    public async IAsyncEnumerable<LlmStreamChunk> ExecuteStreamingAsync(
+        string prompt, 
+        LlmRequestOptions? options = null, 
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        options ??= new LlmRequestOptions();
+        var stopwatch = Stopwatch.StartNew();
+        var failedProviders = 0;
+
+        // Get providers ordered by priority
+        var providers = await GetProvidersToTryAsync(options.ProviderName, ct);
+        
+        if (!providers.Any())
+        {
+            yield return new LlmStreamChunk
+            {
+                Type = LlmStreamChunkType.Error,
+                ErrorMessage = "No LLM providers available"
+            };
+            yield break;
+        }
+
+        // Apply compact mode adjustments for small models
+        var firstProvider = providers.First();
+        var effectiveOptions = ApplyCompactModeIfNeeded(options, firstProvider);
+
+        foreach (var provider in providers)
+        {
+            // Get the circuit breaker for this provider
+            var circuitBreaker = await GetOrCreateCircuitBreakerAsync(provider);
+            
+            // Collect chunks in a channel to avoid yield in try-catch
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<LlmStreamChunk>();
+            var streamingSuccess = false;
+            Exception? providerException = null;
+            
+            // Start streaming in background task
+            var streamTask = Task.Run(async () =>
+            {
+                try
+                {
+                    // Execute the streaming through the circuit breaker pipeline
+                    // This wraps the entire streaming operation with retry, timeout, and circuit breaker
+                    await circuitBreaker.ExecuteAsync(async (pipelineCt) =>
+                    {
+                        channel.Writer.TryWrite(new LlmStreamChunk
+                        {
+                            Type = LlmStreamChunkType.Start,
+                            ProviderName = provider.Name,
+                            Model = provider.Model
+                        });
+
+                        var contentBuilder = new System.Text.StringBuilder();
+                        
+                        await foreach (var chunk in ExecuteStreamingWithProviderAsync(provider, prompt, effectiveOptions, pipelineCt))
+                        {
+                            if (chunk.Type == LlmStreamChunkType.Content && chunk.Text != null)
+                            {
+                                contentBuilder.Append(chunk.Text);
+                            }
+                            channel.Writer.TryWrite(chunk);
+                        }
+
+                        // Build final response
+                        var content = contentBuilder.ToString();
+                        var inputTokens = (int)(prompt.Length / 4.0);
+                        var outputTokens = (int)(content.Length / 4.0);
+                        var cost = CalculateCost(provider, inputTokens, outputTokens);
+
+                        var finalResponse = new LlmResponse
+                        {
+                            IsSuccess = true,
+                            Content = content,
+                            ProviderUsed = provider.Name,
+                            Model = provider.Model,
+                            InputTokens = inputTokens,
+                            OutputTokens = outputTokens,
+                            Cost = cost,
+                            DurationMs = stopwatch.ElapsedMilliseconds
+                        };
+
+                        // Restore health if previously unhealthy
+                        if (!provider.IsHealthy)
+                        {
+                            await UpdateProviderHealthAsync(provider, isHealthy: true, null, pipelineCt);
+                        }
+                        
+                        // Record usage
+                        await RecordUsageAsync(provider, finalResponse, effectiveOptions, pipelineCt);
+
+                        channel.Writer.TryWrite(new LlmStreamChunk
+                        {
+                            Type = LlmStreamChunkType.Complete,
+                            FinalResponse = finalResponse
+                        });
+                        
+                        streamingSuccess = true;
+                    }, ct);
+                }
+                catch (BrokenCircuitException)
+                {
+                    _logger.LogWarning("Provider {Provider} circuit breaker is open, skipping", provider.Name);
+                    _llmLog.LogCircuitBreakerBlocked(provider.Name);
+                    providerException = new BrokenCircuitException();
+                }
+                catch (TimeoutRejectedException ex)
+                {
+                    _logger.LogWarning("Provider {Provider} timed out during streaming", provider.Name);
+                    _llmLog.LogError(provider.Name, provider.Model, ex, prompt);
+                    providerException = ex;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Provider {Provider} failed with exception during streaming", provider.Name);
+                    _llmLog.LogError(provider.Name, provider.Model, ex, prompt);
+                    providerException = ex;
+                }
+                finally
+                {
+                    channel.Writer.Complete();
+                }
+            }, ct);
+
+            // Yield chunks as they come in
+            await foreach (var chunk in channel.Reader.ReadAllAsync(ct))
+            {
+                yield return chunk;
+            }
+
+            await streamTask;
+
+            if (streamingSuccess)
+            {
+                yield break; // Success, don't try other providers
+            }
+
+            // Handle failure
+            failedProviders++;
+            if (providerException != null && providerException is not BrokenCircuitException)
+            {
+                await UpdateProviderHealthAsync(provider, false, providerException.Message, ct);
+                
+                // Log fallback if there's a next provider
+                var nextProvider = providers.Skip(failedProviders).FirstOrDefault();
+                if (nextProvider != null)
+                {
+                    _llmLog.LogFallback(provider.Name, nextProvider.Name, providerException.Message);
+                }
+            }
+        }
+
+        yield return new LlmStreamChunk
+        {
+            Type = LlmStreamChunkType.Error,
+            ErrorMessage = "All LLM providers failed"
+        };
+    }
+
+    private async IAsyncEnumerable<LlmStreamChunk> ExecuteStreamingWithProviderAsync(
+        LlmProviderConfig provider,
+        string prompt,
+        LlmRequestOptions options,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var kernel = CreateKernelForProvider(provider);
+        var chatService = kernel.GetRequiredService<IChatCompletionService>();
+
+        var chatHistory = new ChatHistory();
+        chatHistory.AddUserMessage(prompt);
+
+        var settings = new PromptExecutionSettings
+        {
+            ExtensionData = new Dictionary<string, object>
+            {
+                ["temperature"] = options.Temperature,
+                ["max_tokens"] = options.MaxTokens
+            }
+        };
+
+        await foreach (var content in chatService.GetStreamingChatMessageContentsAsync(chatHistory, settings, kernel, ct))
+        {
+            if (!string.IsNullOrEmpty(content.Content))
+            {
+                yield return new LlmStreamChunk
+                {
+                    Type = LlmStreamChunkType.Content,
+                    Text = content.Content,
+                    ProviderName = provider.Name,
+                    Model = provider.Model
+                };
+            }
+        }
+    }
+
     private async Task<IEnumerable<LlmProviderConfig>> GetProvidersToTryAsync(string? specificProvider, CancellationToken ct)
     {
         var allProviders = await _providerRepo.GetAllAsync(ct);
         var enabledProviders = allProviders
             .Where(p => p.IsEnabled && p.IsHealthy)
-            .OrderBy(p => p.Priority);
+            .OrderBy(p => p.Priority)
+            .ToList();
 
         if (!string.IsNullOrEmpty(specificProvider))
         {
@@ -122,7 +357,101 @@ public class LlmProviderChain : ILlmProviderChain
             }
         }
 
+        // If no providers configured, try auto-detecting Ollama
+        if (enabledProviders.Count == 0)
+        {
+            var ollamaProvider = await TryAutoDetectOllamaAsync(ct);
+            if (ollamaProvider != null)
+            {
+                return [ollamaProvider];
+            }
+        }
+
         return enabledProviders;
+    }
+
+    private async Task<LlmProviderConfig?> TryAutoDetectOllamaAsync(CancellationToken ct)
+    {
+        const string ollamaEndpoint = "http://localhost:11434";
+        // Preferred models in order of preference
+        string[] preferredModels = ["ministral-3:14b", "ministral-3:8b", "llama3.1"];
+        
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            var response = await http.GetAsync($"{ollamaEndpoint}/api/tags", ct);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("Ollama not available at {Endpoint}", ollamaEndpoint);
+                return null;
+            }
+            
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var models = System.Text.Json.JsonDocument.Parse(json);
+            
+            string? modelToUse = null;
+            string? firstAvailable = null;
+            
+            // Collect all available model names
+            List<string> availableModels = [];
+            if (models.RootElement.TryGetProperty("models", out var modelsArray))
+            {
+                foreach (var model in modelsArray.EnumerateArray())
+                {
+                    if (model.TryGetProperty("name", out var nameElement))
+                    {
+                        var name = nameElement.GetString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            availableModels.Add(name);
+                            firstAvailable ??= name;
+                        }
+                    }
+                }
+            }
+            
+            // Find best preferred model
+            foreach (var preferred in preferredModels)
+            {
+                if (availableModels.Contains(preferred))
+                {
+                    modelToUse = preferred;
+                    break;
+                }
+            }
+            
+            // Fallback to first available
+            modelToUse ??= firstAvailable;
+            
+            if (string.IsNullOrEmpty(modelToUse))
+            {
+                _logger.LogDebug("No models found in Ollama");
+                return null;
+            }
+            
+            _logger.LogInformation("Auto-detected Ollama with model {Model}", modelToUse);
+            
+            return new LlmProviderConfig
+            {
+                Id = Guid.Empty, // Ephemeral provider, not persisted
+                Name = "Ollama (Auto-detected)",
+                ProviderType = LlmProviderType.Ollama,
+                Endpoint = ollamaEndpoint,
+                Model = modelToUse,
+                Priority = 999,
+                IsEnabled = true,
+                IsHealthy = true,
+                TimeoutSeconds = 300, // 5 minutes for local models
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not auto-detect Ollama");
+            return null;
+        }
     }
 
     private async Task<LlmResponse> ExecuteWithProviderAsync(
@@ -211,14 +540,14 @@ public class LlmProviderChain : ILlmProviderChain
                 break;
 
             case LlmProviderType.Claude:
-                // Claude support via OpenAI-compatible endpoint or custom connector
-                // For now, using OpenAI connector with Anthropic endpoint
-#pragma warning disable SKEXP0010
-                builder.AddOpenAIChatCompletion(
-                    modelId: provider.Model,
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Claude API key is required"),
-                    endpoint: new Uri(provider.Endpoint ?? "https://api.anthropic.com/v1"));
-#pragma warning restore SKEXP0010
+                // Claude support via proper Anthropic connector
+#pragma warning disable SKEXP0070
+                builder.Services.AddKeyedSingleton<IChatCompletionService>(
+                    null,
+                    new AnthropicChatCompletionService(
+                        modelId: provider.Model,
+                        apiKey: provider.ApiKey ?? throw new InvalidOperationException("Claude API key is required")));
+#pragma warning restore SKEXP0070
                 break;
 
             default:
@@ -248,11 +577,18 @@ public class LlmProviderChain : ILlmProviderChain
                     OnOpened = args =>
                     {
                         _logger.LogWarning("Circuit breaker opened for provider {Provider}", provider.Name);
+                        _llmLog.LogCircuitBreaker(provider.Name, isOpen: true, 
+                            $"Failure ratio exceeded threshold. Break duration: 5 minutes");
+                        // Fire-and-forget database update (callback context doesn't support await)
+                        _ = UpdateProviderHealthAsync(provider, isHealthy: false, "Circuit breaker opened", CancellationToken.None);
                         return ValueTask.CompletedTask;
                     },
                     OnClosed = args =>
                     {
                         _logger.LogInformation("Circuit breaker closed for provider {Provider}", provider.Name);
+                        _llmLog.LogCircuitBreaker(provider.Name, isOpen: false, "Provider recovered");
+                        // Fire-and-forget database update (callback context doesn't support await)
+                        _ = UpdateProviderHealthAsync(provider, isHealthy: true, null, CancellationToken.None);
                         return ValueTask.CompletedTask;
                     }
                 })
@@ -265,6 +601,8 @@ public class LlmProviderChain : ILlmProviderChain
                     {
                         _logger.LogWarning("Retrying provider {Provider}, attempt {Attempt}", 
                             provider.Name, args.AttemptNumber);
+                        _llmLog.LogRetry(provider.Name, provider.Model, args.AttemptNumber, 
+                            args.Outcome.Exception?.Message);
                         return ValueTask.CompletedTask;
                     }
                 })

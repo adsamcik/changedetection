@@ -26,7 +26,7 @@ public class LiteDbContext : IDisposable
         ConfigureCollections();
     }
 
-    public ILiteDatabase Database => _database;
+    public virtual ILiteDatabase Database => _database;
 
     private static void EnsureBsonMapperConfigured()
     {
@@ -80,6 +80,28 @@ public class LiteDbContext : IDisposable
             mapper.Entity<Core.Entities.AppSettings>()
                 .Id(x => x.Id);
             
+            // User
+            mapper.Entity<Core.Entities.User>()
+                .Id(x => x.Id)
+                .Field(x => x.Username, "Username");
+            
+            // Category
+            mapper.Entity<Core.Entities.Category>()
+                .Id(x => x.Id)
+                .Field(x => x.Name, "Name");
+            
+            // View
+            mapper.Entity<Core.Entities.View>()
+                .Id(x => x.Id)
+                .Field(x => x.Name, "Name");
+            
+            // PriceHistoryEntry
+            mapper.Entity<Core.Entities.PriceHistoryEntry>()
+                .Id(x => x.Id)
+                .Field(x => x.WatchId, "WatchId")
+                .Field(x => x.FieldName, "FieldName")
+                .Field(x => x.Value, "Value");
+            
             _mapperConfigured = true;
         }
     }
@@ -93,17 +115,20 @@ public class LiteDbContext : IDisposable
         watches.EnsureIndex(x => x.Status);
         watches.EnsureIndex(x => x.LastChecked);
         watches.EnsureIndex(x => x.Tags);
+        watches.EnsureIndex(x => x.OwnerId);
 
         // Configure indexes for ChangeSnapshots
         var snapshots = _database.GetCollection<Core.Entities.ChangeSnapshot>("snapshots");
         snapshots.EnsureIndex(x => x.WatchedSiteId);
         snapshots.EnsureIndex(x => x.CapturedAt);
+        snapshots.EnsureIndex(x => x.OwnerId);
 
         // Configure indexes for ChangeEvents
         var events = _database.GetCollection<Core.Entities.ChangeEvent>("events");
         events.EnsureIndex(x => x.WatchedSiteId);
         events.EnsureIndex(x => x.DetectedAt);
         events.EnsureIndex(x => x.IsViewed);
+        events.EnsureIndex(x => x.OwnerId);
 
         // Configure indexes for LlmProviderConfigs
         var providers = _database.GetCollection<Core.Entities.LlmProviderConfig>("llm_providers");
@@ -116,6 +141,21 @@ public class LiteDbContext : IDisposable
         usage.EnsureIndex(x => x.ProviderId);
         usage.EnsureIndex(x => x.Timestamp);
         usage.EnsureIndex(x => x.UsageType);
+        
+        // Configure indexes for Categories
+        var categories = _database.GetCollection<Core.Entities.Category>("categories");
+        categories.EnsureIndex(x => x.Name);
+        categories.EnsureIndex(x => x.OwnerId);
+        
+        // Configure indexes for Views
+        var views = _database.GetCollection<Core.Entities.View>("views");
+        views.EnsureIndex(x => x.Name);
+        views.EnsureIndex(x => x.OwnerId);
+        
+        // Configure indexes for Users
+        var users = _database.GetCollection<Core.Entities.User>("users");
+        users.EnsureIndex(x => x.Username, unique: true);
+        users.EnsureIndex(x => x.Email);
     }
 
     public void Dispose()

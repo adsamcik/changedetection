@@ -13,6 +13,11 @@ public interface ILlmProviderChain
     Task<LlmResponse> ExecuteAsync(string prompt, LlmRequestOptions? options = null, CancellationToken ct = default);
     
     /// <summary>
+    /// Executes a streaming completion request, yielding tokens as they arrive.
+    /// </summary>
+    IAsyncEnumerable<LlmStreamChunk> ExecuteStreamingAsync(string prompt, LlmRequestOptions? options = null, CancellationToken ct = default);
+    
+    /// <summary>
     /// Gets the currently available providers ordered by priority.
     /// </summary>
     Task<IEnumerable<LlmProviderConfig>> GetAvailableProvidersAsync(CancellationToken ct = default);
@@ -21,6 +26,45 @@ public interface ILlmProviderChain
     /// Gets the health status of all providers.
     /// </summary>
     Task<IEnumerable<ProviderHealthStatus>> GetHealthStatusAsync(CancellationToken ct = default);
+}
+
+/// <summary>
+/// A chunk of streaming LLM response.
+/// </summary>
+public class LlmStreamChunk
+{
+    /// <summary>Type of chunk.</summary>
+    public LlmStreamChunkType Type { get; set; }
+    
+    /// <summary>Text content for Content chunks.</summary>
+    public string? Text { get; set; }
+    
+    /// <summary>Provider being used.</summary>
+    public string? ProviderName { get; set; }
+    
+    /// <summary>Model being used.</summary>
+    public string? Model { get; set; }
+    
+    /// <summary>Error message for Error chunks.</summary>
+    public string? ErrorMessage { get; set; }
+    
+    /// <summary>Final response for Complete chunks.</summary>
+    public LlmResponse? FinalResponse { get; set; }
+}
+
+/// <summary>
+/// Type of streaming chunk.
+/// </summary>
+public enum LlmStreamChunkType
+{
+    /// <summary>Stream is starting.</summary>
+    Start,
+    /// <summary>Content token.</summary>
+    Content,
+    /// <summary>Stream completed successfully.</summary>
+    Complete,
+    /// <summary>Error occurred.</summary>
+    Error
 }
 
 /// <summary>

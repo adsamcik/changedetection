@@ -10,6 +10,7 @@ namespace ChangeDetection.Services.Scraping;
 public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
 {
     private readonly ILogger<PlaywrightFetcher> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly SemaphoreSlim _concurrencyLimiter;
     private IPlaywright? _playwright;
@@ -17,9 +18,10 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
     private bool _initialized;
     private bool _disposed;
 
-    public PlaywrightFetcher(ILogger<PlaywrightFetcher> logger, int maxConcurrentPages = 5)
+    public PlaywrightFetcher(ILogger<PlaywrightFetcher> logger, IHttpClientFactory httpClientFactory, int maxConcurrentPages = 5)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrentPages, maxConcurrentPages);
     }
 
@@ -59,11 +61,16 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Maximum allowed response size in bytes (10 MB).
+    /// </summary>
+    private const long MaxResponseSizeBytes = 10 * 1024 * 1024;
+
     private async Task<FetchResult> FetchWithHttpClientAsync(string url, FetchOptions options, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
         
-        using var client = new HttpClient();
+        using var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 
         if (!string.IsNullOrEmpty(options.UserAgent))
@@ -80,14 +87,46 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
             client.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        var response = await client.GetAsync(url, ct);
-        var html = await response.Content.ReadAsStringAsync(ct);
+        // Use ResponseHeadersRead to avoid buffering the entire response
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
 
         stopwatch.Stop();
 
         var responseHeaders = response.Headers
             .Concat(response.Content.Headers)
             .ToDictionary(h => h.Key, h => string.Join(", ", h.Value));
+
+        // Check Content-Length header if available
+        var contentLength = response.Content.Headers.ContentLength;
+        if (contentLength > MaxResponseSizeBytes)
+        {
+            _logger.LogWarning("Response from {Url} exceeds size limit: {Size} bytes (limit: {Limit} bytes)", 
+                url, contentLength, MaxResponseSizeBytes);
+            return new FetchResult
+            {
+                IsSuccess = false,
+                ErrorMessage = $"Response size ({contentLength:N0} bytes) exceeds maximum allowed size ({MaxResponseSizeBytes:N0} bytes)",
+                HttpStatusCode = (int)response.StatusCode,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ResponseHeaders = responseHeaders
+            };
+        }
+
+        // Read content with streaming size limit for responses without Content-Length
+        var html = await ReadContentWithSizeLimitAsync(response, ct);
+        if (html is null)
+        {
+            _logger.LogWarning("Response from {Url} exceeds size limit during streaming (limit: {Limit} bytes)", 
+                url, MaxResponseSizeBytes);
+            return new FetchResult
+            {
+                IsSuccess = false,
+                ErrorMessage = $"Response exceeded maximum allowed size ({MaxResponseSizeBytes:N0} bytes) during download",
+                HttpStatusCode = (int)response.StatusCode,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ResponseHeaders = responseHeaders
+            };
+        }
 
         return new FetchResult
         {
@@ -97,6 +136,37 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
             DurationMs = stopwatch.ElapsedMilliseconds,
             ResponseHeaders = responseHeaders
         };
+    }
+
+    /// <summary>
+    /// Reads HTTP response content with a size limit to prevent memory exhaustion.
+    /// Returns null if the content exceeds the size limit.
+    /// </summary>
+    private static async Task<string?> ReadContentWithSizeLimitAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+        
+        var buffer = new char[8192];
+        var builder = new System.Text.StringBuilder();
+        long totalBytesRead = 0;
+        int charsRead;
+
+        while ((charsRead = await reader.ReadAsync(buffer, ct)) > 0)
+        {
+            // Approximate byte count (chars * 2 for UTF-16, but actual encoding varies)
+            // Use a conservative estimate based on UTF-8 average
+            totalBytesRead += charsRead * 2;
+            
+            if (totalBytesRead > MaxResponseSizeBytes)
+            {
+                return null; // Exceeded size limit
+            }
+
+            builder.Append(buffer, 0, charsRead);
+        }
+
+        return builder.ToString();
     }
 
     private async Task<FetchResult> FetchWithPlaywrightAsync(string url, FetchOptions options, Stopwatch stopwatch, CancellationToken ct)

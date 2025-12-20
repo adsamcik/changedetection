@@ -71,6 +71,7 @@ public class ParsedWatchRequest
     public string? Url { get; set; }
     public string? Name { get; set; }
     public string? CssSelector { get; set; }
+    public string? XPathSelector { get; set; }
     public TimeSpan? CheckInterval { get; set; }
     public bool? UseJavaScript { get; set; }
     public List<string>? Tags { get; set; }

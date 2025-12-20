@@ -26,7 +26,7 @@ public class LiteDbRepository<T> : IRepository<T> where T : class
 
     public Task<IEnumerable<T>> GetAllAsync(CancellationToken ct = default)
     {
-        ct.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested(); 
         var results = _collection.FindAll().ToList();
         return Task.FromResult<IEnumerable<T>>(results);
     }
@@ -42,6 +42,21 @@ public class LiteDbRepository<T> : IRepository<T> where T : class
     {
         ct.ThrowIfCancellationRequested();
         var result = _collection.FindOne(predicate);
+        return Task.FromResult<T?>(result);
+    }
+
+    public Task<T?> FirstOrDefaultOrderedDescAsync<TKey>(
+        Expression<Func<T, bool>> predicate, 
+        Expression<Func<T, TKey>> orderByDesc, 
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        // Use LiteDB Query API for efficient ordering with limit
+        var result = _collection.Query()
+            .Where(predicate)
+            .OrderByDescending(orderByDesc)
+            .Limit(1)
+            .FirstOrDefault();
         return Task.FromResult<T?>(result);
     }
 

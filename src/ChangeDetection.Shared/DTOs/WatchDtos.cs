@@ -58,16 +58,40 @@ public class WatchDetailDto
     public string Id { get; set; } = "";
     public required string Url { get; set; }
     public string? Title { get; set; }
+    
+    /// <summary>
+    /// Optional description from LLM when created via natural language.
+    /// </summary>
+    public string? Description { get; set; }
+    
     public string? CssSelector { get; set; }
     public string? XpathSelector { get; set; }
     public List<string> IgnorePatterns { get; set; } = [];
     public TimeSpan CheckInterval { get; set; }
     public DateTime? LastCheck { get; set; }
     public DateTime? NextCheck { get; set; }
+    
+    /// <summary>
+    /// When a change was last detected.
+    /// </summary>
+    public DateTime? LastChanged { get; set; }
+    
     public string Status { get; set; } = "Idle";
     public bool IsEnabled { get; set; } = true;
     public string? LastError { get; set; }
+    
+    /// <summary>
+    /// Number of consecutive failures.
+    /// </summary>
+    public int ConsecutiveFailures { get; set; }
+    
     public DateTime CreatedAt { get; set; }
+    
+    /// <summary>
+    /// When this watch was last updated.
+    /// </summary>
+    public DateTime UpdatedAt { get; set; }
+    
     public FetchSettingsDto? FetchSettings { get; set; }
     public NotificationSettingsDto? NotificationSettings { get; set; }
     public SnapshotDto? LatestSnapshot { get; set; }
@@ -79,6 +103,72 @@ public class WatchDetailDto
     
     // Tags with their colors
     public List<TagDto> Tags { get; set; } = [];
+    
+    /// <summary>
+    /// Optional LLM provider override for this specific watch.
+    /// </summary>
+    public string? LlmProviderOverride { get; set; }
+    
+    /// <summary>
+    /// Whether structured object extraction is enabled.
+    /// </summary>
+    public bool SchemaEnabled { get; set; }
+    
+    /// <summary>
+    /// Extraction schema configuration.
+    /// </summary>
+    public ExtractionSchemaDto? Schema { get; set; }
+    
+    /// <summary>
+    /// Filter rules for this watch.
+    /// </summary>
+    public List<FilterRuleDto> FilterRules { get; set; } = [];
+    
+    /// <summary>
+    /// Schedule settings for check frequency control.
+    /// </summary>
+    public CheckScheduleSettingsDto ScheduleSettings { get; set; } = new();
+    
+    /// <summary>
+    /// Current average time between detected changes (adaptive mode).
+    /// Null if not enough data yet.
+    /// </summary>
+    public TimeSpan? AverageChangeInterval { get; set; }
+    
+    /// <summary>
+    /// When the check interval was last adjusted (adaptive mode).
+    /// </summary>
+    public DateTime? LastIntervalAdjustment { get; set; }
+    
+    /// <summary>
+    /// Whether automatic error resolution via LLM is enabled.
+    /// </summary>
+    public bool AutoErrorResolutionEnabled { get; set; } = true;
+    
+    /// <summary>
+    /// Number of auto-resolution attempts for current error.
+    /// </summary>
+    public int AutoResolutionAttempts { get; set; }
+    
+    /// <summary>
+    /// Maximum auto-resolution attempts before requiring user intervention.
+    /// </summary>
+    public int MaxAutoResolutionAttempts { get; set; } = 3;
+    
+    /// <summary>
+    /// Last resolution diagnosis message from LLM.
+    /// </summary>
+    public string? LastResolutionDiagnosis { get; set; }
+    
+    /// <summary>
+    /// When the last auto-resolution was attempted.
+    /// </summary>
+    public DateTime? LastResolutionAttempt { get; set; }
+    
+    /// <summary>
+    /// History of selector changes from auto-resolution.
+    /// </summary>
+    public List<SelectorHistoryEntryDto> SelectorHistory { get; set; } = [];
 }
 
 /// <summary>
@@ -95,6 +185,11 @@ public class WatchCreateDto
     public bool IsEnabled { get; set; } = true;
     public FetchSettingsDto FetchSettings { get; set; } = new();
     public NotificationSettingsDto NotificationSettings { get; set; } = new();
+    
+    /// <summary>
+    /// Schedule settings for check frequency control.
+    /// </summary>
+    public CheckScheduleSettingsDto ScheduleSettings { get; set; } = new();
     
     // Category assignment
     public string? CategoryId { get; set; }
@@ -117,6 +212,26 @@ public class FetchSettingsDto
     public bool CaptureScreenshot { get; set; }
     public int TimeoutSeconds { get; set; } = 30;
     public Dictionary<string, string> CustomHeaders { get; set; } = new();
+    
+    /// <summary>
+    /// Optional proxy URL.
+    /// </summary>
+    public string? ProxyUrl { get; set; }
+    
+    /// <summary>
+    /// Custom user agent string.
+    /// </summary>
+    public string? UserAgent { get; set; }
+    
+    /// <summary>
+    /// Viewport width for screenshot capture.
+    /// </summary>
+    public int ViewportWidth { get; set; } = 1920;
+    
+    /// <summary>
+    /// Viewport height for screenshot capture.
+    /// </summary>
+    public int ViewportHeight { get; set; } = 1080;
 }
 
 /// <summary>
@@ -131,6 +246,21 @@ public class NotificationSettingsDto
     public bool DiscordEnabled { get; set; }
     public string? DiscordWebhookUrl { get; set; }
     public string MinimumImportanceToNotify { get; set; } = "Medium";
+    
+    /// <summary>
+    /// Whether to use LLM to summarize changes in notifications.
+    /// </summary>
+    public bool UseLlmSummary { get; set; }
+    
+    /// <summary>
+    /// Named notification channels for filter-based routing.
+    /// </summary>
+    public List<NotificationChannelDto> Channels { get; set; } = [];
+    
+    /// <summary>
+    /// Default channel name for notifications not routed by filters.
+    /// </summary>
+    public string? DefaultChannelName { get; set; }
 }
 
 /// <summary>
@@ -230,6 +360,171 @@ public class SchemaFieldDto
     /// LLM confidence score (0-1).
     /// </summary>
     public double? Confidence { get; set; }
+
+    // ========== Rich Field Metadata ==========
+
+    /// <summary>
+    /// Currency code for Currency fields (e.g., "USD", "EUR", "GBP").
+    /// </summary>
+    public string? CurrencyCode { get; set; }
+
+    /// <summary>
+    /// Number of decimal places for Number/Currency fields.
+    /// </summary>
+    public int? DecimalPlaces { get; set; }
+
+    /// <summary>
+    /// Custom format string for display.
+    /// </summary>
+    public string? FormatString { get; set; }
+
+    /// <summary>
+    /// Whether this field is tracked for historical charting.
+    /// </summary>
+    public bool TrackHistory { get; set; }
+
+    /// <summary>
+    /// Unit label for display (e.g., "kg", "miles").
+    /// </summary>
+    public string? Unit { get; set; }
+
+    /// <summary>
+    /// Possible values for Status type fields.
+    /// </summary>
+    public List<string> AllowedValues { get; set; } = [];
+
+    // ========== Numeric Tracking Settings (for stock/price monitoring) ==========
+
+    /// <summary>
+    /// Baseline value for comparison.
+    /// </summary>
+    public double? BaselineValue { get; set; }
+
+    /// <summary>
+    /// When the baseline was set.
+    /// </summary>
+    public DateTime? BaselineSetAt { get; set; }
+
+    /// <summary>
+    /// Tracking mode: Absolute, Percentage, Both.
+    /// </summary>
+    public string TrackingMode { get; set; } = "Both";
+
+    /// <summary>
+    /// Minimum absolute change to consider significant.
+    /// </summary>
+    public double? MinSignificantChange { get; set; }
+
+    /// <summary>
+    /// Minimum percentage change to consider significant.
+    /// </summary>
+    public double? MinSignificantChangePercent { get; set; }
+
+    /// <summary>
+    /// Alert thresholds for this field.
+    /// </summary>
+    public List<FieldAlertThresholdDto> AlertThresholds { get; set; } = [];
+
+    /// <summary>
+    /// Whether to calculate trends.
+    /// </summary>
+    public bool CalculateTrend { get; set; } = true;
+
+    /// <summary>
+    /// Number of values for trend calculation.
+    /// </summary>
+    public int TrendWindowSize { get; set; } = 10;
+
+    /// <summary>
+    /// Whether to track min/max.
+    /// </summary>
+    public bool TrackMinMax { get; set; } = true;
+
+    /// <summary>
+    /// Historical minimum observed.
+    /// </summary>
+    public double? HistoricalMin { get; set; }
+
+    /// <summary>
+    /// When the historical minimum was observed.
+    /// </summary>
+    public DateTime? HistoricalMinAt { get; set; }
+
+    /// <summary>
+    /// Historical maximum observed.
+    /// </summary>
+    public double? HistoricalMax { get; set; }
+
+    /// <summary>
+    /// When the historical maximum was observed.
+    /// </summary>
+    public DateTime? HistoricalMaxAt { get; set; }
+}
+
+/// <summary>
+/// DTO for field alert threshold configuration.
+/// </summary>
+public class FieldAlertThresholdDto
+{
+    /// <summary>
+    /// Unique identifier.
+    /// </summary>
+    public string Id { get; set; } = "";
+
+    /// <summary>
+    /// Alert name.
+    /// </summary>
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// Condition type: DropsBelow, RisesAbove, ChangesBy, ChangesByPercent, etc.
+    /// </summary>
+    public string ConditionType { get; set; } = "DropsBelow";
+
+    /// <summary>
+    /// Primary threshold value.
+    /// </summary>
+    public double Value { get; set; }
+
+    /// <summary>
+    /// Secondary value for range conditions.
+    /// </summary>
+    public double? SecondaryValue { get; set; }
+
+    /// <summary>
+    /// Whether the alert is enabled.
+    /// </summary>
+    public bool IsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Whether this is a one-time alert.
+    /// </summary>
+    public bool OneTime { get; set; }
+
+    /// <summary>
+    /// Cooldown between alerts in minutes.
+    /// </summary>
+    public int? CooldownMinutes { get; set; }
+
+    /// <summary>
+    /// When last triggered.
+    /// </summary>
+    public DateTime? LastTriggeredAt { get; set; }
+
+    /// <summary>
+    /// Number of times triggered.
+    /// </summary>
+    public int TriggerCount { get; set; }
+
+    /// <summary>
+    /// Custom notification message.
+    /// </summary>
+    public string? NotificationTemplate { get; set; }
+
+    /// <summary>
+    /// Importance level when triggered.
+    /// </summary>
+    public string? ImportanceOverride { get; set; }
 }
 
 /// <summary>
@@ -399,9 +694,9 @@ public class NotificationChannelDto
 }
 
 /// <summary>
-/// DTO for object modification.
+/// DTO for extracted object modification comparison.
 /// </summary>
-public class ObjectModificationDto
+public class ExtractedObjectModificationDto
 {
     /// <summary>
     /// Identity key of modified object.
@@ -423,3 +718,146 @@ public class ObjectModificationDto
     /// </summary>
     public List<FieldChangeDto> FieldChanges { get; set; } = [];
 }
+
+// ============================================================================
+// Schedule Settings DTOs
+// ============================================================================
+
+/// <summary>
+/// DTO for check schedule settings.
+/// </summary>
+public class CheckScheduleSettingsDto
+{
+    /// <summary>
+    /// The scheduling mode: "Fixed" or "Adaptive".
+    /// </summary>
+    public string Mode { get; set; } = "Fixed";
+    
+    /// <summary>
+    /// Base interval for fixed mode, or starting point for adaptive mode.
+    /// </summary>
+    public TimeSpan BaseInterval { get; set; } = TimeSpan.FromHours(1);
+    
+    /// <summary>
+    /// Minimum interval between checks (adaptive mode only).
+    /// </summary>
+    public TimeSpan MinInterval { get; set; } = TimeSpan.FromHours(1);
+    
+    /// <summary>
+    /// Maximum interval between checks (adaptive mode only).
+    /// </summary>
+    public TimeSpan MaxInterval { get; set; } = TimeSpan.FromDays(7);
+    
+    /// <summary>
+    /// How many times faster to check than the content changes (adaptive mode).
+    /// Default: 3 means check 3x as often as changes occur.
+    /// </summary>
+    public double FrequencyMultiplier { get; set; } = 3.0;
+}
+
+// ============================================================================
+// Error Resolution DTOs
+// ============================================================================
+
+/// <summary>
+/// Historical record of a selector change.
+/// </summary>
+public class SelectorHistoryEntryDto
+{
+    /// <summary>
+    /// When the selector was changed.
+    /// </summary>
+    public DateTime ChangedAt { get; set; }
+    
+    /// <summary>
+    /// Previous CSS selector value.
+    /// </summary>
+    public string? PreviousCssSelector { get; set; }
+    
+    /// <summary>
+    /// Previous XPath selector value.
+    /// </summary>
+    public string? PreviousXPathSelector { get; set; }
+    
+    /// <summary>
+    /// Reason for the change.
+    /// </summary>
+    public string? ChangeReason { get; set; }
+    
+    /// <summary>
+    /// LLM diagnosis that triggered the change.
+    /// </summary>
+    public string? Diagnosis { get; set; }
+    
+    /// <summary>
+    /// Confidence score of the auto-resolution (0-1).
+    /// </summary>
+    public float? Confidence { get; set; }
+}
+
+/// <summary>
+/// DTO for error resolution result.
+/// </summary>
+public class ErrorResolutionResultDto
+{
+    /// <summary>
+    /// Whether the resolution was successful.
+    /// </summary>
+    public bool IsResolved { get; set; }
+    
+    /// <summary>
+    /// Whether a fix was applied automatically.
+    /// </summary>
+    public bool AutoFixApplied { get; set; }
+    
+    /// <summary>
+    /// Diagnosis of the problem.
+    /// </summary>
+    public required string Diagnosis { get; set; }
+    
+    /// <summary>
+    /// Suggested action for the user.
+    /// </summary>
+    public string? SuggestedAction { get; set; }
+    
+    /// <summary>
+    /// New CSS selector if the fix involves a selector change.
+    /// </summary>
+    public string? NewCssSelector { get; set; }
+    
+    /// <summary>
+    /// New XPath selector if the fix involves a selector change.
+    /// </summary>
+    public string? NewXPathSelector { get; set; }
+    
+    /// <summary>
+    /// Confidence in the fix (0-1).
+    /// </summary>
+    public float Confidence { get; set; }
+    
+    /// <summary>
+    /// LLM reasoning for the diagnosis.
+    /// </summary>
+    public string? Reasoning { get; set; }
+    
+    /// <summary>
+    /// Whether user approval is recommended.
+    /// </summary>
+    public bool RequiresUserApproval { get; set; }
+    
+    /// <summary>
+    /// Sample of extracted content from new selector.
+    /// </summary>
+    public string? ExtractedSample { get; set; }
+    
+    /// <summary>
+    /// Number of matches the new selector found.
+    /// </summary>
+    public int MatchCount { get; set; }
+    
+    /// <summary>
+    /// Whether the website structure has fundamentally changed.
+    /// </summary>
+    public bool MajorStructureChange { get; set; }
+}
+
