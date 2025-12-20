@@ -179,6 +179,183 @@ public class NotificationService : INotificationService
         }
     }
 
+    public async Task SendAlertAsync(WatchedSite watch, AlertEvaluationResult alertResult, NotificationContext context, CancellationToken ct = default)
+    {
+        if (!alertResult.HasTriggeredAlerts)
+        {
+            return;
+        }
+
+        var settings = watch.Notifications;
+        var message = alertResult.CombinedMessage ?? "Alert threshold triggered";
+
+        // Build a rich message with all triggered thresholds
+        var alertDetails = string.Join("\n", alertResult.TriggeredThresholds.Select(t =>
+            $"• {t.Threshold.Name ?? t.Field.Name}: {t.Message}"));
+
+        var fullMessage = $"{message}\n\n{alertDetails}";
+
+        var tasks = new List<Task>();
+
+        if (settings.EmailEnabled && !string.IsNullOrEmpty(settings.EmailAddress))
+        {
+            tasks.Add(SendAlertEmailAsync(watch, alertResult, fullMessage, settings.EmailAddress, ct));
+        }
+
+        if (settings.WebhookEnabled && !string.IsNullOrEmpty(settings.WebhookUrl))
+        {
+            tasks.Add(SendAlertWebhookAsync(watch, alertResult, fullMessage, settings.WebhookUrl, ct));
+        }
+
+        if (settings.DiscordEnabled && !string.IsNullOrEmpty(settings.DiscordWebhookUrl))
+        {
+            tasks.Add(SendAlertDiscordAsync(watch, alertResult, fullMessage, settings.DiscordWebhookUrl, ct));
+        }
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task SendAlertEmailAsync(WatchedSite watch, AlertEvaluationResult alertResult, string message, string emailAddress, CancellationToken ct)
+    {
+        try
+        {
+            var appSettings = (await _settingsRepo.GetAllAsync(ct)).FirstOrDefault();
+            var emailSettings = appSettings?.Email;
+
+            if (emailSettings == null || string.IsNullOrEmpty(emailSettings.SmtpHost))
+            {
+                _logger.LogWarning("Email settings not configured, skipping alert email");
+                return;
+            }
+
+            var importance = alertResult.HighestImportance ?? ChangeImportance.Medium;
+            var alertCount = alertResult.TriggeredThresholds.Count;
+            var subject = $"🚨 [{importance}] Alert: {watch.Name ?? watch.Url} - {alertCount} threshold(s) triggered";
+
+            var email = new MimeMessage();
+            email.From.Add(new MailboxAddress(
+                emailSettings.FromName ?? "Change Detection",
+                emailSettings.FromAddress ?? "noreply@changedetection.local"));
+            email.To.Add(MailboxAddress.Parse(emailAddress));
+            email.Subject = subject;
+            email.Body = new TextPart("plain") { Text = message };
+
+            using var smtp = new SmtpClient();
+            await smtp.ConnectAsync(emailSettings.SmtpHost, emailSettings.SmtpPort, emailSettings.UseSsl, ct);
+
+            if (!string.IsNullOrEmpty(emailSettings.Username))
+            {
+                await smtp.AuthenticateAsync(emailSettings.Username, emailSettings.Password, ct);
+            }
+
+            await smtp.SendAsync(email, ct);
+            await smtp.DisconnectAsync(true, ct);
+
+            _logger.LogInformation("Alert email sent to {Email} for {AlertCount} thresholds", emailAddress, alertCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send alert email to {Email}", emailAddress);
+            throw;
+        }
+    }
+
+    private async Task SendAlertWebhookAsync(WatchedSite watch, AlertEvaluationResult alertResult, string message, string webhookUrl, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+
+            var payload = new
+            {
+                type = "alert",
+                watch = new
+                {
+                    id = watch.Id,
+                    name = watch.Name,
+                    url = watch.Url
+                },
+                alert = new
+                {
+                    message,
+                    importance = alertResult.HighestImportance?.ToString() ?? "Medium",
+                    thresholdCount = alertResult.TriggeredThresholds.Count,
+                    thresholds = alertResult.TriggeredThresholds.Select(t => new
+                    {
+                        fieldName = t.Field.Name,
+                        thresholdName = t.Threshold.Name,
+                        conditionType = t.Threshold.ConditionType.ToString(),
+                        oldValue = t.OldValue,
+                        newValue = t.NewValue,
+                        change = t.CalculatedChange,
+                        message = t.Message
+                    })
+                },
+                timestamp = DateTime.UtcNow
+            };
+
+            var response = await client.PostAsJsonAsync(webhookUrl, payload, ct);
+            response.EnsureSuccessStatusCode();
+
+            _logger.LogInformation("Alert webhook sent to {Url}", webhookUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send alert webhook to {Url}", webhookUrl);
+            throw;
+        }
+    }
+
+    private async Task SendAlertDiscordAsync(WatchedSite watch, AlertEvaluationResult alertResult, string message, string webhookUrl, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+
+            var importance = alertResult.HighestImportance ?? ChangeImportance.Medium;
+            var color = importance switch
+            {
+                ChangeImportance.Critical => 15158332, // Red
+                ChangeImportance.High => 15105570,     // Orange
+                ChangeImportance.Medium => 16776960,   // Yellow
+                _ => 3066993                            // Green
+            };
+
+            var fields = alertResult.TriggeredThresholds.Select(t => new
+            {
+                name = t.Threshold.Name ?? t.Field.Name,
+                value = $"{t.Message}\nOld: {t.OldValue:F2} → New: {t.NewValue:F2}",
+                inline = true
+            }).ToArray();
+
+            var payload = new
+            {
+                embeds = new[]
+                {
+                    new
+                    {
+                        title = $"🚨 Alert: {watch.Name ?? watch.Url}",
+                        url = watch.Url,
+                        color,
+                        description = alertResult.CombinedMessage ?? "Alert thresholds triggered",
+                        fields,
+                        timestamp = DateTime.UtcNow.ToString("o")
+                    }
+                }
+            };
+
+            var response = await client.PostAsJsonAsync(webhookUrl, payload, ct);
+            response.EnsureSuccessStatusCode();
+
+            _logger.LogInformation("Alert Discord notification sent");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send alert Discord notification");
+            throw;
+        }
+    }
+
     private async Task SendDiscordAsync(WatchedSite watch, ChangeEvent change, string message, string webhookUrl, CancellationToken ct)
     {
         try
