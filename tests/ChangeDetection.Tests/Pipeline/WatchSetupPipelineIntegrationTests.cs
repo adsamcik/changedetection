@@ -116,8 +116,9 @@ public class WatchSetupPipelineIntegrationTests
         // Assert
         urls.ShouldNotBeEmpty();
         // The stage should capture context about user intent
-        urls[0].Context.ShouldNotBeNullOrWhiteSpace();
-        urls[0].Context.ShouldContain("watch");
+        var context = urls[0].Context;
+        context.ShouldNotBeNullOrWhiteSpace();
+        context.ShouldContain("watch");
     }
 
     [Theory]
@@ -457,7 +458,9 @@ public class InputProcessorPipelineIntegrationTests
         // Assert
         urls.ShouldNotBeEmpty();
         urls[0].Url.ShouldBe("https://www.img.cas.cz/novinky/akce/");
-        urls[0].Context.ShouldContain("watch");
-        urls[0].Context.ShouldContain("events");
+        var context = urls[0].Context;
+        context.ShouldNotBeNull();
+        context.ShouldContain("watch");
+        context.ShouldContain("events");
     }
 }

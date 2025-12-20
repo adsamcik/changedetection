@@ -3,9 +3,19 @@ using System.Reflection;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 
 namespace ChangeDetection.Tests.Components;
+
+/// <summary>
+/// Exception to skip tests when prerequisites are not met.
+/// Uses the xUnit dynamic skip token pattern for compatibility with xUnit v3 runner.
+/// </summary>
+public class SkipException : Exception
+{
+    public SkipException(string message) : base($"$XunitDynamicSkip${message}") { }
+}
 
 /// <summary>
 /// End-to-end tests for Blazor component rendering and parameter configuration.
@@ -43,6 +53,8 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
     [Fact]
     public async Task SetupPage_WithQueryParameter_ShouldRenderWithoutError()
     {
+        EnsureClientAssemblyAvailable();
+
         // Arrange - request the setup page with an input query parameter
         // This is the exact scenario that was failing
         var url = "/setup?input=https://example.com";
@@ -73,6 +85,8 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
     [InlineData("/setup?input=https://example.com/page")]
     public async Task AllPages_ShouldRenderWithoutServerError(string path)
     {
+        EnsureClientAssemblyAvailable();
+
         // Act
         var response = await _client.GetAsync(path);
 
@@ -86,7 +100,32 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.UseEnvironment("Development");
+            // Use Testing environment to avoid file logging conflicts
+            // Development environment creates file logs that can conflict
+            // when multiple test instances run concurrently
+            builder.UseEnvironment("Testing");
+            
+            builder.ConfigureLogging(logging =>
+            {
+                // Clear all logging providers to avoid file conflicts
+                logging.ClearProviders();
+            });
+        }
+    }
+
+    private static void EnsureClientAssemblyAvailable()
+    {
+        try
+        {
+            _ = Assembly.Load("ChangeDetection.Client");
+        }
+        catch (Exception ex)
+        {
+            throw new SkipException(
+                "Skipping Blazor client rendering tests because the ChangeDetection.Client assembly is not available. " +
+                "If you're running tests without the Blazor WebAssembly workload, run with /p:SkipClientProjectReference=true (these tests will be skipped), " +
+                "or install the 'wasm-tools' workload to enable full client build.\n\n" +
+                $"Load failure: {ex.GetType().Name}: {ex.Message}");
         }
     }
 }
@@ -97,45 +136,60 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
 /// </summary>
 public class BlazorComponentParameterTests
 {
+    private static Assembly LoadClientAssemblyOrSkip()
+    {
+        try
+        {
+            return Assembly.Load("ChangeDetection.Client");
+        }
+        catch (Exception ex)
+        {
+            throw new SkipException(
+                "Skipping Blazor client component metadata tests because the ChangeDetection.Client assembly is not available. " +
+                "Install the 'wasm-tools' workload (or build the Client project) to enable these checks.\n\n" +
+                $"Load failure: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     /// <summary>
     /// Components that are used as child components (not routed directly) should not
     /// use [SupplyParameterFromQuery] for properties that are passed from parent components.
     /// Such properties should use [Parameter] instead.
     /// </summary>
     [Fact]
-    public void SetupFlow_InitialInput_ShouldBeRegularParameter()
+    public void SetupFlow_SessionId_ShouldBeRegularParameter()
     {
         // Arrange
-        var clientAssembly = Assembly.Load("ChangeDetection.Client");
+        var clientAssembly = LoadClientAssemblyOrSkip();
         var setupFlowType = clientAssembly.GetType("ChangeDetection.Client.Pages.SetupFlow");
         
         setupFlowType.ShouldNotBeNull("SetupFlow component should exist");
 
-        var initialInputProperty = setupFlowType.GetProperty("InitialInput");
-        initialInputProperty.ShouldNotBeNull("InitialInput property should exist on SetupFlow");
+        var sessionIdProperty = setupFlowType.GetProperty("SessionId");
+        sessionIdProperty.ShouldNotBeNull("SessionId property should exist on SetupFlow");
 
         // Act
-        var hasParameterAttribute = initialInputProperty
+        var hasParameterAttribute = sessionIdProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "ParameterAttribute");
         
-        var hasSupplyParameterFromQuery = initialInputProperty
+        var hasSupplyParameterFromQuery = sessionIdProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "SupplyParameterFromQueryAttribute");
         
-        var hasCascadingParameter = initialInputProperty
+        var hasCascadingParameter = sessionIdProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "CascadingParameterAttribute");
 
         // Assert
         hasParameterAttribute.ShouldBeTrue(
-            "InitialInput should have [Parameter] attribute since it's passed from parent Setup.razor");
+            "SessionId should have [Parameter] attribute since it's passed from parent Setup.razor");
         
         hasSupplyParameterFromQuery.ShouldBeFalse(
-            "InitialInput should NOT have [SupplyParameterFromQuery] - the parent component reads the query and passes it down");
+            "SessionId should NOT have [SupplyParameterFromQuery] - the parent component reads the route parameter and passes it down");
         
         hasCascadingParameter.ShouldBeFalse(
-            "InitialInput should NOT have [CascadingParameter] - it's passed as an explicit parameter from parent");
+            "SessionId should NOT have [CascadingParameter] - it's passed as an explicit parameter from parent");
     }
 
     /// <summary>
@@ -146,7 +200,7 @@ public class BlazorComponentParameterTests
     public void ChildComponents_ShouldNotUseSupplyParameterFromQuery_ForExplicitlyPassedProperties()
     {
         // This test scans all components in the Client assembly to detect potential issues
-        var clientAssembly = Assembly.Load("ChangeDetection.Client");
+        var clientAssembly = LoadClientAssemblyOrSkip();
         var componentTypes = clientAssembly.GetTypes()
             .Where(t => typeof(ComponentBase).IsAssignableFrom(t) && !t.IsAbstract);
 
@@ -192,7 +246,7 @@ public class BlazorComponentParameterTests
     {
         var assemblies = new[]
         {
-            Assembly.Load("ChangeDetection.Client"),
+            LoadClientAssemblyOrSkip(),
             Assembly.Load("ChangeDetection")
         };
 

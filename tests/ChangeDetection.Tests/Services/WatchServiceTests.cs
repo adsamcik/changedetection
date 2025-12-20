@@ -1,6 +1,8 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services;
+using ChangeDetection.Services.Persistence;
+using LiteDB;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
@@ -9,32 +11,56 @@ namespace ChangeDetection.Tests.Services;
 
 public class ServerWatchServiceTests
 {
+    private readonly LiteDbContext _dbContext;
+    private readonly ILiteDatabase _mockDatabase;
     private readonly IRepository<WatchedSite> _watchRepo;
     private readonly IRepository<ChangeSnapshot> _snapshotRepo;
     private readonly IRepository<ChangeEvent> _eventRepo;
     private readonly IContentFetcher _contentFetcher;
     private readonly IContentExtractor _contentExtractor;
     private readonly IDiffService _diffService;
+    private readonly IObjectExtractionService _objectExtractionService;
+    private readonly IObjectDiffService _objectDiffService;
+    private readonly IErrorResolutionService _errorResolutionService;
+    private readonly IChangeAnalyzer _changeAnalyzer;
+    private readonly IContentEnricher _contentEnricher;
+    private readonly IPriceTrackingService _priceTrackingService;
     private readonly ILogger<ServerWatchService> _logger;
     private readonly ServerWatchService _sut;
 
     public ServerWatchServiceTests()
     {
+        _mockDatabase = Substitute.For<ILiteDatabase>();
+        _dbContext = Substitute.ForPartsOf<LiteDbContext>("Filename=:memory:");
+        _dbContext.Database.Returns(_mockDatabase);
         _watchRepo = Substitute.For<IRepository<WatchedSite>>();
         _snapshotRepo = Substitute.For<IRepository<ChangeSnapshot>>();
         _eventRepo = Substitute.For<IRepository<ChangeEvent>>();
         _contentFetcher = Substitute.For<IContentFetcher>();
         _contentExtractor = Substitute.For<IContentExtractor>();
         _diffService = Substitute.For<IDiffService>();
+        _objectExtractionService = Substitute.For<IObjectExtractionService>();
+        _objectDiffService = Substitute.For<IObjectDiffService>();
+        _errorResolutionService = Substitute.For<IErrorResolutionService>();
+        _changeAnalyzer = Substitute.For<IChangeAnalyzer>();
+        _contentEnricher = Substitute.For<IContentEnricher>();
+        _priceTrackingService = Substitute.For<IPriceTrackingService>();
         _logger = Substitute.For<ILogger<ServerWatchService>>();
 
         _sut = new ServerWatchService(
+            _dbContext,
             _watchRepo,
             _snapshotRepo,
             _eventRepo,
             _contentFetcher,
             _contentExtractor,
             _diffService,
+            _objectExtractionService,
+            _objectDiffService,
+            _errorResolutionService,
+            _changeAnalyzer,
+            _contentEnricher,
+            _priceTrackingService,
             _logger);
     }
 
@@ -229,8 +255,11 @@ public class ServerWatchServiceTests
             .Returns(new FetchResult { IsSuccess = true, Html = "new content" });
         _contentExtractor.ExtractText(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns("new extracted");
         _contentExtractor.ComputeHash("new extracted").Returns("newhash");
-        _snapshotRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>())
-            .Returns(new[] { previousSnapshot });
+        _snapshotRepo.FirstOrDefaultOrderedDescAsync(
+            Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(),
+            Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, DateTime>>>(),
+            Arg.Any<CancellationToken>())
+            .Returns(previousSnapshot);
         _diffService.Compare(Arg.Any<string>(), Arg.Any<string>()).Returns(new DiffResult 
         { 
             HasChanges = true, 

@@ -43,7 +43,9 @@ public class ObjectExtractionServiceTests
         // Assert
         result.Success.ShouldBeFalse();
         result.DriftDetected.ShouldBeTrue();
-        result.Error.ShouldContain("No items found");
+        var error = result.Error;
+        error.ShouldNotBeNull();
+        error.ShouldContain("No items found");
     }
 
     [Fact]
@@ -182,9 +184,10 @@ public class ObjectExtractionServiceTests
         // Assert
         result.Success.ShouldBeTrue();
         result.Objects.ShouldNotBeNull();
-        result.Objects[0].IdentityKey.ShouldNotBeNullOrEmpty();
-        result.Objects[0].IdentityKey.ShouldContain("Widget");
-        result.Objects[0].IdentityKey.ShouldContain("SKU-001");
+        var identityKey = result.Objects[0].IdentityKey;
+        identityKey.ShouldNotBeNullOrEmpty();
+        identityKey.ShouldContain("Widget");
+        identityKey.ShouldContain("SKU-001");
     }
 
     [Fact]

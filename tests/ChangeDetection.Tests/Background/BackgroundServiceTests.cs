@@ -1,5 +1,5 @@
-using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Background;
 using ChangeDetection.Hubs;
 using Microsoft.AspNetCore.SignalR;
@@ -12,9 +12,8 @@ namespace ChangeDetection.Tests.Background;
 
 public class ChangeCheckBackgroundServiceTests
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IBackgroundServiceScopeFactory _scopeFactory;
     private readonly IServiceScope _scope;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IWatchService _watchService;
     private readonly INotificationService _notificationService;
     private readonly IHubContext<ChangeDetectionHub> _hubContext;
@@ -28,8 +27,7 @@ public class ChangeCheckBackgroundServiceTests
         _logger = Substitute.For<ILogger<ChangeCheckBackgroundService>>();
         
         _scope = Substitute.For<IServiceScope>();
-        _scopeFactory = Substitute.For<IServiceScopeFactory>();
-        _serviceProvider = Substitute.For<IServiceProvider>();
+        _scopeFactory = Substitute.For<IBackgroundServiceScopeFactory>();
         
         var scopedServiceProvider = Substitute.For<IServiceProvider>();
         scopedServiceProvider.GetService(typeof(IWatchService)).Returns(_watchService);
@@ -37,15 +35,14 @@ public class ChangeCheckBackgroundServiceTests
         scopedServiceProvider.GetService(typeof(IHubContext<ChangeDetectionHub>)).Returns(_hubContext);
         
         _scope.ServiceProvider.Returns(scopedServiceProvider);
-        _scopeFactory.CreateScope().Returns(_scope);
-        _serviceProvider.GetService(typeof(IServiceScopeFactory)).Returns(_scopeFactory);
+        _scopeFactory.CreateBackgroundScope().Returns(_scope);
     }
 
     [Fact]
     public void Constructor_DoesNotThrow()
     {
         // Act & Assert
-        var service = new ChangeCheckBackgroundService(_serviceProvider, _logger);
+        var service = new ChangeCheckBackgroundService(_scopeFactory, _logger);
         service.ShouldNotBeNull();
     }
 }
@@ -57,9 +54,10 @@ public class ChangeDetectionHubTests
     {
         // Arrange
         var logger = Substitute.For<ILogger<ChangeDetectionHub>>();
+        var userContext = Substitute.For<IUserContext>();
         
         // Act
-        var hub = new ChangeDetectionHub(logger);
+        var hub = new ChangeDetectionHub(logger, userContext);
 
         // Assert
         hub.ShouldNotBeNull();

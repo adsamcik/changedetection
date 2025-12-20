@@ -274,6 +274,41 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void NewAppSettings_HasNewFieldDefaults()
+    {
+        // Act
+        var settings = new AppSettings();
+
+        // Assert - new fields added for extended settings
+        settings.DefaultUserAgent.ShouldBeNull();
+        settings.DefaultFetchTimeoutSeconds.ShouldBe(30);
+        settings.EnableLlmDebugLogging.ShouldBeFalse();
+        settings.MaxRetryAttempts.ShouldBe(3);
+        settings.RetryDelaySeconds.ShouldBe(60);
+    }
+
+    [Fact]
+    public void AppSettings_CanSetNewFields()
+    {
+        // Arrange & Act
+        var settings = new AppSettings
+        {
+            DefaultUserAgent = "CustomBot/1.0",
+            DefaultFetchTimeoutSeconds = 45,
+            EnableLlmDebugLogging = true,
+            MaxRetryAttempts = 5,
+            RetryDelaySeconds = 120
+        };
+
+        // Assert
+        settings.DefaultUserAgent.ShouldBe("CustomBot/1.0");
+        settings.DefaultFetchTimeoutSeconds.ShouldBe(45);
+        settings.EnableLlmDebugLogging.ShouldBeTrue();
+        settings.MaxRetryAttempts.ShouldBe(5);
+        settings.RetryDelaySeconds.ShouldBe(120);
+    }
+
+    [Fact]
     public void AppSettings_CanSetEmailSettings()
     {
         // Arrange & Act

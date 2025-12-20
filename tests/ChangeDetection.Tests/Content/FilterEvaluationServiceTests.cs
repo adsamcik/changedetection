@@ -107,7 +107,9 @@ public class FilterEvaluationServiceTests
 
         // Assert
         result.FilteredObjects.Count.ShouldBe(1);
-        result.FilteredObjects[0].Object.Fields["Title"].ShouldContain("Workshop");
+        var title = result.FilteredObjects[0].Object.Fields["Title"];
+        title.ShouldNotBeNull();
+        title.ShouldContain("Workshop");
         result.TagsToAdd.ShouldContain("workshop");
     }
 
