@@ -97,6 +97,12 @@ public class SelectorGenerationStage(
         try
         {
             var json = CleanJsonResponse(response.Content);
+            if (json is null)
+            {
+                logger.LogWarning("LLM response did not contain valid JSON array for refined selectors: {Response}", TruncateText(response.Content, 200));
+                return [];
+            }
+            
             var dtos = JsonSerializer.Deserialize<List<SelectorDto>>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -168,6 +174,12 @@ public class SelectorGenerationStage(
         try
         {
             var json = CleanJsonResponse(response.Content);
+            if (json is null)
+            {
+                logger.LogWarning("LLM response did not contain valid JSON array for selectors: {Response}", TruncateText(response.Content, 200));
+                return [];
+            }
+            
             var dtos = JsonSerializer.Deserialize<List<SelectorDto>>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -235,7 +247,7 @@ public class SelectorGenerationStage(
         return text[..maxChars] + "...";
     }
 
-    private static string CleanJsonResponse(string response)
+    private static string? CleanJsonResponse(string response)
     {
         var json = response.Trim();
         
@@ -249,10 +261,11 @@ public class SelectorGenerationStage(
         var end = json.LastIndexOf(']');
         if (start >= 0 && end > start)
         {
-            json = json[start..(end + 1)];
+            return json[start..(end + 1)];
         }
         
-        return json;
+        // No valid JSON array found - return null to indicate failure
+        return null;
     }
 
     private class SelectorDto

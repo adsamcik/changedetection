@@ -12,6 +12,14 @@ public interface IConversationSessionManager
     ConversationSession CreateSession();
 
     /// <summary>
+    /// Creates or retrieves a conversation session with a specific ID.
+    /// If a session with this ID already exists and is not expired, it is returned.
+    /// Otherwise, a new session is created with the specified ID.
+    /// This allows clients to pre-generate session IDs for page refresh resilience.
+    /// </summary>
+    ConversationSession GetOrCreateSession(Guid sessionId);
+
+    /// <summary>
     /// Gets an existing session by ID, returning null if not found or expired.
     /// </summary>
     ConversationSession? GetSession(Guid sessionId);
@@ -35,6 +43,18 @@ public interface IConversationSessionManager
     /// Gets all sessions that are currently awaiting user input.
     /// </summary>
     IReadOnlyList<ConversationSession> GetSessionsAwaitingInput();
+
+    /// <summary>
+    /// Gets all active sessions that should be visible to users.
+    /// This includes sessions awaiting input AND sessions with pending input (being processed).
+    /// </summary>
+    IReadOnlyList<ConversationSession> GetAllActiveSessions();
+
+    /// <summary>
+    /// Event fired when a session expires due to inactivity.
+    /// Subscribers can use this to clean up related resources.
+    /// </summary>
+    event Action<Guid>? SessionExpired;
 }
 
 /// <summary>
@@ -45,8 +65,9 @@ public class ConversationSession
 {
     /// <summary>
     /// Unique session identifier.
+    /// Can be set to a pre-generated ID for page refresh resilience.
     /// </summary>
-    public Guid SessionId { get; init; } = Guid.NewGuid();
+    public required Guid SessionId { get; init; }
 
     /// <summary>
     /// When the session was created.
@@ -99,6 +120,23 @@ public class ConversationSession
     /// A display name for this session (typically the URL being configured).
     /// </summary>
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Input that was provided when the session was created but hasn't been processed yet.
+    /// The hub will process this when the client connects.
+    /// </summary>
+    public string? PendingInput { get; set; }
+
+    /// <summary>
+    /// Whether the session has been sent to the background by the user.
+    /// Background sessions continue processing but the user has navigated away.
+    /// </summary>
+    public bool IsBackgrounded { get; set; }
+
+    /// <summary>
+    /// The current pipeline stage for display purposes when backgrounded.
+    /// </summary>
+    public string? CurrentPipelineStage { get; set; }
 
     /// <summary>
     /// Touch the session to update last activity time.

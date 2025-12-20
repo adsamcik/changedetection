@@ -7,12 +7,31 @@ namespace ChangeDetection.Core.Interfaces;
 public interface IWatchSetupPipeline
 {
     /// <summary>
+    /// Processes user input through the multi-stage pipeline with real-time progress streaming.
+    /// This is the preferred method for UI integration as it yields progress at each stage.
+    /// </summary>
+    IAsyncEnumerable<PipelineProgress> ProcessStreamingAsync(
+        string userInput, 
+        PipelineOptions? options = null, 
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Continues processing with user feedback, streaming progress updates.
+    /// </summary>
+    IAsyncEnumerable<PipelineProgress> ContinueWithFeedbackStreamingAsync(
+        PipelineSession session, 
+        string feedback, 
+        CancellationToken ct = default);
+    
+    /// <summary>
     /// Processes user input through the multi-stage pipeline.
+    /// Consider using ProcessStreamingAsync for UI integration.
     /// </summary>
     Task<PipelineResult> ProcessAsync(string userInput, PipelineOptions? options = null, CancellationToken ct = default);
     
     /// <summary>
     /// Continues processing with user feedback (e.g., correcting a selector).
+    /// Consider using ContinueWithFeedbackStreamingAsync for UI integration.
     /// </summary>
     Task<PipelineResult> ContinueWithFeedbackAsync(PipelineSession session, string feedback, CancellationToken ct = default);
 
@@ -23,6 +42,70 @@ public interface IWatchSetupPipeline
     /// 3. Ask User: Generate clarifying question if retry fails
     /// </summary>
     Task<PipelineResult> RecoverFromFailureAsync(PipelineSession session, PipelineResult failedResult, PipelineOptions options, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Progress update from the pipeline during streaming execution.
+/// </summary>
+public class PipelineProgress
+{
+    /// <summary>
+    /// Current pipeline stage.
+    /// </summary>
+    public required PipelineStage Stage { get; init; }
+    
+    /// <summary>
+    /// Type of progress update.
+    /// </summary>
+    public required ProgressType Type { get; init; }
+    
+    /// <summary>
+    /// Human-readable summary of current progress.
+    /// </summary>
+    public required string Summary { get; init; }
+    
+    /// <summary>
+    /// Optional detailed message (e.g., extracted URL, analysis result).
+    /// </summary>
+    public string? Details { get; init; }
+    
+    /// <summary>
+    /// Current session state (available on all updates).
+    /// </summary>
+    public PipelineSession? Session { get; init; }
+    
+    /// <summary>
+    /// Final result (only set when Type is Completed or Failed).
+    /// </summary>
+    public PipelineResult? Result { get; init; }
+    
+    /// <summary>
+    /// Timestamp of this progress update.
+    /// </summary>
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Type of pipeline progress update.
+/// </summary>
+public enum ProgressType
+{
+    /// <summary>Stage is starting.</summary>
+    Starting,
+    /// <summary>Stage is in progress with intermediate update.</summary>
+    InProgress,
+    /// <summary>AI thinking/reasoning content being streamed.</summary>
+    Thinking,
+    /// <summary>Stage completed successfully.</summary>
+    StageCompleted,
+    /// <summary>Pipeline needs user input to continue.</summary>
+    NeedsInput,
+    /// <summary>Pipeline completed successfully.</summary>
+    Completed,
+    /// <summary>Pipeline failed.</summary>
+    Failed,
+    /// <summary>Recovery attempt in progress.</summary>
+    Recovery
 }
 
 /// <summary>

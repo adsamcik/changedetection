@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using ChangeDetection.Core.Interfaces;
+using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 
 namespace ChangeDetection.Services.Pipeline;
@@ -111,13 +112,11 @@ public partial class SelectorValidationStage(
         var doc = new HtmlDocument();
         doc.LoadHtml(content.Html ?? string.Empty);
 
-        // Convert CSS to XPath for HtmlAgilityPack
-        var xpath = CssToXPath(selector.Selector);
-        
-        HtmlNodeCollection? nodes;
+        IEnumerable<HtmlNode> nodes;
         try
         {
-            nodes = doc.DocumentNode.SelectNodes(xpath);
+            // Use Fizzler for native CSS selector support
+            nodes = doc.DocumentNode.QuerySelectorAll(selector.Selector);
         }
         catch (Exception ex)
         {
@@ -129,7 +128,8 @@ public partial class SelectorValidationStage(
             };
         }
 
-        if (nodes == null || nodes.Count == 0)
+        var nodeList = nodes.ToList();
+        if (nodeList.Count == 0)
         {
             return new SelectorValidation
             {
@@ -141,22 +141,22 @@ public partial class SelectorValidationStage(
         }
 
         // Get sample content
-        var firstNode = nodes[0];
+        var firstNode = nodeList[0];
         var sample = CleanText(firstNode.InnerText);
         
         // Calculate match quality
-        var quality = CalculateMatchQuality(sample, analysis, nodes.Count);
+        var quality = CalculateMatchQuality(sample, analysis, nodeList.Count);
 
         return new SelectorValidation
         {
             Selector = selector,
             IsValid = true,
-            MatchCount = nodes.Count,
+            MatchCount = nodeList.Count,
             ExtractedSample = TruncateText(sample, 500),
             MatchQuality = quality,
-            ValidationMessage = nodes.Count == 1 
+            ValidationMessage = nodeList.Count == 1 
                 ? "Unique match found" 
-                : $"Found {nodes.Count} matches"
+                : $"Found {nodeList.Count} matches"
         };
     }
 
@@ -316,58 +316,6 @@ public partial class SelectorValidationStage(
         return text[..maxChars] + "...";
     }
 
-    private static string CssToXPath(string css)
-    {
-        // Handle ID selector
-        if (css.StartsWith('#'))
-            return $"//*[@id='{css[1..]}']";
-
-        // Handle class selector
-        if (css.StartsWith('.'))
-            return $"//*[contains(@class, '{css[1..]}')]";
-
-        // Handle element selector
-        if (ElementNamePattern().IsMatch(css))
-            return $"//{css}";
-
-        // Handle element.class
-        var elementClassMatch = ElementClassPattern().Match(css);
-        if (elementClassMatch.Success)
-        {
-            var element = elementClassMatch.Groups[1].Value;
-            var className = elementClassMatch.Groups[2].Value;
-            return $"//{element}[contains(@class, '{className}')]";
-        }
-
-        // Handle element#id
-        var elementIdMatch = ElementIdPattern().Match(css);
-        if (elementIdMatch.Success)
-        {
-            var element = elementIdMatch.Groups[1].Value;
-            var id = elementIdMatch.Groups[2].Value;
-            return $"//{element}[@id='{id}']";
-        }
-
-        // Handle descendant selector
-        if (css.Contains(' '))
-        {
-            var parts = css.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var xpathParts = parts.Select(CssToXPath);
-            return string.Join("", xpathParts);
-        }
-
-        // Attribute selector [attr=value]
-        var attrMatch = AttributePattern().Match(css);
-        if (attrMatch.Success)
-        {
-            var attr = attrMatch.Groups[1].Value;
-            var value = attrMatch.Groups[2].Value;
-            return $"//*[@{attr}='{value}']";
-        }
-
-        return $"//{css}";
-    }
-
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespacePattern();
 
@@ -376,16 +324,4 @@ public partial class SelectorValidationStage(
 
     [GeneratedRegex(@"[\$€£¥]?\s*\d+[.,]?\d*\s*(?:USD|EUR|GBP|CZK|Kč)?", RegexOptions.IgnoreCase)]
     private static partial Regex PricePattern();
-
-    [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9]*$")]
-    private static partial Regex ElementNamePattern();
-
-    [GeneratedRegex(@"^([a-zA-Z][a-zA-Z0-9]*)\.([a-zA-Z][a-zA-Z0-9_-]*)$")]
-    private static partial Regex ElementClassPattern();
-
-    [GeneratedRegex(@"^([a-zA-Z][a-zA-Z0-9]*)#([a-zA-Z][a-zA-Z0-9_-]*)$")]
-    private static partial Regex ElementIdPattern();
-
-    [GeneratedRegex(@"\[([a-zA-Z][a-zA-Z0-9_-]*)=['""]?([^'""\]]+)['""]?\]")]
-    private static partial Regex AttributePattern();
 }

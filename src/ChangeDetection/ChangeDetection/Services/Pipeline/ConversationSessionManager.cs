@@ -22,14 +22,42 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
     }
 
     /// <inheritdoc />
+    public event Action<Guid>? SessionExpired;
+
+    /// <inheritdoc />
     public int ActiveSessionCount => _sessions.Count;
 
     /// <inheritdoc />
     public ConversationSession CreateSession()
     {
-        var session = new ConversationSession();
+        var session = new ConversationSession { SessionId = Guid.NewGuid() };
         _sessions[session.SessionId] = session;
         _logger.LogDebug("Created session {SessionId}", session.SessionId);
+        return session;
+    }
+
+    /// <inheritdoc />
+    public ConversationSession GetOrCreateSession(Guid sessionId)
+    {
+        // Try to get existing session first
+        if (_sessions.TryGetValue(sessionId, out var existingSession))
+        {
+            if (!IsExpired(existingSession))
+            {
+                existingSession.Touch();
+                _logger.LogDebug("Retrieved existing session {SessionId}", sessionId);
+                return existingSession;
+            }
+            
+            // Remove expired session
+            _sessions.TryRemove(sessionId, out _);
+            _logger.LogDebug("Removed expired session {SessionId}", sessionId);
+        }
+
+        // Create new session with the specified ID
+        var session = new ConversationSession { SessionId = sessionId };
+        _sessions[sessionId] = session;
+        _logger.LogDebug("Created new session with specified ID {SessionId}", sessionId);
         return session;
     }
 
@@ -78,6 +106,15 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
             .ToList();
     }
 
+    /// <inheritdoc />
+    public IReadOnlyList<ConversationSession> GetAllActiveSessions()
+    {
+        return _sessions.Values
+            .Where(s => !IsExpired(s) && (s.AwaitingUserInput || !string.IsNullOrEmpty(s.PendingInput) || !string.IsNullOrEmpty(s.DisplayName) || s.IsBackgrounded))
+            .OrderByDescending(s => s.LastActivityAt)
+            .ToList();
+    }
+
     private bool IsExpired(ConversationSession session)
     {
         return DateTimeOffset.UtcNow - session.LastActivityAt > _sessionTimeout;
@@ -86,6 +123,8 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
     private void CleanupExpiredSessions(object? state)
     {
         var expiredCount = 0;
+        var expiredSessionIds = new List<Guid>();
+        
         foreach (var kvp in _sessions)
         {
             if (IsExpired(kvp.Value))
@@ -93,6 +132,7 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
                 if (_sessions.TryRemove(kvp.Key, out _))
                 {
                     expiredCount++;
+                    expiredSessionIds.Add(kvp.Key);
                 }
             }
         }
@@ -101,6 +141,19 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
         {
             _logger.LogInformation("Cleaned up {Count} expired sessions, {Remaining} active", 
                 expiredCount, _sessions.Count);
+            
+            // Notify subscribers about expired sessions so they can clean up related resources
+            foreach (var sessionId in expiredSessionIds)
+            {
+                try
+                {
+                    SessionExpired?.Invoke(sessionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error notifying SessionExpired subscriber for session {SessionId}", sessionId);
+                }
+            }
         }
     }
 

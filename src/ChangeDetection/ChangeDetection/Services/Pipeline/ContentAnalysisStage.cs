@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -20,38 +21,127 @@ public class ContentAnalysisStage(
         string userIntent,
         CancellationToken ct = default)
     {
+        ContentAnalysis? result = null;
+        await foreach (var progress in AnalyzeStreamingAsync(content, userIntent, ct))
+        {
+            if (progress.Result != null)
+            {
+                result = progress.Result;
+            }
+        }
+        return result ?? new ContentAnalysis
+        {
+            PageDescription = $"Page titled '{content.Title ?? "Unknown"}'",
+            UserIntent = userIntent,
+            ContentType = ContentType.Unknown,
+            IdentifiedSections = [],
+            RecommendedApproach = MonitoringApproach.FullPage,
+            Confidence = 0.3f
+        };
+    }
+    
+    /// <summary>
+    /// Analyzes the page content with streaming progress for thinking.
+    /// </summary>
+    public async IAsyncEnumerable<ContentAnalysisProgress> AnalyzeStreamingAsync(
+        FetchedContent content,
+        string userIntent,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
         logger.LogInformation("Analyzing content for {Url}", content.Url);
 
         // Step 1: Classify the content type (simple classification)
-        var contentType = await ClassifyContentTypeAsync(content, ct);
+        yield return new ContentAnalysisProgress { Step = "ContentClassification", Status = "Starting" };
+        
+        ContentType contentType = ContentType.Unknown;
+        await foreach (var chunk in ClassifyContentTypeStreamingAsync(content, ct))
+        {
+            if (chunk.IsThinking)
+            {
+                yield return new ContentAnalysisProgress 
+                { 
+                    Step = "ContentClassification", 
+                    Status = "Thinking",
+                    ThinkingContent = chunk.Content
+                };
+            }
+            else
+            {
+                contentType = chunk.Result;
+            }
+        }
+        yield return new ContentAnalysisProgress { Step = "ContentClassification", Status = "Completed" };
         
         // Step 2: Extract user intent from their input
-        var intent = await ExtractUserIntentAsync(userIntent, content.Title, ct);
+        yield return new ContentAnalysisProgress { Step = "IntentExtraction", Status = "Starting" };
+        
+        string intent = "Monitor for any changes";
+        await foreach (var chunk in ExtractUserIntentStreamingAsync(userIntent, content.Title, ct))
+        {
+            if (chunk.IsThinking)
+            {
+                yield return new ContentAnalysisProgress 
+                { 
+                    Step = "IntentExtraction", 
+                    Status = "Thinking",
+                    ThinkingContent = chunk.Content
+                };
+            }
+            else
+            {
+                intent = chunk.Result ?? intent;
+            }
+        }
+        yield return new ContentAnalysisProgress { Step = "IntentExtraction", Status = "Completed" };
         
         // Step 3: Identify page sections relevant to the intent
-        var sections = await IdentifyPageSectionsAsync(content, intent, contentType, ct);
+        yield return new ContentAnalysisProgress { Step = "SectionIdentification", Status = "Starting" };
+        
+        List<PageSection> sections = [];
+        await foreach (var chunk in IdentifyPageSectionsStreamingAsync(content, intent, contentType, ct))
+        {
+            if (chunk.IsThinking)
+            {
+                yield return new ContentAnalysisProgress 
+                { 
+                    Step = "SectionIdentification", 
+                    Status = "Thinking",
+                    ThinkingContent = chunk.Content
+                };
+            }
+            else
+            {
+                sections = chunk.Result ?? [];
+            }
+        }
+        yield return new ContentAnalysisProgress { Step = "SectionIdentification", Status = "Completed" };
         
         // Step 4: Determine the best monitoring approach
         var approach = DetermineApproach(contentType, sections);
-
         var confidence = CalculateConfidence(contentType, sections, intent);
 
-        return new ContentAnalysis
+        yield return new ContentAnalysisProgress
         {
-            PageDescription = $"Page titled '{content.Title ?? "Unknown"}' containing {contentType} content",
-            UserIntent = intent,
-            ContentType = contentType,
-            IdentifiedSections = sections,
-            RecommendedApproach = approach,
-            Confidence = confidence
+            Step = "Complete",
+            Status = "Completed",
+            Result = new ContentAnalysis
+            {
+                PageDescription = $"Page titled '{content.Title ?? "Unknown"}' containing {contentType} content",
+                UserIntent = intent,
+                ContentType = contentType,
+                IdentifiedSections = sections,
+                RecommendedApproach = approach,
+                Confidence = confidence
+            }
         };
     }
 
-    private async Task<ContentType> ClassifyContentTypeAsync(FetchedContent content, CancellationToken ct)
+    private async IAsyncEnumerable<StreamingResult<ContentType>> ClassifyContentTypeStreamingAsync(
+        FetchedContent content, 
+        [EnumeratorCancellation] CancellationToken ct)
     {
         var sample = TruncateText(content.TextContent ?? "", 2000);
         
-        // Compact prompt optimized for small models
         var prompt = $"""
             Webpage category? Reply ONE word only.
             Options: NewsList, EventList, ProductListing, PriceInfo, Article, Table, Feed, StatusPage, Other
@@ -62,18 +152,29 @@ public class ContentAnalysisStage(
             Category:
             """;
 
-        var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        var fullContent = new System.Text.StringBuilder();
+        
+        await foreach (var chunk in llmChain.ExecuteStreamingAsync(prompt, new LlmRequestOptions
         {
             Temperature = 0.1f,
             MaxTokens = 20,
             UsageType = LlmUsageType.ContentAnalysis
-        }, ct);
+        }, ct))
+        {
+            if (chunk.Type == LlmStreamChunkType.Content && !string.IsNullOrEmpty(chunk.Text))
+            {
+                fullContent.Append(chunk.Text);
+                yield return new StreamingResult<ContentType> { IsThinking = true, Content = chunk.Text };
+            }
+        }
 
-        if (!response.IsSuccess || string.IsNullOrEmpty(response.Content))
-            return ContentType.Unknown;
-
-        var responseText = response.Content.Trim().ToLowerInvariant();
-        
+        var responseText = fullContent.ToString().Trim().ToLowerInvariant();
+        var result = ParseContentType(responseText);
+        yield return new StreamingResult<ContentType> { Result = result };
+    }
+    
+    private static ContentType ParseContentType(string responseText)
+    {
         if (responseText.Contains("newslist") || responseText.Contains("news"))
             return ContentType.NewsList;
         if (responseText.Contains("eventlist") || responseText.Contains("event") || responseText.Contains("calendar"))
@@ -94,50 +195,57 @@ public class ContentAnalysisStage(
         return ContentType.Unknown;
     }
 
-    private async Task<string> ExtractUserIntentAsync(string userInput, string? pageTitle, CancellationToken ct)
+    private async IAsyncEnumerable<StreamingResult<string>> ExtractUserIntentStreamingAsync(
+        string userInput, 
+        string? pageTitle, 
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        // Compact prompt optimized for small models
         var prompt = $"""
             User monitors: "{userInput}"
             Page: "{pageTitle ?? "Unknown"}"
             Summarize goal in <15 words. Plain text only, no quotes or markdown:
             """;
 
-        var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        var fullContent = new System.Text.StringBuilder();
+
+        await foreach (var chunk in llmChain.ExecuteStreamingAsync(prompt, new LlmRequestOptions
         {
             Temperature = 0.3f,
             MaxTokens = 50,
             UsageType = LlmUsageType.ContentAnalysis
-        }, ct);
+        }, ct))
+        {
+            if (chunk.Type == LlmStreamChunkType.Content && !string.IsNullOrEmpty(chunk.Text))
+            {
+                fullContent.Append(chunk.Text);
+                yield return new StreamingResult<string> { IsThinking = true, Content = chunk.Text };
+            }
+        }
 
-        if (!response.IsSuccess || string.IsNullOrEmpty(response.Content))
-            return "Monitor for any changes";
-            
-        // Clean up LLM response - remove markdown, quotes, etc.
-        var intent = response.Content.Trim();
-        intent = intent.Replace("**", "").Replace("*", "");  // Remove bold/italic markdown
-        intent = intent.Trim('"', '\'');  // Remove basic quotes
-        // Also remove fancy unicode quotes
+        var intent = fullContent.ToString().Trim();
+        intent = intent.Replace("**", "").Replace("*", "");
+        intent = intent.Trim('"', '\'');
         intent = intent.TrimStart('\u201C', '\u201D', '\u2018', '\u2019');
         intent = intent.TrimEnd('\u201C', '\u201D', '\u2018', '\u2019');
         intent = intent.Trim();
         
-        return string.IsNullOrEmpty(intent) ? "Monitor for any changes" : intent;
+        yield return new StreamingResult<string> 
+        { 
+            Result = string.IsNullOrEmpty(intent) ? "Monitor for any changes" : intent 
+        };
     }
 
-    private async Task<List<PageSection>> IdentifyPageSectionsAsync(
+    private async IAsyncEnumerable<StreamingResult<List<PageSection>>> IdentifyPageSectionsStreamingAsync(
         FetchedContent content,
         string userIntent,
         ContentType contentType,
-        CancellationToken ct)
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        // Give LLM more HTML for better section identification (8000 chars)
         var htmlSample = TruncateText(content.CleanedHtml ?? content.Html ?? "", 8000);
         
         logger.LogDebug("Identifying sections in {Length} chars of HTML for intent: {Intent}",
             htmlSample.Length, userIntent);
         
-        // More detailed prompt to help LLM find specific content sections
         var prompt = $$"""
             Analyze this HTML and find 1-3 content sections that match the user's goal.
             
@@ -156,20 +264,35 @@ public class ContentAnalysisStage(
             Return JSON array only: [{"name":"x","selector":"css","isTarget":true,"description":"x"}]
             """;
 
-        var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        var fullContent = new System.Text.StringBuilder();
+
+        await foreach (var chunk in llmChain.ExecuteStreamingAsync(prompt, new LlmRequestOptions
         {
             Temperature = 0.2f,
             MaxTokens = 300,
             UsageType = LlmUsageType.ContentAnalysis,
             ExpectJson = true
-        }, ct);
+        }, ct))
+        {
+            if (chunk.Type == LlmStreamChunkType.Content && !string.IsNullOrEmpty(chunk.Text))
+            {
+                fullContent.Append(chunk.Text);
+                yield return new StreamingResult<List<PageSection>> { IsThinking = true, Content = chunk.Text };
+            }
+        }
 
-        if (!response.IsSuccess || string.IsNullOrEmpty(response.Content))
+        var sections = ParseSectionsJson(fullContent.ToString());
+        yield return new StreamingResult<List<PageSection>> { Result = sections };
+    }
+    
+    private List<PageSection> ParseSectionsJson(string responseContent)
+    {
+        if (string.IsNullOrEmpty(responseContent))
             return [];
 
         try
         {
-            var json = CleanJsonResponse(response.Content);
+            var json = CleanJsonResponse(responseContent);
             var sections = JsonSerializer.Deserialize<List<SectionDto>>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -185,7 +308,7 @@ public class ContentAnalysisStage(
         }
         catch (JsonException ex)
         {
-            logger.LogWarning(ex, "Failed to parse section JSON: {Content}", response.Content);
+            logger.LogWarning(ex, "Failed to parse section JSON: {Content}", responseContent);
             return [];
         }
     }
@@ -269,4 +392,38 @@ public class ContentAnalysisStage(
         public bool IsTarget { get; set; }
         public string? Description { get; set; }
     }
+}
+
+/// <summary>
+/// Progress update during content analysis.
+/// </summary>
+public class ContentAnalysisProgress
+{
+    /// <summary>Analysis step name.</summary>
+    public required string Step { get; init; }
+    
+    /// <summary>Step status: Starting, Thinking, Completed.</summary>
+    public required string Status { get; init; }
+    
+    /// <summary>Streamed thinking content from LLM.</summary>
+    public string? ThinkingContent { get; init; }
+    
+    /// <summary>Final analysis result (only on complete).</summary>
+    public ContentAnalysis? Result { get; init; }
+}
+
+/// <summary>
+/// Generic streaming result for LLM responses.
+/// </summary>
+/// <typeparam name="T">The result type.</typeparam>
+public class StreamingResult<T>
+{
+    /// <summary>True if this is thinking content.</summary>
+    public bool IsThinking { get; init; }
+    
+    /// <summary>Streamed content token.</summary>
+    public string? Content { get; init; }
+    
+    /// <summary>Final result (only set on last chunk).</summary>
+    public T? Result { get; init; }
 }

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ChangeDetection.Core.Interfaces;
 
 namespace ChangeDetection.Services.Pipeline;
@@ -63,6 +64,284 @@ public class WatchSetupPipeline(
             logger.LogError(ex, "Pipeline failed with exception");
             return CreateFailedResult(session, PipelineStage.Failed, $"Pipeline error: {ex.Message}");
         }
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<PipelineProgress> ProcessStreamingAsync(
+        string userInput,
+        PipelineOptions? options = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        options ??= new PipelineOptions();
+        var session = new PipelineSession
+        {
+            OriginalInput = userInput
+        };
+
+        logger.LogInformation("Starting streaming pipeline for input: {Input}", TruncateForLog(userInput));
+
+        PipelineResult? result = null;
+        Exception? error = null;
+
+        // Stage 1: URL Extraction
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.UrlExtraction,
+            Type = ProgressType.Starting,
+            Summary = "Extracting URL from input...",
+            Session = session
+        };
+
+        try
+        {
+            result = await ExecuteUrlExtractionAsync(session, ct);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        if (error != null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.UrlExtraction, error.Message);
+            yield break;
+        }
+
+        if (result != null)
+        {
+            yield return CreateResultProgress(result);
+            yield break;
+        }
+
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.UrlExtraction,
+            Type = ProgressType.StageCompleted,
+            Summary = $"Found URL: {session.SelectedUrl?.NormalizedUrl}",
+            Details = session.UserIntent,
+            Session = session
+        };
+
+        // Stage 2: Content Fetching
+        error = null;
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.ContentFetching,
+            Type = ProgressType.Starting,
+            Summary = $"Fetching content from {session.SelectedUrl?.NormalizedUrl}...",
+            Session = session
+        };
+
+        try
+        {
+            result = await ExecuteContentFetchingAsync(session, options, ct);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        if (error != null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.ContentFetching, error.Message);
+            yield break;
+        }
+
+        if (result != null)
+        {
+            yield return CreateResultProgress(result);
+            yield break;
+        }
+
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.ContentFetching,
+            Type = ProgressType.StageCompleted,
+            Summary = $"Content fetched ({session.FetchedContent?.TextContent?.Length ?? 0:N0} chars)",
+            Details = session.FetchedContent?.UsedJavaScript == true ? "Used JavaScript rendering" : null,
+            Session = session
+        };
+
+        // Stage 3: Content Analysis (with streaming thinking)
+        error = null;
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.ContentAnalysis,
+            Type = ProgressType.Starting,
+            Summary = "Analyzing page content with AI...",
+            Session = session
+        };
+
+        // Collect streaming progress in a channel to avoid yield-in-try-catch
+        var analysisChannel = System.Threading.Channels.Channel.CreateUnbounded<PipelineProgress>();
+        
+        var analysisTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var progress in ExecuteContentAnalysisStreamingAsync(session, ct))
+                {
+                    analysisChannel.Writer.TryWrite(progress);
+                }
+            }
+            catch (Exception ex)
+            {
+                analysisChannel.Writer.TryWrite(CreateFailedProgress(session, PipelineStage.ContentAnalysis, ex.Message));
+            }
+            finally
+            {
+                analysisChannel.Writer.Complete();
+            }
+        }, ct);
+
+        await foreach (var progress in analysisChannel.Reader.ReadAllAsync(ct))
+        {
+            yield return progress;
+            if (progress.Type == ProgressType.Failed)
+            {
+                error = new Exception(progress.Summary);
+            }
+        }
+
+        await analysisTask;
+
+        if (error != null)
+        {
+            yield break;
+        }
+
+        if (session.ContentAnalysis == null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.ContentAnalysis, "Content analysis failed");
+            yield break;
+        }
+
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.ContentAnalysis,
+            Type = ProgressType.StageCompleted,
+            Summary = $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}",
+            Details = $"Found {session.ContentAnalysis?.IdentifiedSections.Count ?? 0} sections",
+            Session = session
+        };
+
+        // Stage 4-5: Selector Generation and Validation
+        error = null;
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.SelectorGeneration,
+            Type = ProgressType.Starting,
+            Summary = "Generating selectors for monitoring...",
+            Session = session
+        };
+
+        try
+        {
+            result = await ExecuteSelectorIterationAsync(session, options, ct);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        if (error != null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.SelectorGeneration, error.Message);
+            yield break;
+        }
+
+        if (result != null)
+        {
+            yield return CreateResultProgress(result);
+            yield break;
+        }
+
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.SelectorValidation,
+            Type = ProgressType.StageCompleted,
+            Summary = session.BestSelector != null 
+                ? $"Found selector: {session.BestSelector.Selector}"
+                : "Selector validation complete",
+            Session = session
+        };
+
+        // Stage 6: Build final configuration
+        var finalResult = BuildFinalResult(session, options);
+        yield return CreateResultProgress(finalResult);
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<PipelineProgress> ContinueWithFeedbackStreamingAsync(
+        PipelineSession session,
+        string feedback,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        logger.LogInformation("Continuing pipeline with feedback (streaming): {Feedback}", TruncateForLog(feedback));
+
+        yield return new PipelineProgress
+        {
+            Stage = PipelineStage.SelectorGeneration,
+            Type = ProgressType.Starting,
+            Summary = "Processing your response...",
+            Session = session
+        };
+
+        PipelineResult? result = null;
+        Exception? error = null;
+        
+        try
+        {
+            result = await ContinueWithFeedbackAsync(session, feedback, ct);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        if (error != null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.Failed, error.Message);
+            yield break;
+        }
+
+        yield return CreateResultProgress(result!);
+    }
+
+    private static PipelineProgress CreateResultProgress(PipelineResult result)
+    {
+        var progressType = result.NeedsUserInput ? ProgressType.NeedsInput
+            : result.IsSuccess ? ProgressType.Completed
+            : ProgressType.Failed;
+
+        return new PipelineProgress
+        {
+            Stage = result.CurrentStage,
+            Type = progressType,
+            Summary = result.Summary ?? (result.IsSuccess ? "Pipeline completed" : result.ErrorMessage ?? "Pipeline failed"),
+            Details = result.ErrorMessage,
+            Session = result.Session,
+            Result = result
+        };
+    }
+
+    private static PipelineProgress CreateFailedProgress(PipelineSession session, PipelineStage stage, string message)
+    {
+        return new PipelineProgress
+        {
+            Stage = stage,
+            Type = ProgressType.Failed,
+            Summary = $"Error: {message}",
+            Details = message,
+            Session = session,
+            Result = new PipelineResult
+            {
+                IsSuccess = false,
+                CurrentStage = stage,
+                Session = session,
+                ErrorMessage = message
+            }
+        };
     }
 
     /// <inheritdoc />
@@ -377,9 +656,106 @@ public class WatchSetupPipeline(
             : ", no clear sections identified";
             
         session.IterationHistory.Add(
-            $"Analysis: {session.ContentAnalysis.ContentType}, intent=\"{TruncateForLog(session.ContentAnalysis.UserIntent, 50)}\"{sectionsInfo}");
+            $"Analysis: {session.ContentAnalysis.ContentType}, intent=\"{TruncateForLog(session.ContentAnalysis.UserIntent ?? "", 50)}\"{sectionsInfo}");
 
         return null; // Continue
+    }
+
+    private async IAsyncEnumerable<PipelineProgress> ExecuteContentAnalysisStreamingAsync(
+        PipelineSession session,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        logger.LogDebug("Stage 3: Content Analysis (streaming)");
+
+        if (session.FetchedContent == null)
+        {
+            yield return CreateFailedProgress(session, PipelineStage.ContentAnalysis, "No content fetched");
+            yield break;
+        }
+
+        var intentToAnalyze = !string.IsNullOrWhiteSpace(session.UserIntent) 
+            ? session.UserIntent 
+            : session.OriginalInput;
+
+        string? currentStep = null;
+        var thinkingBuffer = new System.Text.StringBuilder();
+        
+        await foreach (var progress in contentAnalysis.AnalyzeStreamingAsync(
+            session.FetchedContent,
+            intentToAnalyze,
+            ct))
+        {
+            // Track step transitions
+            if (progress.Step != currentStep && progress.Status == "Starting")
+            {
+                // Output buffered thinking from previous step (if any)
+                if (thinkingBuffer.Length > 0 && currentStep != null)
+                {
+                    yield return new PipelineProgress
+                    {
+                        Stage = PipelineStage.ContentAnalysis,
+                        Type = ProgressType.Thinking,
+                        Summary = thinkingBuffer.ToString(),
+                        Details = currentStep,
+                        Session = session
+                    };
+                    thinkingBuffer.Clear();
+                }
+                
+                var stepName = progress.Step switch
+                {
+                    "ContentClassification" => "Classifying content type",
+                    "IntentExtraction" => "Understanding your intent",
+                    "SectionIdentification" => "Identifying page sections",
+                    _ => progress.Step
+                };
+                
+                currentStep = progress.Step;
+                
+                yield return new PipelineProgress
+                {
+                    Stage = PipelineStage.ContentAnalysis,
+                    Type = ProgressType.InProgress,
+                    Summary = stepName + "...",
+                    Session = session
+                };
+            }
+            
+            // Buffer thinking content instead of streaming each token
+            if (progress.Status == "Thinking" && !string.IsNullOrEmpty(progress.ThinkingContent))
+            {
+                thinkingBuffer.Append(progress.ThinkingContent);
+            }
+            
+            // When step completes, output buffered thinking
+            if (progress.Status == "Completed" && thinkingBuffer.Length > 0 && currentStep != null)
+            {
+                yield return new PipelineProgress
+                {
+                    Stage = PipelineStage.ContentAnalysis,
+                    Type = ProgressType.Thinking,
+                    Summary = thinkingBuffer.ToString(),
+                    Details = currentStep,
+                    Session = session
+                };
+                thinkingBuffer.Clear();
+            }
+            
+            // Capture final result
+            if (progress.Result != null)
+            {
+                session.ContentAnalysis = progress.Result;
+                
+                var sectionsFound = session.ContentAnalysis.IdentifiedSections.Count;
+                var targetSections = session.ContentAnalysis.IdentifiedSections.Count(s => s.IsLikelyTarget);
+                var sectionsInfo = sectionsFound > 0 
+                    ? $", found {sectionsFound} sections ({targetSections} targets)" 
+                    : ", no clear sections identified";
+                    
+                session.IterationHistory.Add(
+                    $"Analysis: {session.ContentAnalysis.ContentType}, intent=\"{TruncateForLog(session.ContentAnalysis.UserIntent ?? "", 50)}\"{sectionsInfo}");
+            }
+        }
     }
 
     private async Task<PipelineResult?> ExecuteSelectorIterationAsync(

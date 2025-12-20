@@ -199,6 +199,23 @@ public class StartSetupSessionResponse
     /// When the session was created.
     /// </summary>
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Whether this is a resumed session (existing session with this ID was found).
+    /// </summary>
+    public bool IsResumed { get; set; }
+
+    /// <summary>
+    /// Whether the session has pipeline state (URL extraction, content analysis, etc.).
+    /// Indicates if the session has made progress beyond initial creation.
+    /// </summary>
+    public bool HasPipelineState { get; set; }
+
+    /// <summary>
+    /// Input that was pending when the session was created.
+    /// If set, the client should immediately send this as a message to start processing.
+    /// </summary>
+    public string? PendingInput { get; set; }
 }
 
 /// <summary>
@@ -745,6 +762,11 @@ public enum FlowStateStatus
     InProgress,
 
     /// <summary>
+    /// AI is thinking/reasoning.
+    /// </summary>
+    Thinking,
+
+    /// <summary>
     /// Stage completed successfully.
     /// </summary>
     Completed,
@@ -814,6 +836,11 @@ public record FlowStateEntry
     /// For Question status with SELECT: the available options with label and value.
     /// </summary>
     public List<FlowOption>? Options { get; init; }
+    
+    /// <summary>
+    /// The ID of the created watch (only set when Stage is "Complete" and watch was successfully created).
+    /// </summary>
+    public Guid? WatchId { get; init; }
 }
 
 /// <summary>
@@ -830,6 +857,11 @@ public class FlowStateEntryDto
     public string? Details { get; set; }
     public string? InputType { get; set; }
     public List<FlowOptionDto>? Options { get; set; }
+    
+    /// <summary>
+    /// The ID of the created watch (only set when Stage is "Complete" and watch was successfully created).
+    /// </summary>
+    public Guid? WatchId { get; set; }
 }
 
 /// <summary>
@@ -839,6 +871,7 @@ public enum FlowStateStatusDto
 {
     Pending,
     InProgress,
+    Thinking,
     Completed,
     Failed,
     Recovery,
@@ -883,6 +916,48 @@ public class PendingSetupDto
 
     /// <summary>
     /// When this session was created.
+    /// </summary>
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Whether this session is currently being processed (not awaiting input yet).
+    /// </summary>
+    public bool IsProcessing { get; set; }
+
+    /// <summary>
+    /// Whether the user has explicitly sent this session to the background.
+    /// </summary>
+    public bool IsBackgrounded { get; set; }
+
+    /// <summary>
+    /// The current pipeline stage (e.g., "Fetching page", "Analyzing content").
+    /// </summary>
+    public string? CurrentStage { get; set; }
+}
+
+/// <summary>
+/// Request to start a new setup session.
+/// </summary>
+public class StartSetupRequest
+{
+    /// <summary>
+    /// User's natural language input describing what to watch.
+    /// </summary>
+    public required string Input { get; set; }
+}
+
+/// <summary>
+/// Response from starting a new setup session.
+/// </summary>
+public class StartSetupResponse
+{
+    /// <summary>
+    /// The created session ID.
+    /// </summary>
+    public Guid SessionId { get; set; }
+
+    /// <summary>
+    /// When the session was created.
     /// </summary>
     public DateTimeOffset CreatedAt { get; set; }
 }
