@@ -203,3 +203,79 @@
     /* Use CSS containment for better animation performance */
     contain: layout;
 }
+
+/* Thinking entries - collapsible AI reasoning */
+.timeline-entry.thinking {
+    border-color: #a5b4fc;
+    background: linear-gradient(135deg, #eef2ff 0%, #ffffff 100%);
+}
+
+.timeline-entry.thinking .timeline-icon {
+    background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+    color: white;
+    animation: thinkingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes thinkingPulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.7;
+    }
+}
+
+.thinking-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: #6366f1;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.thinking-toggle:hover {
+    color: #4f46e5;
+}
+
+.toggle-icon {
+    font-size: 0.75rem;
+    transition: transform 0.2s ease;
+}
+
+.thinking-label {
+    font-style: italic;
+}
+
+.thinking-content {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: rgba(99, 102, 241, 0.05);
+    border-radius: 6px;
+    border: 1px solid rgba(99, 102, 241, 0.1);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.thinking-text {
+    font-size: 0.8125rem;
+    color: #4b5563;
+    line-height: 1.6;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.timeline-entry.thinking.collapsed {
+    opacity: 0.75;
+}
+
+.timeline-entry.thinking.expanded {
+    opacity: 1;
+}

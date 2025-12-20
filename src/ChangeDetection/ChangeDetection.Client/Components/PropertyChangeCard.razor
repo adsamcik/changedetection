@@ -1,0 +1,117 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="property-change-card @GetChangeClass()">
+    <div class="property-header">
+        <span class="property-name">@Change.FieldName</span>
+        <span class="property-type">@GetFieldTypeIcon() @Change.FieldType</span>
+    </div>
+    
+    <div class="property-values">
+        <div class="old-value">
+            <span class="value-label">Before</span>
+            <span class="value-content">@(Change.OldFormattedValue ?? Change.OldValue ?? "—")</span>
+        </div>
+        
+        <div class="change-arrow">
+            @if (Change.IsIncrease == true)
+            {
+                <span class="arrow up">↑</span>
+            }
+            else if (Change.IsIncrease == false)
+            {
+                <span class="arrow down">↓</span>
+            }
+            else
+            {
+                <span class="arrow neutral">→</span>
+            }
+        </div>
+        
+        <div class="new-value">
+            <span class="value-label">After</span>
+            <span class="value-content">@(Change.NewFormattedValue ?? Change.NewValue ?? "—")</span>
+        </div>
+    </div>
+    
+    @if (Change.NumericChange.HasValue)
+    {
+        <div class="numeric-change">
+            <span class="change-amount @(Change.IsIncrease == true ? "positive" : "negative")">
+                @(Change.NumericChange > 0 ? "+" : "")@FormatNumericChange()
+            </span>
+            @if (Change.PercentageChange.HasValue)
+            {
+                <span class="change-percentage @(Change.IsIncrease == true ? "positive" : "negative")">
+                    (@(Change.PercentageChange > 0 ? "+" : "")@Change.PercentageChange.Value.ToString("N1")%)
+                </span>
+            }
+        </div>
+    }
+    
+    @if (!string.IsNullOrEmpty(Change.ImportanceReason))
+    {
+        <div class="importance-reason">
+            <span class="importance-badge @Change.Importance?.ToLower()">@Change.Importance</span>
+            <span class="reason-text">@Change.ImportanceReason</span>
+        </div>
+    }
+    
+    @if (ShowHistoryButton && IsChartableField())
+    {
+        <button class="btn-history" @onclick="OnShowHistory">
+            📈 View History
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public required FieldChangeDetailDto Change { get; set; }
+    
+    [Parameter]
+    public bool ShowHistoryButton { get; set; } = true;
+    
+    [Parameter]
+    public EventCallback<FieldChangeDetailDto> OnShowHistoryClicked { get; set; }
+    
+    private string GetChangeClass()
+    {
+        if (Change.IsIncrease == true) return "change-increase";
+        if (Change.IsIncrease == false) return "change-decrease";
+        return "change-modified";
+    }
+    
+    private string GetFieldTypeIcon() => Change.FieldType switch
+    {
+        "Currency" => "💰",
+        "Percentage" => "📊",
+        "Number" => "#️⃣",
+        "Date" => "📅",
+        "Url" => "🔗",
+        "Boolean" => "☑️",
+        "Status" => "🏷️",
+        _ => "📝"
+    };
+    
+    private bool IsChartableField() => Change.FieldType is "Currency" or "Percentage" or "Number";
+    
+    private string FormatNumericChange()
+    {
+        if (!Change.NumericChange.HasValue) return "";
+        
+        var value = Change.NumericChange.Value;
+        
+        return Change.FieldType switch
+        {
+            "Currency" => $"{Change.CurrencyCode ?? "$"}{Math.Abs(value):N2}",
+            "Percentage" => $"{Math.Abs(value):N1}%",
+            _ when !string.IsNullOrEmpty(Change.Unit) => $"{Math.Abs(value):N} {Change.Unit}",
+            _ => $"{Math.Abs(value):N}"
+        };
+    }
+    
+    private async Task OnShowHistory()
+    {
+        await OnShowHistoryClicked.InvokeAsync(Change);
+    }
+}

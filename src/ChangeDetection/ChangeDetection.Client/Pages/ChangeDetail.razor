@@ -1,5 +1,5 @@
 @page "/changes/{Id}"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -54,9 +54,21 @@
             </div>
         </section>
 
+        @* Object-Level Changes Section (when schema extraction is enabled) *@
+        @if (change.HasObjectDiff && change.ObjectDiff != null)
+        {
+            <section class="object-diff-section">
+                <h2>📊 Property Changes</h2>
+                <ObjectDiffView 
+                    ObjectDiff="change.ObjectDiff" 
+                    WatchId="change.WatchId"
+                    LoadFieldHistory="LoadFieldHistory" />
+            </section>
+        }
+
         <section class="diff-section">
             <div class="section-header">
-                <h2>Diff View</h2>
+                <h2>@(change.HasObjectDiff ? "📝 Raw Text Diff" : "Diff View")</h2>
                 <div class="view-toggle">
                     <button class="toggle-btn @(diffView == "unified" ? "active" : "")" @onclick="SetUnifiedView">
                         Unified
@@ -150,6 +162,7 @@
     private bool isLoading = true;
     private string? error;
     private string diffView = "unified";
+    private Dictionary<string, FieldHistoryDto> fieldHistoryCache = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -191,6 +204,40 @@
         {
             isLoading = false;
         }
+    }
+    
+    private async Task<FieldHistoryDto?> LoadFieldHistory(string identityKey, string fieldName)
+    {
+        if (change == null) return null;
+        
+        var cacheKey = $"{identityKey}:{fieldName}";
+        
+        // Check cache first
+        if (fieldHistoryCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+        
+        try
+        {
+            var url = $"/api/changes/{change.WatchId}/field-history/{Uri.EscapeDataString(identityKey)}/{Uri.EscapeDataString(fieldName)}";
+            var response = await Http.GetAsync(url);
+            if (response.IsSuccessStatusCode)
+            {
+                var history = await response.Content.ReadFromJsonAsync<FieldHistoryDto>();
+                if (history != null)
+                {
+                    fieldHistoryCache[cacheKey] = history;
+                }
+                return history;
+            }
+        }
+        catch
+        {
+            // Silently fail - history is optional
+        }
+        
+        return null;
     }
 
     private string GetImportanceIcon(string importance) => importance switch

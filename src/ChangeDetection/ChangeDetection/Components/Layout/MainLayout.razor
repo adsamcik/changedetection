@@ -1,4 +1,8 @@
 ﻿@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Web
+@inject IConfiguration Configuration
+@inject ILogger<MainLayout> Logger
 
 <div class="page">
     <div class="sidebar">
@@ -7,11 +11,40 @@
 
     <main>
         <div class="top-row px-4">
+            @if (IsSsoMode)
+            {
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="me-3">
+                            @if (context.User.HasClaim("cd:isadmin", "true"))
+                            {
+                                <span class="badge bg-warning text-dark me-2" title="Administrator">Admin</span>
+                            }
+                            @(context.User.FindFirst("cd:displayname")?.Value ?? context.User.Identity?.Name ?? "User")
+                        </span>
+                    </Authorized>
+                    <NotAuthorized>
+                        <span class="me-3 text-muted">Not authenticated</span>
+                    </NotAuthorized>
+                </AuthorizeView>
+            }
             <a href="/settings">Settings</a>
         </div>
 
         <article class="content px-4">
-            @Body
+            <ErrorBoundary @ref="_errorBoundary">
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent Context="exception">
+                    <div class="alert alert-danger" role="alert">
+                        <h4 class="alert-heading">An error occurred</h4>
+                        <p>@exception.Message</p>
+                        <hr>
+                        <button class="btn btn-outline-danger" @onclick="RecoverFromError">Try Again</button>
+                    </div>
+                </ErrorContent>
+            </ErrorBoundary>
         </article>
     </main>
 </div>
@@ -21,3 +54,20 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private bool IsSsoMode => Configuration.GetValue<string>("Authentication:Mode")?.Equals("SSO", StringComparison.OrdinalIgnoreCase) == true;
+    
+    private ErrorBoundary? _errorBoundary;
+
+    private void RecoverFromError()
+    {
+        _errorBoundary?.Recover();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Recover from error state when navigating
+        _errorBoundary?.Recover();
+    }
+}

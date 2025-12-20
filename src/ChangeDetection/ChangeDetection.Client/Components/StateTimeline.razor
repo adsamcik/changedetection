@@ -10,30 +10,118 @@
     }
     else
     {
-        @* Render entries in reverse order so newest is at bottom (visually centered) *@
-        @foreach (var entry in Entries)
+        @* Render entries, grouping thinking entries together *@
+        var processedEntries = ProcessEntries(Entries);
+        @foreach (var item in processedEntries)
         {
-            <div class="timeline-entry @GetStatusClass(entry.Status) @(entry.IsCurrentState ? "current" : "")">
-                <span class="timeline-icon">@GetStatusIcon(entry.Status)</span>
-                <div class="timeline-content">
-                    <span class="timeline-summary">@entry.Summary</span>
-                    @if (!string.IsNullOrEmpty(entry.Details) && entry.Status is FlowStateStatus.Failed or FlowStateStatus.Recovery)
-                    {
-                        <span class="timeline-details">@TruncateDetails(entry.Details)</span>
-                    }
+            @if (item.IsThinkingGroup)
+            {
+                <div class="timeline-entry thinking @(item.IsExpanded ? "expanded" : "collapsed")">
+                    <span class="timeline-icon">💭</span>
+                    <div class="timeline-content">
+                        <button class="thinking-toggle" @onclick="@(() => ToggleThinking(item.ThinkingKey ?? ""))">
+                            <span class="toggle-icon">@(item.IsExpanded ? "▼" : "▶")</span>
+                            <span class="thinking-label">AI Thinking (@item.ThinkingStep)...</span>
+                        </button>
+                        @if (item.IsExpanded)
+                        {
+                            <div class="thinking-content">
+                                <span class="thinking-text">@item.ThinkingContent</span>
+                            </div>
+                        }
+                    </div>
                 </div>
-                <span class="timeline-time">@FormatTime(entry.Timestamp)</span>
-            </div>
+            }
+            else
+            {
+                <div class="timeline-entry @GetStatusClass(item.Entry!.Status) @(item.Entry.IsCurrentState ? "current" : "")">
+                    <span class="timeline-icon">@GetStatusIcon(item.Entry.Status)</span>
+                    <div class="timeline-content">
+                        <span class="timeline-summary">@item.Entry.Summary</span>
+                        @if (!string.IsNullOrEmpty(item.Entry.Details) && item.Entry.Status is FlowStateStatus.Failed or FlowStateStatus.Recovery)
+                        {
+                            <span class="timeline-details">@TruncateDetails(item.Entry.Details)</span>
+                        }
+                    </div>
+                    <span class="timeline-time">@FormatTime(item.Entry.Timestamp)</span>
+                </div>
+            }
         }
     }
 </div>
 
 @code {
     [Parameter] public List<FlowStateEntry> Entries { get; set; } = [];
+    
+    private HashSet<string> _expandedThinking = [];
+
+    private void ToggleThinking(string thinkingKey)
+    {
+        if (_expandedThinking.Contains(thinkingKey))
+            _expandedThinking.Remove(thinkingKey);
+        else
+            _expandedThinking.Add(thinkingKey);
+    }
+
+    private List<TimelineItem> ProcessEntries(List<FlowStateEntry> entries)
+    {
+        var result = new List<TimelineItem>();
+        var thinkingGroups = new Dictionary<string, List<FlowStateEntry>>();
+        
+        foreach (var entry in entries)
+        {
+            if (entry.Status == FlowStateStatus.Thinking)
+            {
+                // Group thinking entries by stage+step
+                var key = $"{entry.Stage}:{entry.Details}";
+                if (!thinkingGroups.ContainsKey(key))
+                {
+                    thinkingGroups[key] = [];
+                    // Add placeholder for this thinking group in order
+                    result.Add(new TimelineItem 
+                    { 
+                        IsThinkingGroup = true, 
+                        Stage = entry.Stage,
+                        ThinkingStep = entry.Details ?? "thinking",
+                        ThinkingKey = key
+                    });
+                }
+                thinkingGroups[key].Add(entry);
+            }
+            else
+            {
+                result.Add(new TimelineItem { Entry = entry });
+            }
+        }
+        
+        // Fill in thinking content for each group
+        foreach (var item in result.Where(r => r.IsThinkingGroup))
+        {
+            if (thinkingGroups.TryGetValue(item.ThinkingKey!, out var thinkingEntries))
+            {
+                item.ThinkingContent = string.Concat(thinkingEntries.Select(e => e.Summary));
+                item.IsExpanded = _expandedThinking.Contains(item.ThinkingKey!);
+            }
+        }
+        
+        return result;
+    }
+
+    private class TimelineItem
+    {
+        public bool IsThinkingGroup { get; set; }
+        public FlowStateEntry? Entry { get; set; }
+        public string? Stage { get; set; }
+        public string? ThinkingStep { get; set; }
+        public string? ThinkingKey { get; set; }
+        public string? ThinkingContent { get; set; }
+        public bool IsExpanded { get; set; }
+    }
 
     private static string GetStatusIcon(FlowStateStatus status) => status switch
     {
         FlowStateStatus.InProgress => "→",
+        FlowStateStatus.Thinking => "💭",
         FlowStateStatus.Completed => "✓",
         FlowStateStatus.Failed => "✗",
         FlowStateStatus.Recovery => "⟳",
@@ -44,6 +132,7 @@
     private static string GetStatusClass(FlowStateStatus status) => status switch
     {
         FlowStateStatus.InProgress => "in-progress",
+        FlowStateStatus.Thinking => "thinking",
         FlowStateStatus.Completed => "completed",
         FlowStateStatus.Failed => "failed",
         FlowStateStatus.Recovery => "recovery",
@@ -92,6 +181,11 @@
         "Complete" => "Watch created successfully",
         "Failed" when detail != null => $"Failed: {TruncateDetails(detail)}",
         "Failed" => "Setup failed",
+        "Starting" => "Processing your request...",
+        "Resuming" => "Resuming your session...",
+        "Processing" => "Processing your response...",
+        "UserInput" when detail != null => $"You: {TruncateDetails(detail)}",
+        "UserInput" => "Your response",
         _ => stage
     };
 

@@ -9,12 +9,18 @@
 <PageTitle>Setup Watch - Change Detection</PageTitle>
 
 <div class="flow-container">
-    @* Header with back button *@
+    @* Header with back button and background option *@
     <header class="flow-header">
         <button class="back-button" @onclick="GoBack">
             <span class="icon">←</span> Back to Dashboard
         </button>
         <h1>Setting up your watch</h1>
+        @if (_isProcessing && !_isComplete && !_hasError)
+        {
+            <button class="btn-background" @onclick="SendToBackground" title="Continue in background">
+                <span class="icon">📤</span> Send to Background
+            </button>
+        }
     </header>
 
     @* Timeline section - history scrolls up, current state centered *@
@@ -73,13 +79,32 @@
             <span>Connecting...</span>
         </div>
     }
+
+    @* Resuming indicator *@
+    @if (_isResuming)
+    {
+        <div class="flow-resuming">
+            <span class="spinner"></span>
+            <span>Resuming session...</span>
+        </div>
+    }
+
+    @* Empty state - no session and no input *@
+    @if (_hasRendered && _isConnected && !_hasError && !_isComplete && !_isProcessing && !_awaitingInput && _stateEntries.Count == 0)
+    {
+        <div class="flow-empty">
+            <div class="empty-content">
+                <span class="empty-icon">📝</span>
+                <h2>No Input Provided</h2>
+                <p>Paste a URL or describe what you want to watch to get started.</p>
+                <button class="btn-primary" @onclick="GoBack">Go to Dashboard</button>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
     [Parameter] public Guid? SessionId { get; set; }
-
-    [Parameter]
-    public string? InitialInput { get; set; }
 
     private HubConnection? _hubConnection;
     private CancellationTokenSource _cts = new();
@@ -89,6 +114,8 @@
     private bool _awaitingInput;
     private bool _hasError;
     private bool _isComplete;
+    private bool _isResuming;
+    private bool _sentToBackground;
     private string? _errorMessage;
     private string? _successMessage;
     private Guid? _watchId;
@@ -110,15 +137,6 @@
         }
     }
 
-    protected override async Task OnParametersSetAsync()
-    {
-        // Handle initial input from query parameter
-        if (!string.IsNullOrEmpty(InitialInput) && _isConnected && _currentSessionId is null)
-        {
-            await StartSetupFlow(Uri.UnescapeDataString(InitialInput));
-        }
-    }
-
     private async Task ConnectToHub()
     {
         var hubUrl = Navigation.ToAbsoluteUri("/hubs/setup").ToString();
@@ -128,9 +146,9 @@
             .WithAutomaticReconnect()
             .Build();
 
-        _hubConnection.On<FlowStateEntry>("ReceiveStateEntry", OnStateEntryReceived);
-        _hubConnection.On<string>("ReceiveError", OnErrorReceived);
-        _hubConnection.On<Guid, string>("SetupCompleted", OnSetupCompleted);
+        _hubConnection.On<FlowStateEntry>("ReceiveStateEntry", async (entry) => await OnStateEntryReceivedAsync(entry));
+        _hubConnection.On<string>("ReceiveError", async (error) => await OnErrorReceivedAsync(error));
+        _hubConnection.On<Guid, string>("SetupCompleted", async (watchId, summary) => await OnSetupCompletedAsync(watchId, summary));
 
         _hubConnection.Closed += async (error) =>
         {
@@ -149,16 +167,12 @@
             await _hubConnection.StartAsync();
             _isConnected = true;
 
-            // Check if we're resuming an existing session
+            // If SessionId is provided in the route, use it for page refresh resilience
             if (SessionId.HasValue)
             {
-                await ResumeSession(SessionId.Value);
+                await StartOrResumeWithSessionId(SessionId.Value);
             }
-            // Or if we have initial input, start a new flow
-            else if (!string.IsNullOrEmpty(InitialInput))
-            {
-                await StartSetupFlow(Uri.UnescapeDataString(InitialInput));
-            }
+            // No session - show empty state (handled in UI)
         }
         catch (Exception ex)
         {
@@ -169,75 +183,68 @@
         StateHasChanged();
     }
 
-    private async Task ResumeSession(Guid sessionId)
+    /// <summary>
+    /// Start or resume a session with a pre-generated session ID.
+    /// This enables page refresh resilience - if the user refreshes, we can resume the existing session.
+    /// The server returns any pending input that should be processed.
+    /// </summary>
+    private async Task StartOrResumeWithSessionId(Guid sessionId)
     {
         if (_hubConnection is null || !_isConnected) return;
 
-        _isProcessing = false;
         _currentSessionId = sessionId;
-
-        // Add resuming entry
-        AddStateEntry(new FlowStateEntry
-        {
-            Stage = "Resuming",
-            Status = FlowStateStatus.InProgress,
-            Summary = "Resuming your setup session...",
-            IsCurrentState = true
-        });
-
-        StateHasChanged();
 
         try
         {
-            // Get current session state from hub
-            var state = await _hubConnection.InvokeAsync<SetupSessionStateDto?>("GetSessionState", sessionId);
-            
-            if (state == null)
-            {
-                _hasError = true;
-                _errorMessage = "Session not found or expired. Please start a new setup.";
-                return;
-            }
+            // Use the new hub method that supports pre-generated session IDs
+            var response = await _hubConnection.InvokeAsync<StartSetupSessionResponse>("StartOrResumeSession", sessionId);
 
-            // Update UI with current state
-            _stateEntries.Clear();
-            _stateEntriesSnapshot = [];
-            
-            var prompt = state.CurrentPrompt ?? "Waiting for your response...";
-            AddStateEntry(new FlowStateEntry
-            {
-                Stage = state.Stage,
-                Status = state.AwaitingInput ? FlowStateStatus.Question : FlowStateStatus.InProgress,
-                Summary = state.AwaitingInput ? prompt : "Session resumed",
-                IsCurrentState = true,
-                InputType = state.AwaitingInput ? "text" : null
-            });
+            // Check if there's pending input from the start-setup endpoint
+            var inputToProcess = response.PendingInput;
 
-            if (state.AwaitingInput)
+            if (response.IsResumed && response.HasPipelineState)
             {
-                _awaitingInput = true;
-                _currentQuestion = prompt;
-                _currentInputType = "text";
+                // Session was resumed with existing pipeline state - recover state from hub
+                _isResuming = true;
+                StateHasChanged();
+                await ResumeSession(sessionId);
+                _isResuming = false;
             }
+            else if (!string.IsNullOrEmpty(inputToProcess))
+            {
+                // Process the input (either from PendingInput or initialInput parameter)
+                await StartProcessing(inputToProcess);
+            }
+            else if (response.IsResumed)
+            {
+                // Session exists, no pipeline state, no input - try to resume what we have
+                _isResuming = true;
+                StateHasChanged();
+                await ResumeSession(sessionId);
+                _isResuming = false;
+            }
+            // else: New session without input - empty state shown in UI
         }
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to resume session: {ex.Message}";
+            _errorMessage = $"Failed to start session: {ex.Message}";
+            _isProcessing = false;
+            _isResuming = false;
         }
 
         StateHasChanged();
     }
 
-    private async Task StartSetupFlow(string input)
+    /// <summary>
+    /// Start processing initial input with visual feedback.
+    /// </summary>
+    private async Task StartProcessing(string input)
     {
-        if (_hubConnection is null || !_isConnected) return;
-
         _isProcessing = true;
         _stateEntries.Clear();
         _stateEntriesSnapshot = [];
 
-        // Add initial entry
         AddStateEntry(new FlowStateEntry
         {
             Stage = "Starting",
@@ -247,21 +254,106 @@
         });
 
         StateHasChanged();
+        _ = StreamMessagesAsync(input);
+    }
+
+    private async Task ResumeSession(Guid sessionId)
+    {
+        if (_hubConnection is null || !_isConnected) return;
+
+        _isProcessing = false;
+        _currentSessionId = sessionId;
 
         try
         {
-            // Start streaming pipeline via hub
-            var response = await _hubConnection.InvokeAsync<StartSetupSessionResponse>("StartSession");
-            _currentSessionId = response.SessionId;
+            // First, get the full state history from the hub
+            var history = await _hubConnection.InvokeAsync<List<FlowStateEntryDto>?>("GetSessionHistory", sessionId);
+            
+            // Get current session state from hub
+            var state = await _hubConnection.InvokeAsync<SetupSessionStateDto?>("GetSessionState", sessionId);
+            
+            if (state == null && (history == null || history.Count == 0))
+            {
+                // Session expired or not found - not an error, just need to start fresh
+                _stateEntries.Clear();
+                _stateEntriesSnapshot = [];
+                return; // Empty state will be shown in UI
+            }
 
-            // Stream results from the pipeline - this is async and doesn't timeout
-            _ = StreamMessagesAsync(input);
+            // Update UI with full history
+            _stateEntries.Clear();
+            _stateEntriesSnapshot = [];
+            
+            // Restore all history entries
+            if (history != null && history.Count > 0)
+            {
+                foreach (var historyEntry in history)
+                {
+                    AddStateEntry(MapToFlowStateEntry(historyEntry));
+                }
+                
+                // Check the last entry to determine current state
+                var lastEntry = history[^1];
+                if (lastEntry.Status == FlowStateStatusDto.Question)
+                {
+                    _awaitingInput = true;
+                    _currentQuestion = lastEntry.Summary;
+                    _currentInputType = lastEntry.InputType ?? "text";
+                    _currentOptions = lastEntry.Options?.Select(o => new FlowOption(
+                        o.Label,
+                        o.Value,
+                        o.IsRecommended,
+                        o.Preview
+                    )).ToList();
+                }
+                else if (lastEntry.Status == FlowStateStatusDto.Completed && lastEntry.Stage == "Complete")
+                {
+                    _isComplete = true;
+                    _successMessage = lastEntry.Summary;
+                    _watchId = lastEntry.WatchId;
+                }
+                else if (lastEntry.Status == FlowStateStatusDto.Failed)
+                {
+                    _hasError = true;
+                    _errorMessage = lastEntry.Summary;
+                }
+            }
+            else if (state != null)
+            {
+                // No history but session exists - show current state only
+                var prompt = state.CurrentPrompt ?? "Waiting for your response...";
+                
+                if (state.AwaitingInput)
+                {
+                    AddStateEntry(new FlowStateEntry
+                    {
+                        Stage = state.Stage,
+                        Status = FlowStateStatus.Question,
+                        Summary = prompt,
+                        IsCurrentState = true,
+                        InputType = "text"
+                    });
+                    
+                    _awaitingInput = true;
+                    _currentQuestion = prompt;
+                    _currentInputType = "text";
+                }
+                else
+                {
+                    AddStateEntry(new FlowStateEntry
+                    {
+                        Stage = state.Stage,
+                        Status = FlowStateStatus.InProgress,
+                        Summary = "Processing...",
+                        IsCurrentState = true
+                    });
+                }
+            }
         }
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to start setup: {ex.Message}";
-            _isProcessing = false;
+            _errorMessage = $"Failed to resume session: {ex.Message}";
         }
 
         StateHasChanged();
@@ -282,7 +374,7 @@
             // Use StreamAsync with cancellation token to allow cleanup on dispose
             await foreach (var entry in _hubConnection.StreamAsync<FlowStateEntryDto>("SendMessage", request, _cts.Token))
             {
-                OnStateEntryReceived(MapToFlowStateEntry(entry));
+                await OnStateEntryReceivedAsync(MapToFlowStateEntry(entry));
             }
         }
         catch (OperationCanceledException)
@@ -292,8 +384,13 @@
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Stream error: {ex.Message}";
+            // Include exception type for debugging - helps identify the root cause
+            _errorMessage = $"Error ({ex.GetType().Name}): {ex.Message}";
             _isProcessing = false;
+            
+            // Log to console for development debugging
+            Console.WriteLine($"SetupFlow stream error: {ex}");
+            
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -305,6 +402,7 @@
         {
             FlowStateStatusDto.Pending => FlowStateStatus.Pending,
             FlowStateStatusDto.InProgress => FlowStateStatus.InProgress,
+            FlowStateStatusDto.Thinking => FlowStateStatus.Thinking,
             FlowStateStatusDto.Completed => FlowStateStatus.Completed,
             FlowStateStatusDto.Failed => FlowStateStatus.Failed,
             FlowStateStatusDto.Question => FlowStateStatus.Question,
@@ -316,10 +414,11 @@
         Timestamp = dto.Timestamp,
         IsCurrentState = dto.IsCurrentState,
         InputType = dto.InputType,
-        Options = dto.Options?.Select(o => new FlowOption(o.Label, o.Value, o.IsRecommended, o.Preview)).ToList()
+        Options = dto.Options?.Select(o => new FlowOption(o.Label, o.Value, o.IsRecommended, o.Preview)).ToList(),
+        WatchId = dto.WatchId
     };
 
-    private void OnStateEntryReceived(FlowStateEntry entry)
+    private async Task OnStateEntryReceivedAsync(FlowStateEntry entry)
     {
         // Mark previous current state as not current
         // Use a for loop to avoid modifying collection during enumeration
@@ -329,6 +428,14 @@
             {
                 // Create new entry with IsCurrentState = false
                 _stateEntries[i] = _stateEntries[i] with { IsCurrentState = false };
+            }
+            
+            // When any new progress arrives, mark ALL previous InProgress entries as Completed
+            // (If we've moved on to a new step, the previous steps must have finished)
+            // Exception: Thinking entries should stay as Thinking for proper grouping
+            if (_stateEntries[i].Status == FlowStateStatus.InProgress)
+            {
+                _stateEntries[i] = _stateEntries[i] with { Status = FlowStateStatus.Completed };
             }
         }
 
@@ -349,26 +456,33 @@
             _currentQuestion = null;
         }
 
-        // Check for completion or error
-        if (entry.Status == FlowStateStatus.Failed)
+        // Check for completion
+        if (entry.Status == FlowStateStatus.Completed && entry.Stage == "Complete")
+        {
+            _isComplete = true;
+            _successMessage = entry.Details ?? entry.Summary;
+            _isProcessing = false;
+        }
+        // Check for error
+        else if (entry.Status == FlowStateStatus.Failed)
         {
             _hasError = true;
             _errorMessage = entry.Details ?? entry.Summary;
             _isProcessing = false;
         }
 
-        InvokeAsync(StateHasChanged);
+        await InvokeAsync(StateHasChanged);
     }
 
-    private void OnErrorReceived(string error)
+    private async Task OnErrorReceivedAsync(string error)
     {
         _hasError = true;
         _errorMessage = error;
         _isProcessing = false;
-        InvokeAsync(StateHasChanged);
+        await InvokeAsync(StateHasChanged);
     }
 
-    private void OnSetupCompleted(Guid watchId, string summary)
+    private async Task OnSetupCompletedAsync(Guid watchId, string summary)
     {
         _isComplete = true;
         _watchId = watchId;
@@ -383,7 +497,7 @@
             IsCurrentState = true
         });
 
-        InvokeAsync(StateHasChanged);
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task HandleUserResponse(string response)
@@ -450,18 +564,38 @@
         Navigation.NavigateTo("/");
     }
 
-    private async Task RetrySetup()
+    private async Task SendToBackground()
+    {
+        if (_hubConnection is null || _currentSessionId is null) return;
+
+        try
+        {
+            // Mark as sent to background so DisposeAsync doesn't end the session
+            _sentToBackground = true;
+            
+            // Tell the server this session is going to the background
+            await _hubConnection.SendAsync("SendToBackground", _currentSessionId.Value);
+            
+            // Navigate back to dashboard
+            Navigation.NavigateTo("/");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to send to background: {ex.Message}");
+            // Still navigate away
+            Navigation.NavigateTo("/");
+        }
+    }
+
+    private void RetrySetup()
     {
         _hasError = false;
         _errorMessage = null;
         _stateEntries.Clear();
         _stateEntriesSnapshot = [];
-        _currentSessionId = null;
 
-        if (!string.IsNullOrEmpty(InitialInput))
-        {
-            await StartSetupFlow(Uri.UnescapeDataString(InitialInput));
-        }
+        // Navigate back to dashboard - user can start fresh from there
+        Navigation.NavigateTo("/", forceLoad: true);
     }
 
     private void ViewWatch()
@@ -485,8 +619,9 @@
 
         if (_hubConnection is not null)
         {
-            // End session if active
-            if (_currentSessionId.HasValue)
+            // Only end session if it wasn't sent to background and is still active
+            // Sessions sent to background should continue processing
+            if (_currentSessionId.HasValue && !_sentToBackground && !_isComplete)
             {
                 try
                 {

@@ -1,0 +1,12 @@
+@page "/setup"
+@page "/setup/{SessionId:guid}"
+@rendermode InteractiveAuto
+@layout EmptyLayout
+@using ChangeDetection.Client.Layout
+
+<SetupFlow SessionId="@SessionId" />
+
+@code {
+    [Parameter]
+    public Guid? SessionId { get; set; }
+}

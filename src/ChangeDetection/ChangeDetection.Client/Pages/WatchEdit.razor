@@ -1,6 +1,6 @@
 @page "/watches/new"
 @page "/watches/{Id}/edit"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -95,19 +95,99 @@
             <section class="form-section">
                 <h2>Check Settings</h2>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="checkInterval">Check Interval</label>
-                        <div class="input-with-unit">
-                            <InputNumber id="checkInterval" @bind-Value="checkIntervalMinutes" class="form-control" min="1" />
-                            <select @bind="checkIntervalUnit" class="form-control unit-select">
-                                <option value="minutes">Minutes</option>
-                                <option value="hours">Hours</option>
-                                <option value="days">Days</option>
-                            </select>
+                <div class="form-group">
+                    <label>Schedule Mode</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="scheduleMode" value="Fixed" @onchange="OnScheduleModeChanged" checked="@(scheduleMode == "Fixed")" />
+                            <span>Fixed Interval</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="scheduleMode" value="Adaptive" @onchange="OnScheduleModeChanged" checked="@(scheduleMode == "Adaptive")" />
+                            <span>Adaptive (adjusts based on change frequency)</span>
+                        </label>
+                    </div>
+                    <p class="form-hint">
+                        @if (scheduleMode == "Fixed")
+                        {
+                            <span>Check at a fixed interval regardless of how often content changes.</span>
+                        }
+                        else
+                        {
+                            <span>Automatically check more frequently for rapidly changing content, less often for stable content.</span>
+                        }
+                    </p>
+                </div>
+
+                @if (scheduleMode == "Fixed")
+                {
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="checkInterval">Check Interval</label>
+                            <div class="input-with-unit">
+                                <InputNumber id="checkInterval" @bind-Value="checkIntervalMinutes" class="form-control" min="1" />
+                                <select @bind="checkIntervalUnit" class="form-control unit-select">
+                                    <option value="minutes">Minutes</option>
+                                    <option value="hours">Hours</option>
+                                    <option value="days">Days</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                </div>
+                }
+                else
+                {
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="baseInterval">Base Interval (starting point)</label>
+                            <div class="input-with-unit">
+                                <InputNumber id="baseInterval" @bind-Value="baseIntervalValue" class="form-control" min="1" />
+                                <select @bind="baseIntervalUnit" class="form-control unit-select">
+                                    <option value="minutes">Minutes</option>
+                                    <option value="hours">Hours</option>
+                                    <option value="days">Days</option>
+                                </select>
+                            </div>
+                            <p class="form-hint">Initial check interval before adaptive adjustments kick in.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="minInterval">Minimum Interval</label>
+                            <div class="input-with-unit">
+                                <InputNumber id="minInterval" @bind-Value="minIntervalValue" class="form-control" min="1" />
+                                <select @bind="minIntervalUnit" class="form-control unit-select">
+                                    <option value="minutes">Minutes</option>
+                                    <option value="hours">Hours</option>
+                                    <option value="days">Days</option>
+                                </select>
+                            </div>
+                            <p class="form-hint">Never check more frequently than this, even for rapidly changing content.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="maxInterval">Maximum Interval</label>
+                            <div class="input-with-unit">
+                                <InputNumber id="maxInterval" @bind-Value="maxIntervalValue" class="form-control" min="1" />
+                                <select @bind="maxIntervalUnit" class="form-control unit-select">
+                                    <option value="minutes">Minutes</option>
+                                    <option value="hours">Hours</option>
+                                    <option value="days">Days</option>
+                                </select>
+                            </div>
+                            <p class="form-hint">Always check at least this often, even for stable content.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="frequencyMultiplier">Frequency Multiplier</label>
+                        <InputNumber id="frequencyMultiplier" @bind-Value="model.ScheduleSettings.FrequencyMultiplier" class="form-control" min="1" max="10" step="0.5" style="max-width: 120px;" />
+                        <p class="form-hint">
+                            Check @model.ScheduleSettings.FrequencyMultiplier× faster than content typically changes.
+                            Higher values catch changes sooner but use more resources.
+                        </p>
+                    </div>
+                }
 
                 <div class="form-group checkbox-group">
                     <label class="checkbox-label">
@@ -254,11 +334,30 @@
         NotificationSettings = new NotificationSettingsDto
         {
             MinimumImportanceToNotify = "Medium"
+        },
+        ScheduleSettings = new CheckScheduleSettingsDto
+        {
+            Mode = "Fixed",
+            BaseInterval = TimeSpan.FromHours(1),
+            MinInterval = TimeSpan.FromHours(1),
+            MaxInterval = TimeSpan.FromDays(7),
+            FrequencyMultiplier = 3.0
         }
     };
 
+    // Fixed interval fields
     private int checkIntervalMinutes = 60;
     private string checkIntervalUnit = "minutes";
+    
+    // Adaptive interval fields
+    private string scheduleMode = "Fixed";
+    private int baseIntervalValue = 1;
+    private string baseIntervalUnit = "hours";
+    private int minIntervalValue = 1;
+    private string minIntervalUnit = "hours";
+    private int maxIntervalValue = 7;
+    private string maxIntervalUnit = "days";
+    
     private string ignorePatternsText = "";
     private string emailRecipientsText = "";
     private List<TagDto> tagsList = [];
@@ -266,6 +365,12 @@
     private bool isLoading = false;
     private bool isSubmitting = false;
     private string? errorMessage;
+    
+    private void OnScheduleModeChanged(ChangeEventArgs e)
+    {
+        scheduleMode = e.Value?.ToString() ?? "Fixed";
+        model.ScheduleSettings.Mode = scheduleMode;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -312,10 +417,14 @@
                             DiscordEnabled = watch.NotificationSettings?.DiscordEnabled ?? false,
                             DiscordWebhookUrl = watch.NotificationSettings?.DiscordWebhookUrl,
                             MinimumImportanceToNotify = watch.NotificationSettings?.MinimumImportanceToNotify ?? "Medium"
-                        }
+                        },
+                        ScheduleSettings = watch.ScheduleSettings ?? new CheckScheduleSettingsDto()
                     };
 
-                    // Set interval values
+                    // Set schedule mode and interval values
+                    scheduleMode = watch.ScheduleSettings?.Mode ?? "Fixed";
+                    
+                    // Set fixed interval values
                     var interval = watch.CheckInterval;
                     if (interval.TotalDays >= 1)
                     {
@@ -332,6 +441,16 @@
                         checkIntervalMinutes = Math.Max(1, (int)interval.TotalMinutes);
                         checkIntervalUnit = "minutes";
                     }
+                    
+                    // Set adaptive interval values
+                    var baseInterval = watch.ScheduleSettings?.BaseInterval ?? TimeSpan.FromHours(1);
+                    SetIntervalFields(baseInterval, out baseIntervalValue, out baseIntervalUnit);
+                    
+                    var minInterval = watch.ScheduleSettings?.MinInterval ?? TimeSpan.FromHours(1);
+                    SetIntervalFields(minInterval, out minIntervalValue, out minIntervalUnit);
+                    
+                    var maxInterval = watch.ScheduleSettings?.MaxInterval ?? TimeSpan.FromDays(7);
+                    SetIntervalFields(maxInterval, out maxIntervalValue, out maxIntervalUnit);
 
                     ignorePatternsText = string.Join("\n", watch.IgnorePatterns ?? new());
                     emailRecipientsText = string.Join(", ", watch.NotificationSettings?.EmailRecipients ?? new());
@@ -360,13 +479,30 @@
 
         try
         {
-            // Parse interval
+            // Parse interval for fixed mode
             model.CheckInterval = checkIntervalUnit switch
             {
                 "hours" => TimeSpan.FromHours(checkIntervalMinutes),
                 "days" => TimeSpan.FromDays(checkIntervalMinutes),
                 _ => TimeSpan.FromMinutes(checkIntervalMinutes)
             };
+            
+            // Set schedule settings
+            model.ScheduleSettings.Mode = scheduleMode;
+            
+            if (scheduleMode == "Adaptive")
+            {
+                model.ScheduleSettings.BaseInterval = GetIntervalFromFields(baseIntervalValue, baseIntervalUnit);
+                model.ScheduleSettings.MinInterval = GetIntervalFromFields(minIntervalValue, minIntervalUnit);
+                model.ScheduleSettings.MaxInterval = GetIntervalFromFields(maxIntervalValue, maxIntervalUnit);
+                // For adaptive mode, also set check interval to base interval initially
+                model.CheckInterval = model.ScheduleSettings.BaseInterval;
+            }
+            else
+            {
+                // For fixed mode, sync base interval with check interval
+                model.ScheduleSettings.BaseInterval = model.CheckInterval;
+            }
 
             // Parse ignore patterns
             model.IgnorePatterns = ignorePatternsText
@@ -415,5 +551,34 @@
         {
             isSubmitting = false;
         }
+    }
+    
+    private static void SetIntervalFields(TimeSpan interval, out int value, out string unit)
+    {
+        if (interval.TotalDays >= 1)
+        {
+            value = (int)interval.TotalDays;
+            unit = "days";
+        }
+        else if (interval.TotalHours >= 1)
+        {
+            value = (int)interval.TotalHours;
+            unit = "hours";
+        }
+        else
+        {
+            value = Math.Max(1, (int)interval.TotalMinutes);
+            unit = "minutes";
+        }
+    }
+    
+    private static TimeSpan GetIntervalFromFields(int value, string unit)
+    {
+        return unit switch
+        {
+            "hours" => TimeSpan.FromHours(value),
+            "days" => TimeSpan.FromDays(value),
+            _ => TimeSpan.FromMinutes(value)
+        };
     }
 }

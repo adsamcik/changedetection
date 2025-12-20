@@ -303,10 +303,11 @@
             };
 
             // Stream responses from the hub
-            var stream = _hubConnection!.StreamAsync<AgentStreamChunkDto>("SendMessage", request);
+            var stream = _hubConnection!.StreamAsync<FlowStateEntryDto>("SendMessage", request);
             
-            await foreach (var chunk in stream)
+            await foreach (var entry in stream)
             {
+                var chunk = MapFlowStateToAgentChunk(entry);
                 OnChunkReceived(chunk);
                 StateHasChanged();
                 await ScrollToBottom();
@@ -400,6 +401,24 @@
         AgentNamesDtos.Synthesis or "synthesis" => "Summary",
         AgentNamesDtos.Resolution or "resolution" => "Conflict Resolution",
         _ => agentName
+    };
+
+    private static AgentStreamChunkDto MapFlowStateToAgentChunk(FlowStateEntryDto entry) => new()
+    {
+        AgentName = entry.Stage ?? "Pipeline",
+        ChunkType = entry.Status switch
+        {
+            FlowStateStatusDto.InProgress => ChunkTypeNames.Started,
+            FlowStateStatusDto.Thinking => ChunkTypeNames.Thinking,
+            FlowStateStatusDto.Completed => ChunkTypeNames.Completed,
+            FlowStateStatusDto.Failed => ChunkTypeNames.Error,
+            FlowStateStatusDto.Question => ChunkTypeNames.Question,
+            _ => ChunkTypeNames.Intermediate
+        },
+        Content = entry.Summary ?? "",
+        Confidence = null,
+        IsCollapsible = entry.Status == FlowStateStatusDto.Thinking,
+        Timestamp = entry.Timestamp
     };
 
     private static string FormatMarkdown(string content)

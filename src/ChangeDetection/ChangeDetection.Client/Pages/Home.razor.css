@@ -258,6 +258,7 @@
 .text-success { color: #059669; }
 .text-danger { color: #dc2626; }
 .text-warning { color: #d97706; }
+.text-info { color: #3b82f6; }
 
 /* Data Grid */
 .data-grid-container {
@@ -390,6 +391,72 @@
 .pending-tag {
     background-color: #f59e0b !important;
     color: white;
+}
+
+.processing-tag {
+    background-color: #3b82f6 !important;
+    color: white;
+}
+
+.processing-label {
+    font-size: 0.7rem;
+    color: #3b82f6;
+    margin-left: 0.5rem;
+    font-weight: 400;
+}
+
+/* Background session styles */
+.background-session-row {
+    background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 100%) !important;
+    border-left: 3px solid #3b82f6;
+}
+
+.background-session-row:hover {
+    background: linear-gradient(90deg, #bfdbfe 0%, #dbeafe 100%) !important;
+}
+
+.background-label {
+    background: #3b82f6;
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    text-transform: uppercase;
+}
+
+.background-tag {
+    background-color: #3b82f6 !important;
+    color: white;
+}
+
+.background-badge {
+    font-size: 0.7rem;
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.status-indicator.background {
+    background-color: #3b82f6;
+    position: relative;
+}
+
+.status-indicator.background::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid #3b82f6;
+    animation: ripple 1.5s ease-out infinite;
+}
+
+@keyframes ripple {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(2); opacity: 0; }
 }
 
 .btn-resume {
@@ -536,6 +603,37 @@
 .feed-time {
     font-size: 0.75rem;
     color: #9ca3af;
+}
+
+/* Processing activity items */
+.feed-item.processing {
+    background-color: #fef3c7;
+    border-left: 3px solid #f59e0b;
+    cursor: default;
+}
+
+.feed-item.processing:hover {
+    background-color: #fef3c7;
+}
+
+.feed-item.processing .feed-summary {
+    color: #92400e;
+    font-style: italic;
+}
+
+.processing-icon {
+    animation: pulse-spin 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-spin {
+    0%, 100% {
+        transform: rotate(0deg);
+        opacity: 1;
+    }
+    50% {
+        transform: rotate(180deg);
+        opacity: 0.7;
+    }
 }
 
 /* Spinner */

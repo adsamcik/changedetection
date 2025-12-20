@@ -1,0 +1,242 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="field-history-chart">
+    <div class="chart-header">
+        <div class="chart-title">
+            <span class="field-name">@History.FieldName</span>
+            @if (!string.IsNullOrEmpty(History.Unit))
+            {
+                <span class="field-unit">(@History.Unit)</span>
+            }
+            @if (!string.IsNullOrEmpty(History.CurrencyCode))
+            {
+                <span class="field-unit">(@History.CurrencyCode)</span>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(History.Trend))
+        {
+            <span class="trend-indicator @History.Trend">
+                @GetTrendIcon() @History.Trend
+            </span>
+        }
+    </div>
+    
+    @if (History.DataPoints.Count > 0)
+    {
+        <div class="chart-stats">
+            <div class="stat">
+                <span class="stat-label">Min</span>
+                <span class="stat-value">@FormatValue(History.MinValue)</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Max</span>
+                <span class="stat-value">@FormatValue(History.MaxValue)</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Avg</span>
+                <span class="stat-value">@FormatValue(History.AverageValue)</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Points</span>
+                <span class="stat-value">@History.DataPoints.Count</span>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <svg viewBox="0 0 @Width @Height" class="chart-svg" preserveAspectRatio="xMidYMid meet">
+                <!-- Grid lines -->
+                <g class="grid">
+                    @for (int i = 0; i <= 4; i++)
+                    {
+                        var y = Padding + (ChartHeight / 4.0) * i;
+                        <line x1="@Padding" y1="@y" x2="@(Width - Padding)" y2="@y" class="grid-line" />
+                    }
+                </g>
+                
+                <!-- Area fill under the line -->
+                <path d="@GetAreaPath()" class="chart-area @History.Trend" />
+                
+                <!-- Line chart -->
+                <path d="@GetLinePath()" class="chart-line @History.Trend" fill="none" />
+                
+                <!-- Data points -->
+                @foreach (var point in GetScaledPoints())
+                {
+                    <circle cx="@point.X" cy="@point.Y" r="4" class="chart-point @History.Trend">
+                        <title>@point.Label: @point.Value</title>
+                    </circle>
+                }
+            </svg>
+            
+            <!-- X-axis labels -->
+            <div class="x-axis-labels">
+                @if (History.DataPoints.Count > 0)
+                {
+                    <span>@History.DataPoints.First().CapturedAt.ToString("MMM d")</span>
+                    <span>@History.DataPoints.Last().CapturedAt.ToString("MMM d")</span>
+                }
+            </div>
+        </div>
+        
+        <!-- Data table -->
+        @if (ShowDataTable)
+        {
+            <div class="data-table-toggle">
+                <button class="btn-toggle" @onclick="ToggleDataTable">
+                    @(dataTableExpanded ? "Hide" : "Show") Data Table
+                </button>
+            </div>
+            
+            @if (dataTableExpanded)
+            {
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Value</th>
+                                <th>Change</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = History.DataPoints.Count - 1; i >= 0; i--)
+                            {
+                                var point = History.DataPoints[i];
+                                var prevPoint = i > 0 ? History.DataPoints[i - 1] : null;
+                                var change = prevPoint?.NumericValue.HasValue == true && point.NumericValue.HasValue
+                                    ? point.NumericValue.Value - prevPoint.NumericValue!.Value
+                                    : (double?)null;
+                                
+                                <tr>
+                                    <td>@point.CapturedAt.ToString("MMM d, yyyy HH:mm")</td>
+                                    <td>@(point.FormattedValue ?? point.Value)</td>
+                                    <td class="@(change > 0 ? "positive" : change < 0 ? "negative" : "")">
+                                        @if (change.HasValue)
+                                        {
+                                            <span>@(change > 0 ? "+" : "")@FormatValue(change)</span>
+                                        }
+                                        else
+                                        {
+                                            <span>—</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    }
+    else
+    {
+        <div class="no-data">
+            <p>No historical data available for this field.</p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public required FieldHistoryDto History { get; set; }
+    
+    [Parameter]
+    public bool ShowDataTable { get; set; } = true;
+    
+    [Parameter]
+    public int Width { get; set; } = 600;
+    
+    [Parameter]
+    public int Height { get; set; } = 200;
+    
+    private const int Padding = 40;
+    private int ChartWidth => Width - (Padding * 2);
+    private int ChartHeight => Height - (Padding * 2);
+    
+    private bool dataTableExpanded = false;
+    
+    private void ToggleDataTable() => dataTableExpanded = !dataTableExpanded;
+    
+    private string GetTrendIcon() => History.Trend switch
+    {
+        "up" => "📈",
+        "down" => "📉",
+        _ => "➡️"
+    };
+    
+    private string FormatValue(double? value)
+    {
+        if (!value.HasValue) return "—";
+        
+        return History.FieldType switch
+        {
+            "Currency" => $"{History.CurrencyCode ?? "$"}{value.Value:N2}",
+            "Percentage" => $"{value.Value:N1}%",
+            _ when !string.IsNullOrEmpty(History.Unit) => $"{value.Value:N2} {History.Unit}",
+            _ => value.Value.ToString("N2")
+        };
+    }
+    
+    private record ScaledPoint(double X, double Y, string Label, string Value);
+    
+    private List<ScaledPoint> GetScaledPoints()
+    {
+        var points = History.DataPoints.Where(p => p.NumericValue.HasValue).ToList();
+        if (points.Count == 0) return [];
+        
+        var minVal = History.MinValue ?? points.Min(p => p.NumericValue!.Value);
+        var maxVal = History.MaxValue ?? points.Max(p => p.NumericValue!.Value);
+        var range = maxVal - minVal;
+        if (range == 0) range = 1; // Avoid division by zero
+        
+        var minTime = points.First().CapturedAt.Ticks;
+        var maxTime = points.Last().CapturedAt.Ticks;
+        var timeRange = maxTime - minTime;
+        if (timeRange == 0) timeRange = 1;
+        
+        return points.Select(p =>
+        {
+            var xRatio = (double)(p.CapturedAt.Ticks - minTime) / timeRange;
+            var yRatio = (p.NumericValue!.Value - minVal) / range;
+            
+            return new ScaledPoint(
+                Padding + (xRatio * ChartWidth),
+                Padding + ChartHeight - (yRatio * ChartHeight), // Invert Y
+                p.CapturedAt.ToString("MMM d"),
+                p.FormattedValue ?? p.NumericValue.Value.ToString("N2")
+            );
+        }).ToList();
+    }
+    
+    private string GetLinePath()
+    {
+        var points = GetScaledPoints();
+        if (points.Count == 0) return "";
+        
+        var path = $"M {points[0].X:F1} {points[0].Y:F1}";
+        for (int i = 1; i < points.Count; i++)
+        {
+            path += $" L {points[i].X:F1} {points[i].Y:F1}";
+        }
+        
+        return path;
+    }
+    
+    private string GetAreaPath()
+    {
+        var points = GetScaledPoints();
+        if (points.Count == 0) return "";
+        
+        var bottomY = Padding + ChartHeight;
+        var path = $"M {points[0].X:F1} {bottomY:F1}";
+        
+        foreach (var point in points)
+        {
+            path += $" L {point.X:F1} {point.Y:F1}";
+        }
+        
+        path += $" L {points.Last().X:F1} {bottomY:F1} Z";
+        
+        return path;
+    }
+}

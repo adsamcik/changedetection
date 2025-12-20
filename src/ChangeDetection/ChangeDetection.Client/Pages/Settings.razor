@@ -1,5 +1,5 @@
 @page "/settings"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @inject HttpClient Http
 
 <PageTitle>Settings - Change Detection</PageTitle>
@@ -13,6 +13,9 @@
     <div class="settings-tabs">
         <button class="tab @(activeTab == "providers" ? "active" : "")" @onclick="SetProvidersTab">
             LLM Providers
+        </button>
+        <button class="tab @(activeTab == "logs" ? "active" : "")" @onclick="SetLogsTab">
+            LLM Logs
         </button>
         <button class="tab @(activeTab == "notifications" ? "active" : "")" @onclick="SetNotificationsTab">
             Notifications
@@ -118,6 +121,152 @@
             </div>
         </section>
     }
+    else if (activeTab == "logs")
+    {
+        <section class="settings-section">
+            <div class="section-header">
+                <div>
+                    <h2>LLM Logs</h2>
+                    <p class="section-description">View recent LLM operations for debugging. Logs show requests, responses, errors, and circuit breaker events.</p>
+                </div>
+                <div class="log-actions">
+                    <button class="btn btn-outline" @onclick="RefreshLogs" disabled="@isLoadingLogs">
+                        @if (isLoadingLogs)
+                        {
+                            <span class="spinner-small"></span>
+                        }
+                        else
+                        {
+                            <span>🔄 Refresh</span>
+                        }
+                    </button>
+                    <button class="btn btn-outline danger" @onclick="ClearLogs">🗑️ Clear Logs</button>
+                </div>
+            </div>
+
+            @if (isLoadingLogs)
+            {
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                </div>
+            }
+            else if (llmLogs.Count == 0)
+            {
+                <div class="empty-state">
+                    <p>No LLM logs available. Logs will appear here when LLM operations are performed.</p>
+                </div>
+            }
+            else
+            {
+                <div class="log-filters">
+                    <div class="filter-group">
+                        <label>Filter by level:</label>
+                        <select @bind="logLevelFilter" class="form-control-small">
+                            <option value="">All Levels</option>
+                            <option value="Error">Errors</option>
+                            <option value="Warning">Warnings</option>
+                            <option value="Info">Info</option>
+                            <option value="Debug">Debug</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Filter by category:</label>
+                        <select @bind="logCategoryFilter" class="form-control-small">
+                            <option value="">All Categories</option>
+                            <option value="Request">Requests</option>
+                            <option value="Response">Responses</option>
+                            <option value="Error">Errors</option>
+                            <option value="CircuitBreaker">Circuit Breaker</option>
+                            <option value="Retry">Retries</option>
+                            <option value="Fallback">Fallbacks</option>
+                        </select>
+                    </div>
+                    <span class="log-count">Showing @FilteredLogs.Count() of @llmLogs.Count logs</span>
+                </div>
+
+                <div class="logs-list">
+                    @foreach (var log in FilteredLogs)
+                    {
+                        <div class="log-entry @GetLogLevelClass(log.Level)">
+                            <div class="log-header">
+                                <span class="log-level @GetLogLevelClass(log.Level)">@log.Level</span>
+                                <span class="log-category">@log.Category</span>
+                                <span class="log-provider">@log.ProviderName</span>
+                                @if (!string.IsNullOrEmpty(log.Model))
+                                {
+                                    <span class="log-model">@log.Model</span>
+                                }
+                                <span class="log-timestamp">@log.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                @if (log.DurationMs.HasValue)
+                                {
+                                    <span class="log-duration">@(log.DurationMs)ms</span>
+                                }
+                            </div>
+                            <div class="log-message">@log.Message</div>
+                            @if (!string.IsNullOrEmpty(log.ErrorMessage))
+                            {
+                                <div class="log-error">
+                                    <strong>Error:</strong> @log.ErrorMessage
+                                    @if (!string.IsNullOrEmpty(log.ExceptionType))
+                                    {
+                                        <span class="exception-type">(@log.ExceptionType)</span>
+                                    }
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(log.PromptPreview))
+                            {
+                                <details class="log-details">
+                                    <summary>Prompt Preview</summary>
+                                    <pre>@log.PromptPreview</pre>
+                                </details>
+                            }
+                            @if (!string.IsNullOrEmpty(log.FullPrompt))
+                            {
+                                <details class="log-details">
+                                    <summary>Full Prompt</summary>
+                                    <pre class="full-content">@log.FullPrompt</pre>
+                                </details>
+                            }
+                            @if (!string.IsNullOrEmpty(log.ResponsePreview))
+                            {
+                                <details class="log-details">
+                                    <summary>Response Preview</summary>
+                                    <pre>@log.ResponsePreview</pre>
+                                </details>
+                            }
+                            @if (!string.IsNullOrEmpty(log.FullResponse))
+                            {
+                                <details class="log-details">
+                                    <summary>Full Response</summary>
+                                    <pre class="full-content">@log.FullResponse</pre>
+                                </details>
+                            }
+                            @if (!string.IsNullOrEmpty(log.StackTrace))
+                            {
+                                <details class="log-details">
+                                    <summary>Stack Trace</summary>
+                                    <pre class="stack-trace">@log.StackTrace</pre>
+                                </details>
+                            }
+                            @if (log.InputTokens.HasValue || log.OutputTokens.HasValue)
+                            {
+                                <div class="log-tokens">
+                                    @if (log.InputTokens.HasValue)
+                                    {
+                                        <span>Input: @log.InputTokens tokens</span>
+                                    }
+                                    @if (log.OutputTokens.HasValue)
+                                    {
+                                        <span>Output: @log.OutputTokens tokens</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
     else if (activeTab == "notifications")
     {
         <section class="settings-section">
@@ -170,24 +319,120 @@
     {
         <section class="settings-section">
             <h2>General Settings</h2>
+            
+            @if (isLoadingGeneralSettings)
+            {
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                </div>
+            }
+            else
+            {
+                @if (!string.IsNullOrEmpty(generalSettingsMessage))
+                {
+                    <div class="@(generalSettingsSuccess ? "success-message" : "error-message")">@generalSettingsMessage</div>
+                }
+                
+                <div class="settings-card">
+                    <h3>Check Settings</h3>
+                    <p class="card-description">Configure default behavior for website checks</p>
+                    
+                    <div class="form-group">
+                        <label for="defaultInterval">Default Check Interval (minutes)</label>
+                        <input type="number" id="defaultInterval" @bind="defaultCheckInterval" class="form-control" min="1" />
+                        <p class="form-hint">Default interval for new watches. Minimum 1 minute.</p>
+                    </div>
 
-            <div class="form-group">
-                <label for="defaultInterval">Default Check Interval (minutes)</label>
-                <input type="number" id="defaultInterval" @bind="defaultCheckInterval" class="form-control" min="1" />
-            </div>
+                    <div class="form-group">
+                        <label for="maxConcurrent">Max Concurrent Checks</label>
+                        <input type="number" id="maxConcurrent" @bind="maxConcurrentChecks" class="form-control" min="1" max="20" />
+                        <p class="form-hint">Maximum number of watches to check simultaneously</p>
+                    </div>
 
-            <div class="form-group">
-                <label for="maxConcurrent">Max Concurrent Checks</label>
-                <input type="number" id="maxConcurrent" @bind="maxConcurrentChecks" class="form-control" min="1" max="20" />
-            </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="maxRetries">Max Retry Attempts</label>
+                            <input type="number" id="maxRetries" @bind="maxRetryAttempts" class="form-control" min="0" max="10" />
+                            <p class="form-hint">Retries for failed checks (0 = no retries)</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="retryDelay">Retry Delay (seconds)</label>
+                            <input type="number" id="retryDelay" @bind="retryDelaySeconds" class="form-control" min="5" />
+                            <p class="form-hint">Wait time between retry attempts</p>
+                        </div>
+                    </div>
+                </div>
 
-            <div class="form-group">
-                <label for="snapshotRetention">Snapshot Retention (days)</label>
-                <input type="number" id="snapshotRetention" @bind="snapshotRetentionDays" class="form-control" min="1" />
-                <p class="form-hint">Number of days to keep content snapshots</p>
-            </div>
+                <div class="settings-card">
+                    <h3>Fetching Settings</h3>
+                    <p class="card-description">Configure default HTTP and browser settings</p>
+                    
+                    <div class="form-group">
+                        <label for="fetchTimeout">Default Fetch Timeout (seconds)</label>
+                        <input type="number" id="fetchTimeout" @bind="defaultFetchTimeoutSeconds" class="form-control" min="5" max="300" />
+                        <p class="form-hint">Maximum time to wait for a page to load</p>
+                    </div>
 
-            <button class="btn btn-primary" @onclick="SaveGeneralSettings">Save General Settings</button>
+                    <div class="form-group">
+                        <label for="maxPlaywright">Max Browser Instances</label>
+                        <input type="number" id="maxPlaywright" @bind="maxPlaywrightInstances" class="form-control" min="1" max="10" />
+                        <p class="form-hint">Maximum concurrent Playwright browser instances for JavaScript-rendered pages</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="userAgent">Default User Agent</label>
+                        <input type="text" id="userAgent" @bind="defaultUserAgent" class="form-control" placeholder="Leave empty for default browser agent" />
+                        <p class="form-hint">Custom user agent string for HTTP requests</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>AI & LLM Settings</h3>
+                    <p class="card-description">Configure AI-powered features</p>
+                    
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="useLlmForSummaries" />
+                            <span>Use LLM for change summaries</span>
+                        </label>
+                        <p class="form-hint">Automatically generate AI summaries when changes are detected</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="enableLlmDebugLogging" />
+                            <span>Enable LLM debug logging</span>
+                        </label>
+                        <p class="form-hint">Log detailed LLM request/response information for debugging</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Data Retention</h3>
+                    <p class="card-description">Configure how long to keep historical data</p>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="snapshotRetention">Snapshot Retention (days)</label>
+                            <input type="number" id="snapshotRetention" @bind="snapshotRetentionDays" class="form-control" min="1" />
+                            <p class="form-hint">Days to keep content snapshots</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="changeEventRetention">Change Event Retention (days)</label>
+                            <input type="number" id="changeEventRetention" @bind="changeEventRetentionDays" class="form-control" min="1" />
+                            <p class="form-hint">Days to keep change event history</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" @onclick="SaveGeneralSettings" disabled="@isSavingGeneralSettings">
+                    @if (isSavingGeneralSettings)
+                    {
+                        <span class="spinner-small"></span>
+                    }
+                    Save General Settings
+                </button>
+            }
         </section>
     }
 
@@ -315,6 +560,28 @@
     private int defaultCheckInterval = 60;
     private int maxConcurrentChecks = 5;
     private int snapshotRetentionDays = 30;
+    private int changeEventRetentionDays = 90;
+    private int maxPlaywrightInstances = 3;
+    private bool useLlmForSummaries = true;
+    private string defaultUserAgent = "";
+    private int defaultFetchTimeoutSeconds = 30;
+    private bool enableLlmDebugLogging = false;
+    private int maxRetryAttempts = 3;
+    private int retryDelaySeconds = 60;
+    private bool isLoadingGeneralSettings = false;
+    private bool isSavingGeneralSettings = false;
+    private string? generalSettingsMessage;
+    private bool generalSettingsSuccess = false;
+
+    // LLM Logs
+    private List<LlmLogEntryDto> llmLogs = new();
+    private bool isLoadingLogs = false;
+    private string logLevelFilter = "";
+    private string logCategoryFilter = "";
+
+    private IEnumerable<LlmLogEntryDto> FilteredLogs => llmLogs
+        .Where(log => string.IsNullOrEmpty(logLevelFilter) || log.Level == logLevelFilter)
+        .Where(log => string.IsNullOrEmpty(logCategoryFilter) || log.Category == logCategoryFilter);
 
     protected override async Task OnInitializedAsync()
     {
@@ -472,8 +739,59 @@
     };
 
     private void SetProvidersTab() => activeTab = "providers";
+    private void SetLogsTab()
+    {
+        activeTab = "logs";
+        _ = LoadLogs();
+    }
     private void SetNotificationsTab() => activeTab = "notifications";
-    private void SetGeneralTab() => activeTab = "general";
+    private void SetGeneralTab()
+    {
+        activeTab = "general";
+        _ = LoadGeneralSettings();
+    }
+
+    private async Task LoadLogs()
+    {
+        isLoadingLogs = true;
+        StateHasChanged();
+        try
+        {
+            var response = await Http.GetAsync("/api/llm/logs?count=200");
+            if (response.IsSuccessStatusCode)
+            {
+                var logsResponse = await response.Content.ReadFromJsonAsync<LlmLogsResponse>();
+                llmLogs = logsResponse?.Logs ?? new();
+            }
+        }
+        catch { }
+        finally
+        {
+            isLoadingLogs = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshLogs()
+    {
+        await LoadLogs();
+    }
+
+    private async Task ClearLogs()
+    {
+        await Http.DeleteAsync("/api/llm/logs");
+        llmLogs.Clear();
+        StateHasChanged();
+    }
+
+    private static string GetLogLevelClass(string level) => level switch
+    {
+        "Error" => "level-error",
+        "Warning" => "level-warning",
+        "Info" => "level-info",
+        "Debug" => "level-debug",
+        _ => ""
+    };
 
     private async Task SaveNotificationSettings()
     {
@@ -481,9 +799,91 @@
         await Task.CompletedTask;
     }
 
+    private async Task LoadGeneralSettings()
+    {
+        isLoadingGeneralSettings = true;
+        generalSettingsMessage = null;
+        StateHasChanged();
+        
+        try
+        {
+            var response = await Http.GetAsync("/api/settings/general");
+            if (response.IsSuccessStatusCode)
+            {
+                var settings = await response.Content.ReadFromJsonAsync<GeneralSettingsDto>();
+                if (settings != null)
+                {
+                    defaultCheckInterval = settings.DefaultCheckIntervalMinutes;
+                    maxConcurrentChecks = settings.MaxConcurrentChecks;
+                    snapshotRetentionDays = settings.SnapshotRetentionDays;
+                    changeEventRetentionDays = settings.ChangeEventRetentionDays;
+                    maxPlaywrightInstances = settings.MaxPlaywrightInstances;
+                    useLlmForSummaries = settings.UseLlmForSummaries;
+                    defaultUserAgent = settings.DefaultUserAgent ?? "";
+                    defaultFetchTimeoutSeconds = settings.DefaultFetchTimeoutSeconds;
+                    enableLlmDebugLogging = settings.EnableLlmDebugLogging;
+                    maxRetryAttempts = settings.MaxRetryAttempts;
+                    retryDelaySeconds = settings.RetryDelaySeconds;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            generalSettingsMessage = $"Failed to load settings: {ex.Message}";
+            generalSettingsSuccess = false;
+        }
+        finally
+        {
+            isLoadingGeneralSettings = false;
+            StateHasChanged();
+        }
+    }
+
     private async Task SaveGeneralSettings()
     {
-        // TODO: Implement saving general settings
-        await Task.CompletedTask;
+        isSavingGeneralSettings = true;
+        generalSettingsMessage = null;
+        StateHasChanged();
+        
+        try
+        {
+            var update = new GeneralSettingsUpdateDto
+            {
+                DefaultCheckIntervalMinutes = defaultCheckInterval,
+                MaxConcurrentChecks = maxConcurrentChecks,
+                SnapshotRetentionDays = snapshotRetentionDays,
+                ChangeEventRetentionDays = changeEventRetentionDays,
+                MaxPlaywrightInstances = maxPlaywrightInstances,
+                UseLlmForSummaries = useLlmForSummaries,
+                DefaultUserAgent = string.IsNullOrWhiteSpace(defaultUserAgent) ? null : defaultUserAgent,
+                DefaultFetchTimeoutSeconds = defaultFetchTimeoutSeconds,
+                EnableLlmDebugLogging = enableLlmDebugLogging,
+                MaxRetryAttempts = maxRetryAttempts,
+                RetryDelaySeconds = retryDelaySeconds
+            };
+            
+            var response = await Http.PutAsJsonAsync("/api/settings/general", update);
+            if (response.IsSuccessStatusCode)
+            {
+                generalSettingsMessage = "Settings saved successfully!";
+                generalSettingsSuccess = true;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                generalSettingsMessage = $"Failed to save settings: {error}";
+                generalSettingsSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            generalSettingsMessage = $"Failed to save settings: {ex.Message}";
+            generalSettingsSuccess = false;
+        }
+        finally
+        {
+            isSavingGeneralSettings = false;
+            StateHasChanged();
+        }
     }
 }

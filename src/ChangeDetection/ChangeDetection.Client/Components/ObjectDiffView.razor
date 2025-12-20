@@ -1,0 +1,194 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="object-diff-view">
+    @if (ObjectDiff == null)
+    {
+        <div class="no-diff">
+            <p>No object-level changes available. This watch may not have schema-based extraction enabled.</p>
+        </div>
+    }
+    else
+    {
+        <div class="diff-summary">
+            <div class="summary-stats">
+                @if (ObjectDiff.AddedObjects.Count > 0)
+                {
+                    <div class="stat added">
+                        <span class="stat-icon">➕</span>
+                        <span class="stat-value">@ObjectDiff.AddedObjects.Count</span>
+                        <span class="stat-label">Added</span>
+                    </div>
+                }
+                @if (ObjectDiff.RemovedObjects.Count > 0)
+                {
+                    <div class="stat removed">
+                        <span class="stat-icon">➖</span>
+                        <span class="stat-value">@ObjectDiff.RemovedObjects.Count</span>
+                        <span class="stat-label">Removed</span>
+                    </div>
+                }
+                @if (ObjectDiff.ModifiedObjects.Count > 0)
+                {
+                    <div class="stat modified">
+                        <span class="stat-icon">✏️</span>
+                        <span class="stat-value">@ObjectDiff.ModifiedObjects.Count</span>
+                        <span class="stat-label">Modified</span>
+                    </div>
+                }
+            </div>
+            
+            @if (ObjectDiff.HasAmbiguousIdentities)
+            {
+                <div class="warning-banner">
+                    ⚠️ Some objects have ambiguous identities and may not be matched correctly.
+                </div>
+            }
+        </div>
+
+        @* Modified Objects - Most Important *@
+        @if (ObjectDiff.ModifiedObjects.Count > 0)
+        {
+            <section class="diff-section modified-section">
+                <h3>✏️ Modified Items (@ObjectDiff.ModifiedObjects.Count)</h3>
+                <div class="objects-list">
+                    @foreach (var mod in ObjectDiff.ModifiedObjects)
+                    {
+                        <div class="object-card modified">
+                            <div class="object-header">
+                                <span class="object-identity">@(mod.DisplayLabel ?? mod.IdentityKey)</span>
+                                @if (!string.IsNullOrEmpty(mod.Importance))
+                                {
+                                    <span class="importance-badge @mod.Importance.ToLower()">@mod.Importance</span>
+                                }
+                            </div>
+                            
+                            <div class="field-changes">
+                                @foreach (var change in mod.FieldChanges)
+                                {
+                                    <PropertyChangeCard 
+                                        Change="change" 
+                                        ShowHistoryButton="@CanShowHistory" 
+                                        OnShowHistoryClicked="HandleShowHistory" />
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        @* Added Objects *@
+        @if (ObjectDiff.AddedObjects.Count > 0)
+        {
+            <section class="diff-section added-section">
+                <h3>➕ Added Items (@ObjectDiff.AddedObjects.Count)</h3>
+                <div class="objects-list">
+                    @foreach (var obj in ObjectDiff.AddedObjects)
+                    {
+                        <div class="object-card added">
+                            <div class="object-header">
+                                <span class="object-identity">@(obj.DisplayLabel ?? obj.IdentityKey ?? $"Item #{obj.Index + 1}")</span>
+                                <span class="badge added">New</span>
+                            </div>
+                            
+                            <div class="object-fields">
+                                @foreach (var field in obj.Fields)
+                                {
+                                    <div class="field-row">
+                                        <span class="field-name">@field.Name</span>
+                                        <span class="field-value">@(field.FormattedValue ?? field.Value ?? "—")</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        @* Removed Objects *@
+        @if (ObjectDiff.RemovedObjects.Count > 0)
+        {
+            <section class="diff-section removed-section">
+                <h3>➖ Removed Items (@ObjectDiff.RemovedObjects.Count)</h3>
+                <div class="objects-list">
+                    @foreach (var obj in ObjectDiff.RemovedObjects)
+                    {
+                        <div class="object-card removed">
+                            <div class="object-header">
+                                <span class="object-identity">@(obj.DisplayLabel ?? obj.IdentityKey ?? $"Item #{obj.Index + 1}")</span>
+                                <span class="badge removed">Removed</span>
+                            </div>
+                            
+                            <div class="object-fields">
+                                @foreach (var field in obj.Fields)
+                                {
+                                    <div class="field-row">
+                                        <span class="field-name">@field.Name</span>
+                                        <span class="field-value strikethrough">@(field.FormattedValue ?? field.Value ?? "—")</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+    }
+    
+    @* History Chart Modal *@
+    @if (showHistoryChart && selectedFieldHistory != null)
+    {
+        <div class="modal-backdrop" @onclick="CloseHistoryChart">
+            <div class="modal-content" @onclick:stopPropagation="true">
+                <div class="modal-header">
+                    <h3>Field History: @selectedFieldName</h3>
+                    <button class="btn-close" @onclick="CloseHistoryChart">×</button>
+                </div>
+                <div class="modal-body">
+                    <FieldHistoryChart History="selectedFieldHistory" />
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public ObjectDiffDetailDto? ObjectDiff { get; set; }
+    
+    [Parameter]
+    public string? WatchId { get; set; }
+    
+    [Parameter]
+    public Func<string, string, Task<FieldHistoryDto?>>? LoadFieldHistory { get; set; }
+    
+    private bool CanShowHistory => !string.IsNullOrEmpty(WatchId) && LoadFieldHistory != null;
+    
+    private bool showHistoryChart = false;
+    private FieldHistoryDto? selectedFieldHistory;
+    private string? selectedFieldName;
+    
+    private async Task HandleShowHistory(FieldChangeDetailDto change)
+    {
+        if (LoadFieldHistory == null || string.IsNullOrEmpty(WatchId))
+            return;
+        
+        // Find the object identity for this change
+        var mod = ObjectDiff?.ModifiedObjects.FirstOrDefault(m => 
+            m.FieldChanges.Contains(change));
+        
+        if (mod == null) return;
+        
+        selectedFieldName = change.FieldName;
+        selectedFieldHistory = await LoadFieldHistory(mod.IdentityKey, change.FieldName);
+        showHistoryChart = selectedFieldHistory != null;
+    }
+    
+    private void CloseHistoryChart()
+    {
+        showHistoryChart = false;
+        selectedFieldHistory = null;
+        selectedFieldName = null;
+    }
+}

@@ -1,7 +1,8 @@
 @page "/"
 @page "/{ViewId?}"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @using System.Net.Http.Json
+@using System.Text.Json
 @using Microsoft.AspNetCore.SignalR.Client
 @using ChangeDetection.Shared.Dtos
 @using ChangeDetection.Client.Components
@@ -58,6 +59,7 @@
                 <div class="filter-group">
                     <button class="filter-chip @(activeStatusFilter == null && !changedRecentlyFilter ? "active" : "")" @onclick="() => SetFilter(null)">All</button>
                     <button class="filter-chip @(activeStatusFilter == "Active" ? "active" : "")" @onclick='() => SetFilter("Active")'>Active</button>
+                    <button class="filter-chip @(activeStatusFilter == "Checking" ? "active" : "")" @onclick='() => SetFilter("Checking")'>Checking</button>
                     <button class="filter-chip @(activeStatusFilter == "Error" ? "active" : "")" @onclick='() => SetFilter("Error")'>Errors</button>
                     <button class="filter-chip @(changedRecentlyFilter ? "active" : "")" @onclick="ToggleChangedFilter">Changed Recently</button>
                 </div>
@@ -67,6 +69,14 @@
                     {
                         <span class="separator">|</span>
                         <span class="text-warning">@pendingSetups.Count Setting up</span>
+                    }
+                    @{
+                        var checkingCount = watches.Count(w => w.Status == "Checking");
+                    }
+                    @if (checkingCount > 0)
+                    {
+                        <span class="separator">|</span>
+                        <span class="text-info">@checkingCount Checking</span>
                     }
                     <span class="separator">|</span>
                     <span class="text-success">@watches.Count(w => w.Status == "Active") Active</span>
@@ -97,25 +107,37 @@
                             @* Pending setup sessions appear first *@
                             @foreach (var setup in pendingSetups)
                             {
-                                <tr class="grid-row pending-setup-row" @onclick="() => ResumeSetup(setup.SessionId)">
+                                <tr class="grid-row pending-setup-row @(setup.IsBackgrounded ? "background-session-row" : "")" @onclick="() => ResumeSetup(setup.SessionId)">
                                     <td class="status-cell">
-                                        <div class="status-indicator pending" title="Setup in progress">
-                                            @if (!string.IsNullOrEmpty(setup.CurrentPrompt))
+                                        <div class="status-indicator @(setup.IsBackgrounded ? "background" : setup.IsProcessing ? "checking" : "pending")" title="@GetSetupStatusTitle(setup)">
+                                            @if (!setup.IsProcessing && !setup.IsBackgrounded && !string.IsNullOrEmpty(setup.CurrentPrompt))
                                             {
                                                 <span class="needs-input-badge">!</span>
+                                            }
+                                            @if (setup.IsBackgrounded)
+                                            {
+                                                <span class="background-badge">↻</span>
                                             }
                                         </div>
                                     </td>
                                     <td class="name-cell">
                                         <div class="watch-title pending-title">
-                                            <span class="pending-icon">⏳</span>
+                                            <span class="pending-icon">@(setup.IsBackgrounded ? "🔄" : setup.IsProcessing ? "⚙️" : "⏳")</span>
                                             @(setup.DisplayName ?? "New Watch")
-                                            @if (!string.IsNullOrEmpty(setup.CurrentPrompt))
+                                            @if (setup.IsBackgrounded)
+                                            {
+                                                <span class="background-label">Running in background</span>
+                                            }
+                                            else if (!setup.IsProcessing && !string.IsNullOrEmpty(setup.CurrentPrompt))
                                             {
                                                 <span class="needs-input-label">Needs input</span>
                                             }
+                                            else if (setup.IsProcessing)
+                                            {
+                                                <span class="processing-label">Processing...</span>
+                                            }
                                         </div>
-                                        <div class="watch-url pending-prompt">@(setup.CurrentPrompt ?? "Setting up...")</div>
+                                        <div class="watch-url pending-prompt">@GetSetupStatusText(setup)</div>
                                     </td>
                                     <td class="meta-cell">
                                         <span class="text-muted">-</span>
@@ -124,10 +146,10 @@
                                         <span class="text-muted">-</span>
                                     </td>
                                     <td class="tags-cell">
-                                        <span class="tag-badge pending-tag">Setting up</span>
+                                        <span class="tag-badge @GetSetupTagClass(setup)">@GetSetupTagText(setup)</span>
                                     </td>
                                     <td class="actions-cell" @onclick:stopPropagation>
-                                        <button class="btn-icon btn-resume" title="Resume Setup" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
+                                        <button class="btn-icon btn-resume" title="@(setup.IsBackgrounded ? "View Progress" : setup.IsProcessing ? "View Progress" : "Resume Setup")" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
                                         <button class="btn-icon btn-cancel" title="Cancel Setup" @onclick="() => CancelSetup(setup.SessionId)">✕</button>
                                     </td>
                                 </tr>
@@ -198,6 +220,19 @@
                 <h3>Recent Activity</h3>
             </div>
             <div class="activity-feed">
+                @* Show watches currently being checked (from DB or SignalR) *@
+                @foreach (var checking in GetCheckingWatches())
+                {
+                    <div class="feed-item processing" @onclick="() => NavigateToWatch(checking.Id)">
+                        <div class="feed-icon processing-icon">⏳</div>
+                        <div class="feed-content">
+                            <div class="feed-title">@checking.Name</div>
+                            <div class="feed-summary">Checking for changes...</div>
+                            <div class="feed-time">@(checking.StartedAt.HasValue ? FormatTimeAgo(checking.StartedAt.Value) : "now")</div>
+                        </div>
+                    </div>
+                }
+                @* Then show recent changes *@
                 @if (recentChanges.Any())
                 {
                     @foreach (var change in recentChanges)
@@ -212,7 +247,7 @@
                         </div>
                     }
                 }
-                else
+                else if (!GetCheckingWatches().Any())
                 {
                     <div class="empty-feed">No recent activity</div>
                 }
@@ -229,10 +264,44 @@
     private List<WatchListItemDto> watches = [];
     private List<ChangeListItemDto> recentChanges = [];
     private List<PendingSetupDto> pendingSetups = [];
+    private Dictionary<string, ProcessingActivity> activeProcessing = [];
     private bool isLoading = true;
     private string? error;
     private string? creationMessage;
     private bool creationIsError;
+
+    /// <summary>
+    /// Represents a watch currently being checked.
+    /// </summary>
+    private record ProcessingActivity(string WatchId, string WatchName, DateTime StartedAt);
+
+    /// <summary>
+    /// Represents a watch being checked, for display in the activity feed.
+    /// </summary>
+    private record CheckingWatch(string Id, string Name, DateTime? StartedAt);
+
+    /// <summary>
+    /// Gets all watches currently being checked, combining SignalR updates with DB state.
+    /// SignalR updates take precedence as they have more accurate timing.
+    /// </summary>
+    private IEnumerable<CheckingWatch> GetCheckingWatches()
+    {
+        // Track which watches are already in activeProcessing
+        var signalRWatchIds = activeProcessing.Keys.ToHashSet();
+        
+        // Return SignalR-tracked watches first (they have accurate start times)
+        foreach (var processing in activeProcessing.Values.OrderByDescending(p => p.StartedAt))
+        {
+            yield return new CheckingWatch(processing.WatchId, processing.WatchName, processing.StartedAt);
+        }
+        
+        // Then add any watches from the API that have Checking status but aren't in SignalR yet
+        // (e.g., checks that started before the page loaded)
+        foreach (var watch in watches.Where(w => w.Status == "Checking" && !signalRWatchIds.Contains(w.Id)))
+        {
+            yield return new CheckingWatch(watch.Id, watch.Title ?? watch.Url, watch.LastCheck);
+        }
+    }
 
     // SignalR connection
     private HubConnection? hubConnection;
@@ -311,10 +380,93 @@
             await InvokeAsync(StateHasChanged);
         });
 
-        hubConnection.On<object>("WatchStatusChanged", async (data) =>
+        hubConnection.On<System.Text.Json.JsonElement>("WatchStatusChanged", async (data) =>
         {
+            // Track processing events for Recent Activity
+            var watchId = data.GetProperty("WatchId").GetString() ?? data.GetProperty("WatchId").GetGuid().ToString();
+            var watchName = data.GetProperty("WatchName").GetString() ?? "";
+            var status = data.GetProperty("Status").GetString() ?? "";
+            
+            if (status == "Checking")
+            {
+                // Watch is being checked - add to active processing
+                activeProcessing[watchId] = new ProcessingActivity(watchId, watchName, DateTime.UtcNow);
+            }
+            else
+            {
+                // Check completed (success or error) - remove from active processing
+                activeProcessing.Remove(watchId);
+            }
+            
             // Refresh watches to get updated status
             await LoadWatches();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<object>("WatchCreated", async (data) =>
+        {
+            // Refresh watches when a new watch is created
+            await LoadWatches();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<System.Text.Json.JsonElement>("SetupSessionUpdated", async (data) =>
+        {
+            // Handle setup session updates in real-time
+            var sessionId = data.GetProperty("sessionId").GetGuid();
+            var isCompleted = data.GetProperty("isCompleted").GetBoolean();
+            var isCancelled = data.GetProperty("isCancelled").GetBoolean();
+            
+            if (isCompleted || isCancelled)
+            {
+                // Remove session from pending list
+                pendingSetups.RemoveAll(s => s.SessionId == sessionId);
+            }
+            else
+            {
+                // Add or update session in pending list
+                var displayName = data.GetProperty("displayName").GetString() ?? "New Watch";
+                var isProcessing = data.GetProperty("isProcessing").GetBoolean();
+                string? currentPrompt = null;
+                if (data.TryGetProperty("currentPrompt", out var promptProp) && promptProp.ValueKind != System.Text.Json.JsonValueKind.Null)
+                {
+                    currentPrompt = promptProp.GetString();
+                }
+                
+                // Read new background-related fields
+                var isBackgrounded = data.TryGetProperty("isBackgrounded", out var bgProp) && bgProp.GetBoolean();
+                string? currentStage = null;
+                if (data.TryGetProperty("currentStage", out var stageProp) && stageProp.ValueKind != System.Text.Json.JsonValueKind.Null)
+                {
+                    currentStage = stageProp.GetString();
+                }
+                
+                var existing = pendingSetups.FirstOrDefault(s => s.SessionId == sessionId);
+                if (existing != null)
+                {
+                    existing.DisplayName = displayName;
+                    existing.IsProcessing = isProcessing;
+                    existing.CurrentPrompt = currentPrompt;
+                    existing.IsBackgrounded = isBackgrounded;
+                    existing.CurrentStage = currentStage;
+                    existing.LastActivityAt = DateTimeOffset.UtcNow;
+                }
+                else
+                {
+                    pendingSetups.Insert(0, new PendingSetupDto
+                    {
+                        SessionId = sessionId,
+                        DisplayName = displayName,
+                        IsProcessing = isProcessing,
+                        CurrentPrompt = currentPrompt,
+                        IsBackgrounded = isBackgrounded,
+                        CurrentStage = currentStage,
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        LastActivityAt = DateTimeOffset.UtcNow
+                    });
+                }
+            }
+            
             await InvokeAsync(StateHasChanged);
         });
 
@@ -418,6 +570,38 @@
         if (!watches.Any()) return 0;
         var successCount = watches.Count(w => w.Status != "Error");
         return (int)((double)successCount / watches.Count * 100);
+    }
+
+    private static string GetSetupStatusTitle(PendingSetupDto setup)
+    {
+        if (setup.IsBackgrounded) return $"Running in background: {setup.CurrentStage ?? "Processing"}";
+        if (setup.IsProcessing) return "Processing";
+        return "Awaiting input";
+    }
+
+    private static string GetSetupStatusText(PendingSetupDto setup)
+    {
+        if (setup.IsBackgrounded && !string.IsNullOrEmpty(setup.CurrentStage))
+            return setup.CurrentStage;
+        if (!string.IsNullOrEmpty(setup.CurrentPrompt))
+            return setup.CurrentPrompt;
+        if (setup.IsProcessing)
+            return "Analyzing page...";
+        return "Setting up...";
+    }
+
+    private static string GetSetupTagClass(PendingSetupDto setup)
+    {
+        if (setup.IsBackgrounded) return "background-tag";
+        if (setup.IsProcessing) return "processing-tag";
+        return "pending-tag";
+    }
+
+    private static string GetSetupTagText(PendingSetupDto setup)
+    {
+        if (setup.IsBackgrounded) return "Background";
+        if (setup.IsProcessing) return "Processing";
+        return "Setting up";
     }
 
     private void ResumeSetup(Guid sessionId)

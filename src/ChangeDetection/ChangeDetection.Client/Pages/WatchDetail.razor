@@ -1,5 +1,5 @@
 @page "/watches/{Id}"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -63,6 +63,12 @@
                         <a href="@watch.Url" target="_blank" rel="noopener">@watch.Url</a>
                     </dd>
                     
+                    @if (!string.IsNullOrEmpty(watch.Description))
+                    {
+                        <dt>Description</dt>
+                        <dd>@watch.Description</dd>
+                    }
+                    
                     @if (!string.IsNullOrEmpty(watch.CssSelector))
                     {
                         <dt>CSS Selector</dt>
@@ -80,17 +86,72 @@
 
                     <dt>Created</dt>
                     <dd>@watch.CreatedAt.ToString("g")</dd>
+                    
+                    <dt>Last Updated</dt>
+                    <dd>@watch.UpdatedAt.ToString("g")</dd>
 
                     @if (watch.LastCheck.HasValue)
                     {
                         <dt>Last Checked</dt>
                         <dd>@watch.LastCheck.Value.ToString("g") (@FormatTimeAgo(watch.LastCheck.Value))</dd>
                     }
+                    
+                    @if (watch.LastChanged.HasValue)
+                    {
+                        <dt>Last Changed</dt>
+                        <dd>@watch.LastChanged.Value.ToString("g") (@FormatTimeAgo(watch.LastChanged.Value))</dd>
+                    }
 
                     @if (watch.NextCheck.HasValue)
                     {
                         <dt>Next Check</dt>
                         <dd>@watch.NextCheck.Value.ToString("g")</dd>
+                    }
+                    
+                    @if (watch.ConsecutiveFailures > 0)
+                    {
+                        <dt>Consecutive Failures</dt>
+                        <dd class="error-text">@watch.ConsecutiveFailures</dd>
+                    }
+                    
+                    @if (!string.IsNullOrEmpty(watch.LlmProviderOverride))
+                    {
+                        <dt>LLM Provider Override</dt>
+                        <dd>@watch.LlmProviderOverride</dd>
+                    }
+                    
+                    @if (!string.IsNullOrEmpty(watch.CategoryName))
+                    {
+                        <dt>Category</dt>
+                        <dd>
+                            <span class="category-badge" style="background-color: @(watch.CategoryColor ?? "#888")">
+                                @watch.CategoryName
+                            </span>
+                        </dd>
+                    }
+                    
+                    @if (watch.Tags.Any())
+                    {
+                        <dt>Tags</dt>
+                        <dd class="tag-list">
+                            @foreach (var tag in watch.Tags)
+                            {
+                                <span class="tag" style="background-color: @tag.Color">@tag.Name</span>
+                            }
+                        </dd>
+                    }
+                    
+                    @if (watch.IgnorePatterns.Any())
+                    {
+                        <dt>Ignore Patterns</dt>
+                        <dd>
+                            <ul class="pattern-list">
+                                @foreach (var pattern in watch.IgnorePatterns)
+                                {
+                                    <li><code>@pattern</code></li>
+                                }
+                            </ul>
+                        </dd>
                     }
                 </dl>
 
@@ -102,42 +163,383 @@
                     </div>
                 }
             </section>
-
-            <section class="changes-section">
-                <div class="section-header">
-                    <h2>Recent Changes</h2>
-                    @if (changes.Any())
-                    {
-                        <a href="/watches/@Id/history" class="btn btn-sm btn-outline">View All</a>
-                    }
-                </div>
-
-                @if (!changes.Any())
+            
+            <section class="info-section">
+                <h2>Fetch Settings</h2>
+                @if (watch.FetchSettings != null)
                 {
-                    <div class="empty-state-small">
-                        <p>No changes detected yet.</p>
-                    </div>
+                    <dl class="info-list">
+                        <dt>JavaScript Rendering</dt>
+                        <dd>@(watch.FetchSettings.UseJavaScript ? "Enabled (Playwright)" : "Disabled (HTTP only)")</dd>
+                        
+                        <dt>Timeout</dt>
+                        <dd>@watch.FetchSettings.TimeoutSeconds seconds</dd>
+                        
+                        @if (watch.FetchSettings.UseJavaScript)
+                        {
+                            @if (!string.IsNullOrEmpty(watch.FetchSettings.WaitForSelector))
+                            {
+                                <dt>Wait For Selector</dt>
+                                <dd><code>@watch.FetchSettings.WaitForSelector</code></dd>
+                            }
+                            
+                            @if (watch.FetchSettings.WaitTimeMs > 0)
+                            {
+                                <dt>Wait After Load</dt>
+                                <dd>@watch.FetchSettings.WaitTimeMs ms</dd>
+                            }
+                            
+                            <dt>Screenshot Capture</dt>
+                            <dd>@(watch.FetchSettings.CaptureScreenshot ? "Enabled" : "Disabled")</dd>
+                            
+                            @if (watch.FetchSettings.CaptureScreenshot)
+                            {
+                                <dt>Viewport Size</dt>
+                                <dd>@watch.FetchSettings.ViewportWidth × @watch.FetchSettings.ViewportHeight</dd>
+                            }
+                        }
+                        
+                        @if (!string.IsNullOrEmpty(watch.FetchSettings.ProxyUrl))
+                        {
+                            <dt>Proxy URL</dt>
+                            <dd>@watch.FetchSettings.ProxyUrl</dd>
+                        }
+                        
+                        @if (!string.IsNullOrEmpty(watch.FetchSettings.UserAgent))
+                        {
+                            <dt>User Agent</dt>
+                            <dd><code class="user-agent">@watch.FetchSettings.UserAgent</code></dd>
+                        }
+                        
+                        @if (watch.FetchSettings.CustomHeaders.Any())
+                        {
+                            <dt>Custom Headers</dt>
+                            <dd>
+                                <ul class="header-list">
+                                    @foreach (var header in watch.FetchSettings.CustomHeaders)
+                                    {
+                                        <li><code>@header.Key: @header.Value</code></li>
+                                    }
+                                </ul>
+                            </dd>
+                        }
+                    </dl>
                 }
                 else
                 {
-                    <div class="changes-list">
-                        @foreach (var change in changes.Take(5))
+                    <p class="muted">Using default fetch settings</p>
+                }
+            </section>
+            
+            <section class="info-section">
+                <h2>Notification Settings</h2>
+                @if (watch.NotificationSettings != null)
+                {
+                    <dl class="info-list">
+                        <dt>Minimum Importance</dt>
+                        <dd>@watch.NotificationSettings.MinimumImportanceToNotify</dd>
+                        
+                        <dt>LLM Summary</dt>
+                        <dd>@(watch.NotificationSettings.UseLlmSummary ? "Enabled" : "Disabled")</dd>
+                        
+                        @if (watch.NotificationSettings.EmailEnabled)
                         {
-                            <div class="change-item @(change.IsViewed ? "" : "unread")" @onclick="() => ViewChange(change.Id)">
-                                <div class="change-header">
-                                    <span class="change-time">@change.DetectedAt.ToString("g")</span>
-                                    @if (!change.IsViewed)
+                            <dt>Email</dt>
+                            <dd>
+                                <span class="status-badge enabled">Enabled</span>
+                                @if (watch.NotificationSettings.EmailRecipients.Any())
+                                {
+                                    <span>@string.Join(", ", watch.NotificationSettings.EmailRecipients)</span>
+                                }
+                            </dd>
+                        }
+                        
+                        @if (watch.NotificationSettings.WebhookEnabled)
+                        {
+                            <dt>Webhook</dt>
+                            <dd>
+                                <span class="status-badge enabled">Enabled</span>
+                                @if (!string.IsNullOrEmpty(watch.NotificationSettings.WebhookUrl))
+                                {
+                                    <code>@watch.NotificationSettings.WebhookUrl</code>
+                                }
+                            </dd>
+                        }
+                        
+                        @if (watch.NotificationSettings.DiscordEnabled)
+                        {
+                            <dt>Discord</dt>
+                            <dd>
+                                <span class="status-badge enabled">Enabled</span>
+                                @if (!string.IsNullOrEmpty(watch.NotificationSettings.DiscordWebhookUrl))
+                                {
+                                    <code>@TruncateUrl(watch.NotificationSettings.DiscordWebhookUrl)</code>
+                                }
+                            </dd>
+                        }
+                        
+                        @if (!watch.NotificationSettings.EmailEnabled && !watch.NotificationSettings.WebhookEnabled && !watch.NotificationSettings.DiscordEnabled)
+                        {
+                            <dt>Status</dt>
+                            <dd class="muted">No notifications configured</dd>
+                        }
+                        
+                        @if (!string.IsNullOrEmpty(watch.NotificationSettings.DefaultChannelName))
+                        {
+                            <dt>Default Channel</dt>
+                            <dd>@watch.NotificationSettings.DefaultChannelName</dd>
+                        }
+                        
+                        @if (watch.NotificationSettings.Channels.Any())
+                        {
+                            <dt>Notification Channels</dt>
+                            <dd>
+                                <ul class="channel-list">
+                                    @foreach (var channel in watch.NotificationSettings.Channels)
                                     {
-                                        <span class="unread-badge">New</span>
+                                        <li>
+                                            <span class="channel-name">@channel.Name</span>
+                                            <span class="channel-type">(@channel.Type)</span>
+                                            @if (!channel.IsEnabled)
+                                            {
+                                                <span class="status-badge disabled">Disabled</span>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            </dd>
+                        }
+                    </dl>
+                }
+                else
+                {
+                    <p class="muted">Using default notification settings</p>
+                }
+            </section>
+            
+            @if (watch.SchemaEnabled && watch.Schema != null)
+            {
+                <section class="info-section schema-section">
+                    <h2>Extraction Schema</h2>
+                    <dl class="info-list">
+                        <dt>Item Selector</dt>
+                        <dd><code>@watch.Schema.ItemSelector</code></dd>
+                        
+                        <dt>Schema Version</dt>
+                        <dd>@watch.Schema.Version</dd>
+                        
+                        @if (watch.Schema.IdentityFieldNames.Any())
+                        {
+                            <dt>Identity Fields</dt>
+                            <dd>@string.Join(", ", watch.Schema.IdentityFieldNames)</dd>
+                        }
+                        
+                        <dt>Diff Granularity</dt>
+                        <dd>@watch.Schema.DiffSettings.Granularity</dd>
+                        
+                        <dt>Importance Scoring</dt>
+                        <dd>@(watch.Schema.DiffSettings.EnableImportanceScoring ? "LLM-based" : $"Fixed: {watch.Schema.DiffSettings.DefaultImportance}")</dd>
+                    </dl>
+                    
+                    @if (watch.Schema.Fields.Any())
+                    {
+                        <h3>Schema Fields</h3>
+                        <div class="schema-fields-table">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Selector</th>
+                                        <th>Required</th>
+                                        <th>Identity</th>
+                                        <th>Sample</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var field in watch.Schema.Fields)
+                                    {
+                                        <tr>
+                                            <td>@field.Name</td>
+                                            <td>@field.Type</td>
+                                            <td><code>@field.Selector</code></td>
+                                            <td>@(field.IsRequired ? "✓" : "")</td>
+                                            <td>@(field.IsIdentityField ? "✓" : "")</td>
+                                            <td class="sample-value">@(field.SampleValue ?? "-")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </section>
+            }
+            
+            @if (watch.FilterRules.Any())
+            {
+                <section class="info-section filters-section">
+                    <h2>Filter Rules</h2>
+                    <div class="filter-rules-list">
+                        @foreach (var rule in watch.FilterRules.OrderByDescending(r => r.Priority))
+                        {
+                            <div class="filter-rule @(rule.IsEnabled ? "" : "disabled")">
+                                <div class="rule-header">
+                                    <span class="rule-name">@rule.Name</span>
+                                    <span class="rule-priority">Priority: @rule.Priority</span>
+                                    @if (!rule.IsEnabled)
+                                    {
+                                        <span class="status-badge disabled">Disabled</span>
+                                    }
+                                    @if (rule.StopProcessing)
+                                    {
+                                        <span class="status-badge stop">Stop on Match</span>
                                     }
                                 </div>
-                                <p class="change-summary">@change.Summary</p>
-                                <div class="change-stats">
-                                    <span class="stat added">+@change.LinesAdded</span>
-                                    <span class="stat removed">-@change.LinesRemoved</span>
+                                @if (!string.IsNullOrEmpty(rule.Description))
+                                {
+                                    <p class="rule-description">@rule.Description</p>
+                                }
+                                <div class="rule-details">
+                                    <div class="conditions">
+                                        <strong>Conditions (@rule.Logic):</strong>
+                                        <ul>
+                                            @foreach (var condition in rule.Conditions)
+                                            {
+                                                <li>
+                                                    @(condition.Negate ? "NOT " : "")@condition.FieldName 
+                                                    @condition.Operator 
+                                                    @(condition.Value ?? "")
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                    <div class="actions">
+                                        <strong>Actions:</strong>
+                                        <ul>
+                                            @foreach (var action in rule.Actions)
+                                            {
+                                                <li>@action.Type @FormatActionParams(action.Parameters)</li>
+                                            }
+                                        </ul>
+                                    </div>
                                 </div>
                             </div>
                         }
+                    </div>
+                </section>
+            }
+
+            <section class="changes-section">
+                <div class="section-header">
+                    <h2>Change History</h2>
+                    <div class="header-stats">
+                        <span class="stat-item">
+                            <strong>@changes.Count</strong> total
+                        </span>
+                        @if (unviewedCount > 0)
+                        {
+                            <span class="stat-item unviewed">
+                                <strong>@unviewedCount</strong> unviewed
+                            </span>
+                        }
+                    </div>
+                </div>
+                
+                @if (changes.Any())
+                {
+                    <div class="filters-bar">
+                        <div class="filter-group">
+                            <label for="importance-filter">Importance:</label>
+                            <select id="importance-filter" @bind="importanceFilter" @bind:after="ApplyFilters">
+                                <option value="">All</option>
+                                <option value="Critical">Critical</option>
+                                <option value="High">High</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Low">Low</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="viewed-filter">Status:</label>
+                            <select id="viewed-filter" @bind="viewedFilter" @bind:after="ApplyFilters">
+                                <option value="">All</option>
+                                <option value="unviewed">Unviewed</option>
+                                <option value="viewed">Viewed</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="date-filter">Date:</label>
+                            <select id="date-filter" @bind="dateFilter" @bind:after="ApplyFilters">
+                                <option value="">All Time</option>
+                                <option value="today">Today</option>
+                                <option value="week">Last 7 Days</option>
+                                <option value="month">Last 30 Days</option>
+                            </select>
+                        </div>
+                        @if (unviewedCount > 0)
+                        {
+                            <button class="btn btn-sm btn-outline mark-all-btn" @onclick="MarkAllAsViewed">
+                                Mark All Viewed
+                            </button>
+                        }
+                    </div>
+                    
+                    @if (filteredChanges.Any())
+                    {
+                        <div class="changes-timeline">
+                            @{
+                                DateTime? currentDate = null;
+                            }
+                            @foreach (var change in filteredChanges)
+                            {
+                                var changeDate = change.DetectedAt.Date;
+                                @if (currentDate != changeDate)
+                                {
+                                    currentDate = changeDate;
+                                    <div class="date-separator">
+                                        <span class="date-label">@FormatDateHeader(changeDate)</span>
+                                    </div>
+                                }
+                                <div class="change-item @(change.IsViewed ? "" : "unread") importance-@change.Importance.ToLower()" 
+                                     @onclick="() => ViewChange(change.Id)">
+                                    <div class="change-time-col">
+                                        @change.DetectedAt.ToString("HH:mm")
+                                    </div>
+                                    <div class="change-content">
+                                        <div class="change-header">
+                                            <span class="importance-badge @change.Importance.ToLower()">
+                                                @GetImportanceIcon(change.Importance) @change.Importance
+                                            </span>
+                                            @if (!change.IsViewed)
+                                            {
+                                                <span class="unread-badge">New</span>
+                                            }
+                                            @if (change.IsNotified)
+                                            {
+                                                <span class="notified-badge" title="Notification sent">🔔</span>
+                                            }
+                                        </div>
+                                        <p class="change-summary">@change.Summary</p>
+                                        <div class="change-stats">
+                                            <span class="stat added">+@change.LinesAdded</span>
+                                            <span class="stat removed">-@change.LinesRemoved</span>
+                                        </div>
+                                    </div>
+                                    <div class="change-arrow">→</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="empty-state-small">
+                            <p>No changes match the current filters.</p>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="empty-state-small">
+                        <p>No changes detected yet.</p>
                     </div>
                 }
             </section>
@@ -191,10 +593,18 @@
 
     private WatchDetailDto? watch;
     private List<ChangeListItemDto> changes = new();
+    private List<ChangeListItemDto> filteredChanges = new();
     private bool isLoading = true;
     private bool isChecking = false;
     private string? error;
     private bool showDeleteConfirm = false;
+    
+    // Filters
+    private string importanceFilter = "";
+    private string viewedFilter = "";
+    private string dateFilter = "";
+    
+    private int unviewedCount => changes.Count(c => !c.IsViewed);
 
     protected override async Task OnInitializedAsync()
     {
@@ -224,10 +634,11 @@
 
             if (watch != null)
             {
-                var changesResponse = await Http.GetAsync($"/api/changes?watchId={Id}&limit=5");
+                var changesResponse = await Http.GetAsync($"/api/changes?watchId={Id}");
                 if (changesResponse.IsSuccessStatusCode)
                 {
                     changes = await changesResponse.Content.ReadFromJsonAsync<List<ChangeListItemDto>>() ?? new();
+                    ApplyFilters();
                 }
             }
         }
@@ -320,4 +731,84 @@
         if (content.Length <= maxLength) return content;
         return content[..maxLength] + "...";
     }
+    
+    private string TruncateUrl(string url)
+    {
+        if (url.Length <= 50) return url;
+        return url[..47] + "...";
+    }
+    
+    private string FormatActionParams(Dictionary<string, string> parameters)
+    {
+        if (!parameters.Any()) return "";
+        return $"({string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))})";
+    }
+    
+    private void ApplyFilters()
+    {
+        var result = changes.AsEnumerable();
+
+        // Filter by importance
+        if (!string.IsNullOrEmpty(importanceFilter))
+        {
+            result = result.Where(c => c.Importance == importanceFilter);
+        }
+
+        // Filter by viewed status
+        if (viewedFilter == "unviewed")
+        {
+            result = result.Where(c => !c.IsViewed);
+        }
+        else if (viewedFilter == "viewed")
+        {
+            result = result.Where(c => c.IsViewed);
+        }
+
+        // Filter by date range
+        if (!string.IsNullOrEmpty(dateFilter))
+        {
+            var now = DateTime.UtcNow;
+            result = dateFilter switch
+            {
+                "today" => result.Where(c => c.DetectedAt.Date == now.Date),
+                "week" => result.Where(c => c.DetectedAt >= now.AddDays(-7)),
+                "month" => result.Where(c => c.DetectedAt >= now.AddDays(-30)),
+                _ => result
+            };
+        }
+
+        filteredChanges = result.OrderByDescending(c => c.DetectedAt).ToList();
+    }
+    
+    private async Task MarkAllAsViewed()
+    {
+        foreach (var change in changes.Where(c => !c.IsViewed))
+        {
+            await Http.PostAsync($"/api/changes/{change.Id}/viewed", null);
+            change.IsViewed = true;
+        }
+        ApplyFilters();
+        StateHasChanged();
+    }
+    
+    private string FormatDateHeader(DateTime date)
+    {
+        var today = DateTime.UtcNow.Date;
+        if (date == today)
+            return "Today";
+        if (date == today.AddDays(-1))
+            return "Yesterday";
+        if (date > today.AddDays(-7))
+            return date.ToString("dddd");
+        return date.ToString("MMMM d, yyyy");
+    }
+
+    private string GetImportanceIcon(string importance) => importance switch
+    {
+        "Critical" => "🔴",
+        "High" => "🟠",
+        "Medium" => "🟡",
+        "Low" => "🟢",
+        _ => "⚪"
+    };
 }
