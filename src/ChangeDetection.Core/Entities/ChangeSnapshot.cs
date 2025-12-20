@@ -1,11 +1,19 @@
+using ChangeDetection.Core.Interfaces;
+
 namespace ChangeDetection.Core.Entities;
 
 /// <summary>
 /// A snapshot of website content at a point in time.
 /// </summary>
-public class ChangeSnapshot
+public class ChangeSnapshot : IOwnedEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    
+    /// <summary>
+    /// The ID of the user who owns this snapshot.
+    /// Guid.Empty represents the default single-user mode owner.
+    /// </summary>
+    public Guid OwnerId { get; set; } = Guid.Empty;
     
     /// <summary>
     /// The watch this snapshot belongs to.
@@ -74,4 +82,61 @@ public class ChangeSnapshot
     /// Warnings about objects with ambiguous/duplicate identity values.
     /// </summary>
     public List<string> AmbiguousIdentityWarnings { get; set; } = [];
+
+    // ========== LLM-Powered Content Enrichment ==========
+
+    /// <summary>
+    /// LLM-generated concise summary of the content.
+    /// </summary>
+    public string? ContentSummary { get; set; }
+
+    /// <summary>
+    /// Primary content type detected (Article, ProductPage, EventPage, etc.).
+    /// </summary>
+    public string? ContentType { get; set; }
+
+    /// <summary>
+    /// Primary language detected.
+    /// </summary>
+    public string? Language { get; set; }
+
+    /// <summary>
+    /// Named entities extracted from content (JSON serialized).
+    /// </summary>
+    public string? EntitiesJson { get; set; }
+
+    /// <summary>
+    /// Topics and themes identified (JSON serialized).
+    /// </summary>
+    public string? TopicsJson { get; set; }
+
+    /// <summary>
+    /// Sentiment analysis result (JSON serialized).
+    /// </summary>
+    public string? SentimentJson { get; set; }
+
+    /// <summary>
+    /// Structured data extracted (dates, prices, quantities) (JSON serialized).
+    /// </summary>
+    public string? StructuredDataJson { get; set; }
+
+    /// <summary>
+    /// Key phrases or keywords from the content (JSON serialized).
+    /// </summary>
+    public string? KeyPhrasesJson { get; set; }
+
+    /// <summary>
+    /// Content fingerprint for similarity comparison (JSON serialized).
+    /// </summary>
+    public string? ContentFingerprintJson { get; set; }
+
+    /// <summary>
+    /// Whether LLM enrichment was performed on this snapshot.
+    /// </summary>
+    public bool HasLlmEnrichment { get; set; }
+
+    /// <summary>
+    /// Confidence in the enrichment analysis.
+    /// </summary>
+    public float? EnrichmentConfidence { get; set; }
 }

@@ -1,3 +1,5 @@
+using ChangeDetection.Core.Interfaces;
+
 namespace ChangeDetection.Core.Entities;
 
 /// <summary>
@@ -5,12 +7,18 @@ namespace ChangeDetection.Core.Entities;
 /// Categories are user-defined and limited in number (~10).
 /// The full list is passed to the LLM for classification.
 /// </summary>
-public class Category
+public class Category : IOwnedEntity
 {
     /// <summary>
     /// Unique identifier for the category.
     /// </summary>
     public Guid Id { get; set; } = Guid.NewGuid();
+    
+    /// <summary>
+    /// The ID of the user who owns this category.
+    /// Guid.Empty represents the default single-user mode owner.
+    /// </summary>
+    public Guid OwnerId { get; set; } = Guid.Empty;
     
     /// <summary>
     /// Display name for the category.

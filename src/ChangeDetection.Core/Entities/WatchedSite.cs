@@ -1,11 +1,19 @@
+using ChangeDetection.Core.Interfaces;
+
 namespace ChangeDetection.Core.Entities;
 
 /// <summary>
 /// Represents a website being monitored for changes.
 /// </summary>
-public class WatchedSite
+public class WatchedSite : IOwnedEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    
+    /// <summary>
+    /// The ID of the user who owns this watch.
+    /// Guid.Empty represents the default single-user mode owner.
+    /// </summary>
+    public Guid OwnerId { get; set; } = Guid.Empty;
     
     /// <summary>
     /// The URL to monitor.
@@ -29,8 +37,26 @@ public class WatchedSite
     
     /// <summary>
     /// How often to check for changes.
+    /// For adaptive mode, this is the current calculated interval.
     /// </summary>
     public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMinutes(30);
+    
+    /// <summary>
+    /// Schedule settings controlling fixed vs adaptive check intervals.
+    /// </summary>
+    public CheckScheduleSettings ScheduleSettings { get; set; } = new();
+    
+    /// <summary>
+    /// Exponential moving average of time between detected changes.
+    /// Used to calculate adaptive check intervals.
+    /// Null if not enough data has been collected yet.
+    /// </summary>
+    public TimeSpan? AverageChangeInterval { get; set; }
+    
+    /// <summary>
+    /// When the check interval was last adjusted (adaptive mode only).
+    /// </summary>
+    public DateTime? LastIntervalAdjustment { get; set; }
     
     /// <summary>
     /// When the site was last checked.
@@ -138,6 +164,149 @@ public class WatchedSite
     /// Rules are evaluated in priority order.
     /// </summary>
     public List<FilterRule> FilterRules { get; set; } = [];
+    
+    /// <summary>
+    /// Whether automatic error resolution via LLM is enabled.
+    /// When enabled, the system will attempt to fix selector issues automatically.
+    /// </summary>
+    public bool AutoErrorResolutionEnabled { get; set; } = true;
+    
+    /// <summary>
+    /// Number of auto-resolution attempts made for the current error.
+    /// Reset to 0 when a check succeeds.
+    /// </summary>
+    public int AutoResolutionAttempts { get; set; }
+    
+    /// <summary>
+    /// Maximum number of auto-resolution attempts before requiring user intervention.
+    /// </summary>
+    public int MaxAutoResolutionAttempts { get; set; } = 3;
+    
+    /// <summary>
+    /// Last resolution diagnosis message.
+    /// </summary>
+    public string? LastResolutionDiagnosis { get; set; }
+    
+    /// <summary>
+    /// When the last auto-resolution was attempted.
+    /// </summary>
+    public DateTime? LastResolutionAttempt { get; set; }
+    
+    /// <summary>
+    /// History of selector changes from auto-resolution.
+    /// Stores previous selectors for rollback capability.
+    /// </summary>
+    public List<SelectorHistoryEntry> SelectorHistory { get; set; } = [];
+
+    /// <summary>
+    /// Settings for LLM-powered content analysis and enrichment.
+    /// </summary>
+    public LlmAnalysisSettings AnalysisSettings { get; set; } = new();
+
+    /// <summary>
+    /// User's original intent when setting up the watch.
+    /// Used for relevance scoring of changes.
+    /// </summary>
+    public string? UserIntent { get; set; }
+}
+
+/// <summary>
+/// Settings for LLM-powered analysis and enrichment during ingestion.
+/// </summary>
+public class LlmAnalysisSettings
+{
+    /// <summary>
+    /// Whether to enable LLM-powered semantic analysis of detected changes.
+    /// </summary>
+    public bool EnableChangeAnalysis { get; set; } = true;
+
+    /// <summary>
+    /// Whether to enable LLM-powered content enrichment during fetch.
+    /// </summary>
+    public bool EnableContentEnrichment { get; set; }
+
+    /// <summary>
+    /// Whether to generate semantic summaries of changes.
+    /// </summary>
+    public bool GenerateSemanticSummary { get; set; } = true;
+
+    /// <summary>
+    /// Whether to calculate relevance scores based on user intent.
+    /// </summary>
+    public bool CalculateRelevance { get; set; } = true;
+
+    /// <summary>
+    /// Whether to extract entities from content and changes.
+    /// </summary>
+    public bool ExtractEntities { get; set; } = true;
+
+    /// <summary>
+    /// Whether to analyze sentiment changes.
+    /// </summary>
+    public bool AnalyzeSentiment { get; set; }
+
+    /// <summary>
+    /// Whether to detect anomalies by comparing against historical patterns.
+    /// Requires sufficient historical data.
+    /// </summary>
+    public bool DetectAnomalies { get; set; }
+
+    /// <summary>
+    /// Whether to categorize changes semantically.
+    /// </summary>
+    public bool CategorizeChanges { get; set; } = true;
+
+    /// <summary>
+    /// Whether to generate suggested actions based on changes.
+    /// </summary>
+    public bool GenerateSuggestedActions { get; set; }
+
+    /// <summary>
+    /// Minimum relevance score (0-1) to trigger notifications.
+    /// If set, low-relevance changes won't trigger notifications.
+    /// </summary>
+    public float? MinRelevanceForNotification { get; set; }
+
+    /// <summary>
+    /// Whether to only notify on high-importance changes when LLM analysis is enabled.
+    /// </summary>
+    public bool OnlyNotifyHighImportance { get; set; }
+}
+
+/// <summary>
+/// Historical record of a selector change.
+/// </summary>
+public class SelectorHistoryEntry
+{
+    /// <summary>
+    /// When the selector was changed.
+    /// </summary>
+    public DateTime ChangedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>
+    /// Previous CSS selector value.
+    /// </summary>
+    public string? PreviousCssSelector { get; set; }
+    
+    /// <summary>
+    /// Previous XPath selector value.
+    /// </summary>
+    public string? PreviousXPathSelector { get; set; }
+    
+    /// <summary>
+    /// Reason for the change (e.g., "Auto-resolution", "User update").
+    /// </summary>
+    public string? ChangeReason { get; set; }
+    
+    /// <summary>
+    /// LLM diagnosis that triggered the change.
+    /// </summary>
+    public string? Diagnosis { get; set; }
+    
+    /// <summary>
+    /// Confidence score of the auto-resolution (0-1).
+    /// </summary>
+    public float? Confidence { get; set; }
 }
 
 public enum WatchStatus

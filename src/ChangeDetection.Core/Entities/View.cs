@@ -1,14 +1,22 @@
+using ChangeDetection.Core.Interfaces;
+
 namespace ChangeDetection.Core.Entities;
 
 /// <summary>
 /// A saved view representing a filtered/sorted dashboard configuration.
 /// </summary>
-public class View
+public class View : IOwnedEntity
 {
     /// <summary>
     /// Unique identifier.
     /// </summary>
     public Guid Id { get; set; } = Guid.NewGuid();
+    
+    /// <summary>
+    /// The ID of the user who owns this view.
+    /// Guid.Empty represents the default single-user mode owner.
+    /// </summary>
+    public Guid OwnerId { get; set; } = Guid.Empty;
 
     /// <summary>
     /// Display name for the view.

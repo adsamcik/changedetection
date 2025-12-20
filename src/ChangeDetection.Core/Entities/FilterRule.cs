@@ -111,7 +111,51 @@ public enum FilterOperator
     StartsWith,
 
     /// <summary>Field value ends with the specified suffix.</summary>
-    EndsWith
+    EndsWith,
+
+    // ========== Numeric Operators (for stock/price tracking) ==========
+
+    /// <summary>Field value is greater than or equal to the specified value.</summary>
+    GreaterThanOrEqual,
+
+    /// <summary>Field value is less than or equal to the specified value.</summary>
+    LessThanOrEqual,
+
+    /// <summary>Field value is between two values (inclusive). Use comma-separated: "min,max".</summary>
+    Between,
+
+    /// <summary>Field value is outside a range. Use comma-separated: "min,max".</summary>
+    Outside,
+
+    /// <summary>Field value changed by at least the specified absolute amount.</summary>
+    ChangedByAmount,
+
+    /// <summary>Field value changed by at least the specified percentage.</summary>
+    ChangedByPercent,
+
+    /// <summary>Field value dropped by at least the specified amount.</summary>
+    DroppedByAmount,
+
+    /// <summary>Field value dropped by at least the specified percentage.</summary>
+    DroppedByPercent,
+
+    /// <summary>Field value rose by at least the specified amount.</summary>
+    RoseByAmount,
+
+    /// <summary>Field value rose by at least the specified percentage.</summary>
+    RoseByPercent,
+
+    /// <summary>Field reached a new historical minimum.</summary>
+    IsNewMinimum,
+
+    /// <summary>Field reached a new historical maximum.</summary>
+    IsNewMaximum,
+
+    /// <summary>Field value is an outlier (> 2 standard deviations from mean).</summary>
+    IsOutlier,
+
+    /// <summary>Field trend matches specified direction (Up, Down, Stable, Volatile).</summary>
+    TrendIs
 }
 
 /// <summary>
@@ -168,7 +212,27 @@ public enum FilterActionType
     Highlight,
 
     /// <summary>Mark this change as requiring review.</summary>
-    RequireReview
+    RequireReview,
+
+    // ========== Stock/Price Tracking Actions ==========
+
+    /// <summary>Set a price alert threshold for this field.</summary>
+    SetPriceAlert,
+
+    /// <summary>Update the baseline value for percentage calculations.</summary>
+    UpdateBaseline,
+
+    /// <summary>Record value to time-series history (even if TrackHistory is false).</summary>
+    RecordToHistory,
+
+    /// <summary>Send an immediate notification regardless of other settings.</summary>
+    ImmediateNotify,
+
+    /// <summary>Add to watchlist/favorites for quick access.</summary>
+    AddToWatchlist,
+
+    /// <summary>Execute a webhook with change data.</summary>
+    TriggerWebhook
 }
 
 /// <summary>
