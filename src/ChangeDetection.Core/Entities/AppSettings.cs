@@ -41,6 +41,31 @@ public class AppSettings
     /// Maximum Playwright browser instances.
     /// </summary>
     public int MaxPlaywrightInstances { get; set; } = 3;
+    
+    /// <summary>
+    /// Default user agent for HTTP requests.
+    /// </summary>
+    public string? DefaultUserAgent { get; set; }
+    
+    /// <summary>
+    /// Default timeout in seconds for fetch operations.
+    /// </summary>
+    public int DefaultFetchTimeoutSeconds { get; set; } = 30;
+    
+    /// <summary>
+    /// Whether to enable debug logging for LLM operations.
+    /// </summary>
+    public bool EnableLlmDebugLogging { get; set; }
+    
+    /// <summary>
+    /// Maximum number of retries for failed checks.
+    /// </summary>
+    public int MaxRetryAttempts { get; set; } = 3;
+    
+    /// <summary>
+    /// Delay between retries in seconds.
+    /// </summary>
+    public int RetryDelaySeconds { get; set; } = 60;
 }
 
 /// <summary>
