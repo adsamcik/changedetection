@@ -1,7 +1,9 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Hubs;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.AspNetCore.SignalR;
 
 namespace ChangeDetection.Endpoints;
 
@@ -53,6 +55,14 @@ public static class LlmEndpoints
             .WithName("GetUsageStats")
             .Produces<LlmUsageStatsDto>();
 
+        group.MapGet("/logs", GetLogs)
+            .WithName("GetLlmLogs")
+            .Produces<LlmLogsResponse>();
+
+        group.MapDelete("/logs", ClearLogs)
+            .WithName("ClearLlmLogs")
+            .Produces(204);
+
         group.MapGet("/pending-setups", GetPendingSetups)
             .WithName("GetPendingSetups")
             .Produces<List<PendingSetupDto>>();
@@ -62,13 +72,67 @@ public static class LlmEndpoints
             .Produces(204)
             .Produces(404);
 
+        group.MapPost("/start-setup", StartSetup)
+            .WithName("StartSetup")
+            .Produces<StartSetupResponse>(201);
+
         return group;
+    }
+
+    /// <summary>
+    /// Starts a new setup session and stores the initial input.
+    /// The client should connect via SignalR to receive updates.
+    /// Pipeline processing begins when the client connects to the hub.
+    /// </summary>
+    private static async Task<IResult> StartSetup(
+        StartSetupRequest request,
+        IConversationSessionManager sessionManager,
+        IHubContext<ChangeDetectionHub> hubContext,
+        IUserContext userContext,
+        ILogger<IConversationSessionManager> logger)
+    {
+        if (string.IsNullOrWhiteSpace(request.Input))
+        {
+            return Results.BadRequest(new { error = "Input cannot be empty" });
+        }
+
+        // Create a new session with the initial input stored
+        var session = sessionManager.CreateSession();
+        session.DisplayName = request.Input.Length > 50 ? request.Input[..50] + "..." : request.Input;
+        session.PendingInput = request.Input;  // Store input for later processing
+        sessionManager.UpdateSession(session);
+        
+        logger.LogInformation("Created setup session {SessionId} with pending input: {Input}", 
+            session.SessionId, request.Input);
+
+        var dashboardGroup = userContext.CurrentUserId == Guid.Empty
+            ? "dashboard"
+            : $"dashboard-{userContext.CurrentUserId}";
+
+        // Notify dashboard clients about the new pending session
+        await hubContext.Clients.Group(dashboardGroup).SendAsync("SetupSessionUpdated", new SetupSessionUpdatedEvent(
+            session.SessionId,
+            session.DisplayName ?? "New Watch",
+            session.CurrentPrompt,
+            IsProcessing: true,
+            IsCompleted: false,
+            IsCancelled: false));
+
+        return Results.Created($"/api/llm/sessions/{session.SessionId}", new StartSetupResponse
+        {
+            SessionId = session.SessionId,
+            CreatedAt = session.CreatedAt
+        });
     }
 
     /// <summary>
     /// Deletes/cancels a setup session.
     /// </summary>
-    private static IResult DeleteSession(Guid sessionId, IConversationSessionManager sessionManager)
+    private static async Task<IResult> DeleteSession(
+        Guid sessionId, 
+        IConversationSessionManager sessionManager,
+        IHubContext<ChangeDetectionHub> hubContext,
+        IUserContext userContext)
     {
         var session = sessionManager.GetSession(sessionId);
         if (session is null)
@@ -76,23 +140,40 @@ public static class LlmEndpoints
             return Results.NotFound();
         }
 
+        var dashboardGroup = userContext.CurrentUserId == Guid.Empty
+            ? "dashboard"
+            : $"dashboard-{userContext.CurrentUserId}";
+
         sessionManager.RemoveSession(sessionId);
+        
+        // Notify dashboard clients that the session was cancelled
+        await hubContext.Clients.Group(dashboardGroup).SendAsync("SetupSessionUpdated", new SetupSessionUpdatedEvent(
+            sessionId,
+            session.DisplayName ?? "Cancelled",
+            CurrentPrompt: null,
+            IsProcessing: false,
+            IsCompleted: false,
+            IsCancelled: true));
+
         return Results.NoContent();
     }
 
     /// <summary>
-    /// Gets all setup sessions that are awaiting user input.
+    /// Gets all setup sessions that are awaiting user input or being processed.
     /// </summary>
     private static IResult GetPendingSetups(IConversationSessionManager sessionManager)
     {
-        var pending = sessionManager.GetSessionsAwaitingInput()
+        var pending = sessionManager.GetAllActiveSessions()
             .Select(s => new PendingSetupDto
             {
                 SessionId = s.SessionId,
                 DisplayName = s.DisplayName ?? "New Watch",
                 CurrentPrompt = s.CurrentPrompt,
                 LastActivityAt = s.LastActivityAt,
-                CreatedAt = s.CreatedAt
+                CreatedAt = s.CreatedAt,
+                IsProcessing = !s.AwaitingUserInput && !string.IsNullOrEmpty(s.PendingInput),
+                IsBackgrounded = s.IsBackgrounded,
+                CurrentStage = s.CurrentPipelineStage
             })
             .ToList();
 
@@ -215,6 +296,7 @@ public static class LlmEndpoints
                             Url = pipelineResult.FinalConfiguration.Url,
                             Title = pipelineResult.FinalConfiguration.Name,
                             CssSelector = pipelineResult.FinalConfiguration.CssSelector,
+                            XPathSelector = pipelineResult.FinalConfiguration.XPathSelector,
                             Description = pipelineResult.FinalConfiguration.Description,
                             UseJavaScript = pipelineResult.FinalConfiguration.UseJavaScript,
                             CheckIntervalMinutes = pipelineResult.FinalConfiguration.CheckInterval.HasValue
@@ -340,6 +422,7 @@ public static class LlmEndpoints
                 Url = result.FinalConfiguration.Url,
                 Title = result.FinalConfiguration.Name,
                 CssSelector = result.FinalConfiguration.CssSelector,
+                XPathSelector = result.FinalConfiguration.XPathSelector,
                 Description = result.FinalConfiguration.Description,
                 UseJavaScript = result.FinalConfiguration.UseJavaScript
             } : null,
@@ -528,6 +611,99 @@ public static class LlmEndpoints
         };
 
         return Results.Ok(stats);
+    }
+
+    /// <summary>
+    /// Gets recent LLM logs for debugging.
+    /// </summary>
+    private static IResult GetLogs(
+        ILlmLogService logService,
+        IWebHostEnvironment env,
+        int count = 100,
+        string? provider = null)
+    {
+        var logs = provider != null 
+            ? logService.GetLogsForProvider(provider, count)
+            : logService.GetRecentLogs(count);
+
+        var isDevelopment = env.IsDevelopment();
+
+        var dtos = logs.Select(log => new LlmLogEntryDto
+        {
+            Id = log.Id,
+            Timestamp = log.Timestamp,
+            Level = log.Level.ToString(),
+            ProviderName = log.ProviderName,
+            Model = log.Model,
+            Category = log.Category.ToString(),
+            Message = log.Message,
+            PromptPreview = log.PromptPreview,
+            // In production, truncate full content to prevent exposure of sensitive data
+            FullPrompt = isDevelopment ? log.FullPrompt : TruncateForProduction(log.FullPrompt),
+            ResponsePreview = log.ResponsePreview,
+            FullResponse = isDevelopment ? log.FullResponse : TruncateForProduction(log.FullResponse),
+            ErrorMessage = log.ErrorMessage,
+            // Sanitize exception type to just the type name (no assembly info)
+            ExceptionType = SanitizeExceptionType(log.ExceptionType),
+            // Only include stack trace in development mode - exposes internal file paths and method signatures
+            StackTrace = isDevelopment ? log.StackTrace : null,
+            DurationMs = log.DurationMs,
+            InputTokens = log.InputTokens,
+            OutputTokens = log.OutputTokens,
+            IsSuccess = log.IsSuccess,
+            Metadata = isDevelopment ? log.Metadata : null
+        }).ToList();
+
+        return Results.Ok(new LlmLogsResponse
+        {
+            Logs = dtos,
+            TotalCount = dtos.Count
+        });
+    }
+
+    /// <summary>
+    /// Truncates content for production to a safe preview length.
+    /// </summary>
+    private static string? TruncateForProduction(string? content, int maxLength = 500)
+    {
+        if (string.IsNullOrEmpty(content))
+            return content;
+
+        if (content.Length <= maxLength)
+            return content;
+
+        return content[..maxLength] + "... [truncated in production]";
+    }
+
+    /// <summary>
+    /// Sanitizes exception type to just the type name without assembly info.
+    /// </summary>
+    private static string? SanitizeExceptionType(string? exceptionType)
+    {
+        if (string.IsNullOrEmpty(exceptionType))
+            return exceptionType;
+
+        // Extract just the type name from fully qualified names like
+        // "System.Net.Http.HttpRequestException, System.Net.Http, Version=..."
+        var commaIndex = exceptionType.IndexOf(',');
+        if (commaIndex > 0)
+        {
+            exceptionType = exceptionType[..commaIndex];
+        }
+
+        // Get just the class name without namespace for cleaner display
+        // "System.Net.Http.HttpRequestException" -> "HttpRequestException"
+        var lastDotIndex = exceptionType.LastIndexOf('.');
+        return lastDotIndex > 0 ? exceptionType[(lastDotIndex + 1)..] : exceptionType;
+    }
+
+    /// <summary>
+    /// Clears all LLM logs.
+    /// </summary>
+    private static IResult ClearLogs(ILlmLogService logService)
+    {
+        logService.Clear();
+        return Results.NoContent();
     }
 
     private static LlmProviderDto MapToDto(LlmProviderConfig p) => new()

@@ -1,6 +1,9 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.AspNetCore.OutputCaching;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ChangeDetection.Endpoints;
 
@@ -13,12 +16,14 @@ public static class ChangeEndpoints
     {
         group.MapGet("/", GetAllChanges)
             .WithName("GetAllChanges")
-            .Produces<List<ChangeListItemDto>>();
+            .Produces<List<ChangeListItemDto>>()
+            .CacheOutput(policy => policy.Expire(TimeSpan.FromSeconds(5)).Tag("changes").SetVaryByQuery("watchId", "limit").SetVaryByHeader("Remote-User"));
 
         group.MapGet("/{id}", GetChangeById)
             .WithName("GetChangeById")
             .Produces<ChangeDetailDto>()
-            .Produces(404);
+            .Produces(404)
+            .CacheOutput(policy => policy.Expire(TimeSpan.FromSeconds(30)).Tag("changes").SetVaryByRouteValue("id").SetVaryByHeader("Remote-User"));
 
         group.MapPost("/{id}/viewed", MarkAsViewed)
             .WithName("MarkChangeAsViewed")
@@ -27,7 +32,13 @@ public static class ChangeEndpoints
 
         group.MapGet("/unviewed/count", GetUnviewedCount)
             .WithName("GetUnviewedCount")
-            .Produces<int>();
+            .Produces<int>()
+            .CacheOutput(policy => policy.Expire(TimeSpan.FromSeconds(5)).Tag("changes").SetVaryByHeader("Remote-User"));
+
+        group.MapGet("/{watchId}/field-history/{objectIdentity}/{fieldName}", GetFieldHistory)
+            .WithName("GetFieldHistory")
+            .Produces<FieldHistoryDto>()
+            .Produces(404);
 
         return group;
     }
@@ -62,7 +73,7 @@ public static class ChangeEndpoints
         var dtos = orderedEvents.Select(e =>
         {
             watches.TryGetValue(e.WatchedSiteId, out var watch);
-            return new ChangeListItemDto
+            var dto = new ChangeListItemDto
             {
                 Id = e.Id.ToString(),
                 WatchId = e.WatchedSiteId.ToString(),
@@ -73,8 +84,18 @@ public static class ChangeEndpoints
                 LinesAdded = e.LinesAdded,
                 LinesRemoved = e.LinesRemoved,
                 IsViewed = e.IsViewed,
-                IsNotified = e.IsNotified
+                IsNotified = e.IsNotified,
+                HasObjectDiff = e.ObjectsDiff != null
             };
+            
+            if (e.ObjectsDiff != null)
+            {
+                dto.ObjectsAdded = e.ObjectsDiff.AddedItems.Count;
+                dto.ObjectsRemoved = e.ObjectsDiff.RemovedItems.Count;
+                dto.ObjectsModified = e.ObjectsDiff.ModifiedItems.Count;
+            }
+            
+            return dto;
         }).ToList();
 
         return Results.Ok(dtos);
@@ -104,7 +125,7 @@ public static class ChangeEndpoints
                                        .Replace("<br>", "\n").Replace("<br/>", "\n")
                       ?? "";
 
-        return Results.Ok(new ChangeDetailDto
+        var dto = new ChangeDetailDto
         {
             Id = change.Id.ToString(),
             WatchId = change.WatchedSiteId.ToString(),
@@ -118,6 +139,7 @@ public static class ChangeEndpoints
             LinesAdded = change.LinesAdded,
             LinesRemoved = change.LinesRemoved,
             IsViewed = change.IsViewed,
+            HasObjectDiff = change.ObjectsDiff != null,
             PreviousSnapshot = previousSnapshot != null ? new SnapshotInfoDto
             {
                 Id = previousSnapshot.Id.ToString(),
@@ -132,7 +154,101 @@ public static class ChangeEndpoints
                 Content = currentSnapshot.Content,
                 ScreenshotPath = currentSnapshot.ScreenshotPath
             } : null
-        });
+        };
+
+        // Add object diff data if available
+        if (change.ObjectsDiff != null && watch?.Schema != null)
+        {
+            dto.Schema = MapToSchemaDto(watch.Schema);
+            dto.ObjectDiff = MapToObjectDiffDto(change.ObjectsDiff, watch.Schema);
+        }
+
+        return Results.Ok(dto);
+    }
+
+    private static async Task<IResult> GetFieldHistory(
+        string watchId,
+        string objectIdentity,
+        string fieldName,
+        IRepository<ChangeSnapshot> snapshotRepo,
+        IRepository<WatchedSite> watchRepo,
+        int? limit,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(watchId, out var guidWatchId))
+            return Results.BadRequest("Invalid watch ID");
+
+        var watch = await watchRepo.GetByIdAsync(guidWatchId, ct);
+        if (watch?.Schema == null)
+            return Results.NotFound("Watch or schema not found");
+
+        var field = watch.Schema.Fields.FirstOrDefault(f => f.Name == fieldName);
+        if (field == null)
+            return Results.NotFound("Field not found");
+
+        // Get snapshots for this watch
+        var snapshots = (await snapshotRepo.FindAsync(s => s.WatchedSiteId == guidWatchId, ct))
+            .Where(s => !string.IsNullOrEmpty(s.ExtractedObjectsJson))
+            .OrderByDescending(s => s.CapturedAt)
+            .Take(limit ?? 100)
+            .ToList();
+
+        var dataPoints = new List<FieldHistoryPointDto>();
+        var decodedIdentity = Uri.UnescapeDataString(objectIdentity);
+
+        foreach (var snapshot in snapshots.OrderBy(s => s.CapturedAt))
+        {
+            try
+            {
+                var objects = JsonSerializer.Deserialize<List<ExtractedObject>>(
+                    snapshot.ExtractedObjectsJson!,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                var targetObject = objects?.FirstOrDefault(o => o.IdentityKey == decodedIdentity);
+                if (targetObject?.Fields.TryGetValue(fieldName, out var value) == true)
+                {
+                    var numericValue = ParseNumericValue(value, field.Type);
+                    dataPoints.Add(new FieldHistoryPointDto
+                    {
+                        CapturedAt = snapshot.CapturedAt,
+                        Value = value,
+                        NumericValue = numericValue,
+                        FormattedValue = FormatFieldValue(value, field)
+                    });
+                }
+            }
+            catch
+            {
+                // Skip snapshots with invalid JSON
+            }
+        }
+
+        var numericPoints = dataPoints.Where(p => p.NumericValue.HasValue).ToList();
+        var result = new FieldHistoryDto
+        {
+            ObjectIdentity = decodedIdentity,
+            FieldName = fieldName,
+            FieldType = field.Type.ToString(),
+            CurrencyCode = field.CurrencyCode,
+            Unit = field.Unit,
+            DataPoints = dataPoints
+        };
+
+        if (numericPoints.Count > 0)
+        {
+            result.MinValue = numericPoints.Min(p => p.NumericValue!.Value);
+            result.MaxValue = numericPoints.Max(p => p.NumericValue!.Value);
+            result.AverageValue = numericPoints.Average(p => p.NumericValue!.Value);
+
+            if (numericPoints.Count >= 2)
+            {
+                var first = numericPoints.First().NumericValue!.Value;
+                var last = numericPoints.Last().NumericValue!.Value;
+                result.Trend = last > first ? "up" : last < first ? "down" : "stable";
+            }
+        }
+
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> MarkAsViewed(
@@ -159,5 +275,180 @@ public static class ChangeEndpoints
     {
         var count = await eventRepo.CountAsync(e => !e.IsViewed, ct);
         return Results.Ok(count);
+    }
+
+    // ========== Mapping Helpers ==========
+
+    private static ExtractionSchemaDto MapToSchemaDto(ExtractionSchema schema)
+    {
+        return new ExtractionSchemaDto
+        {
+            ItemSelector = schema.ItemSelector,
+            Fields = schema.Fields.Select(f => new SchemaFieldDto
+            {
+                Name = f.Name,
+                Type = f.Type.ToString(),
+                Selector = f.Selector,
+                IsRequired = f.IsRequired,
+                IsIdentityField = f.IsIdentityField,
+                SampleValue = f.SampleValue,
+                Confidence = f.Confidence,
+                CurrencyCode = f.CurrencyCode,
+                DecimalPlaces = f.DecimalPlaces,
+                FormatString = f.FormatString,
+                TrackHistory = f.TrackHistory,
+                Unit = f.Unit,
+                AllowedValues = f.AllowedValues
+            }).ToList(),
+            IdentityFieldNames = schema.IdentityFieldNames,
+            Version = schema.Version,
+            DiffSettings = new ObjectDiffSettingsDto
+            {
+                Granularity = schema.DiffSettings.Granularity.ToString(),
+                EnableImportanceScoring = schema.DiffSettings.EnableImportanceScoring,
+                DefaultImportance = schema.DiffSettings.DefaultImportance.ToString()
+            }
+        };
+    }
+
+    private static ObjectDiffDetailDto MapToObjectDiffDto(ObjectDiffResult diff, ExtractionSchema schema)
+    {
+        var fieldLookup = schema.Fields.ToDictionary(f => f.Name);
+
+        return new ObjectDiffDetailDto
+        {
+            AddedObjects = diff.AddedItems.Select(o => MapToExtractedObjectDto(o, schema)).ToList(),
+            RemovedObjects = diff.RemovedItems.Select(o => MapToExtractedObjectDto(o, schema)).ToList(),
+            ModifiedObjects = diff.ModifiedItems.Select(m => MapToModificationDto(m, fieldLookup)).ToList(),
+            HasAmbiguousIdentities = diff.HasAmbiguousIdentities,
+            AmbiguityDetails = diff.AmbiguityDetails,
+            TotalCurrentObjects = diff.AddedItems.Count + diff.ModifiedItems.Count,
+            TotalPreviousObjects = diff.RemovedItems.Count + diff.ModifiedItems.Count
+        };
+    }
+
+    private static ExtractedObjectDetailDto MapToExtractedObjectDto(ExtractedObject obj, ExtractionSchema schema)
+    {
+        var fieldLookup = schema.Fields.ToDictionary(f => f.Name);
+        var identityParts = schema.IdentityFieldNames
+            .Select(name => obj.Fields.GetValueOrDefault(name))
+            .Where(v => v != null);
+
+        return new ExtractedObjectDetailDto
+        {
+            IdentityKey = obj.IdentityKey,
+            DisplayLabel = string.Join(" - ", identityParts),
+            Index = obj.Index,
+            Fields = obj.Fields.Select(kvp =>
+            {
+                var field = fieldLookup.GetValueOrDefault(kvp.Key);
+                return new FieldValueDto
+                {
+                    Name = kvp.Key,
+                    Value = kvp.Value,
+                    Type = field?.Type.ToString() ?? "String",
+                    FormattedValue = field != null ? FormatFieldValue(kvp.Value, field) : kvp.Value,
+                    NumericValue = field != null ? ParseNumericValue(kvp.Value, field.Type) : null
+                };
+            }).ToList()
+        };
+    }
+
+    private static ObjectModificationDto MapToModificationDto(
+        ObjectModification mod,
+        Dictionary<string, SchemaField> fieldLookup)
+    {
+        return new ObjectModificationDto
+        {
+            IdentityKey = mod.IdentityKey,
+            DisplayLabel = mod.IdentityKey,
+            FieldChanges = mod.FieldChanges.Select(fc =>
+            {
+                var field = fieldLookup.GetValueOrDefault(fc.FieldName);
+                var fieldType = field?.Type ?? FieldType.String;
+
+                var oldNumeric = ParseNumericValue(fc.OldValue, fieldType);
+                var newNumeric = ParseNumericValue(fc.NewValue, fieldType);
+
+                double? numericChange = null;
+                double? percentageChange = null;
+                bool? isIncrease = null;
+
+                if (oldNumeric.HasValue && newNumeric.HasValue)
+                {
+                    numericChange = newNumeric.Value - oldNumeric.Value;
+                    isIncrease = numericChange > 0;
+
+                    if (oldNumeric.Value != 0)
+                    {
+                        percentageChange = (numericChange.Value / oldNumeric.Value) * 100;
+                    }
+                }
+
+                return new FieldChangeDetailDto
+                {
+                    FieldName = fc.FieldName,
+                    FieldType = fieldType.ToString(),
+                    OldValue = fc.OldValue,
+                    NewValue = fc.NewValue,
+                    OldFormattedValue = field != null ? FormatFieldValue(fc.OldValue, field) : fc.OldValue,
+                    NewFormattedValue = field != null ? FormatFieldValue(fc.NewValue, field) : fc.NewValue,
+                    OldNumericValue = oldNumeric,
+                    NewNumericValue = newNumeric,
+                    NumericChange = numericChange,
+                    PercentageChange = percentageChange,
+                    IsIncrease = isIncrease,
+                    CurrencyCode = field?.CurrencyCode,
+                    Unit = field?.Unit,
+                    Importance = fc.LlmImportance?.ToString(),
+                    ImportanceReason = fc.ImportanceReason
+                };
+            }).ToList(),
+            Importance = mod.FieldChanges.FirstOrDefault()?.LlmImportance?.ToString()
+        };
+    }
+
+    private static double? ParseNumericValue(string? value, FieldType fieldType)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        // Handle currency/percentage types by stripping symbols
+        var cleanValue = fieldType switch
+        {
+            FieldType.Currency => StripCurrencySymbols(value),
+            FieldType.Percentage => value.TrimEnd('%', ' '),
+            _ => value
+        };
+
+        if (double.TryParse(cleanValue, out var result))
+            return result;
+
+        return null;
+    }
+
+    private static string StripCurrencySymbols(string value)
+    {
+        // Remove common currency symbols and formatting
+        return Regex.Replace(value, @"[\$\€\£\¥\₹\,\s]", "").Trim();
+    }
+
+    private static string FormatFieldValue(string? value, SchemaField field)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value ?? "";
+
+        var numericValue = ParseNumericValue(value, field.Type);
+
+        return field.Type switch
+        {
+            FieldType.Currency when numericValue.HasValue =>
+                $"{field.CurrencyCode ?? "$"}{numericValue.Value:N2}",
+            FieldType.Percentage when numericValue.HasValue =>
+                $"{numericValue.Value:N1}%",
+            FieldType.Number when numericValue.HasValue && !string.IsNullOrEmpty(field.Unit) =>
+                $"{numericValue.Value:N} {field.Unit}",
+            _ => value
+        };
     }
 }

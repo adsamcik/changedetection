@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.AspNetCore.OutputCaching;
 
 namespace ChangeDetection.Endpoints;
 
@@ -13,12 +14,14 @@ public static class CategoryEndpoints
     {
         group.MapGet("/", GetAllCategories)
             .WithName("GetAllCategories")
-            .Produces<List<CategoryDto>>();
+            .Produces<List<CategoryDto>>()
+            .CacheOutput(policy => policy.Expire(TimeSpan.FromSeconds(30)).Tag("categories").SetVaryByHeader("Remote-User"));
         
         group.MapGet("/{id}", GetCategoryById)
             .WithName("GetCategoryById")
             .Produces<CategoryDto>()
-            .Produces(404);
+            .Produces(404)
+            .CacheOutput(policy => policy.Expire(TimeSpan.FromSeconds(30)).Tag("categories").SetVaryByRouteValue("id").SetVaryByHeader("Remote-User"));
         
         group.MapPost("/", CreateCategory)
             .WithName("CreateCategory")
