@@ -92,6 +92,10 @@ Desktop.ini
 # LiteDB
 *.db
 
+# Test output files (used by Copilot for debugging)
+test-output.log
+test-output-*.log
+
 # User-specific files
 *.env
 *.env.local
@@ -110,3 +114,4 @@ publish/
 
 # JetBrains Rider
 *.sln.iml
+/.dotnet

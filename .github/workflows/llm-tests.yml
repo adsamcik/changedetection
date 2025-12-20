@@ -1,0 +1,147 @@
+name: Nightly LLM Tests
+
+on:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual trigger
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  llm-tests:
+    name: Run LLM Integration Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
+        options: >-
+          --health-cmd "curl -f http://localhost:11434/api/version || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install Playwright dependencies
+        run: |
+          dotnet tool install --global Microsoft.Playwright.CLI
+          pwsh -Command "playwright install chromium --with-deps"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Wait for Ollama to be ready
+        run: |
+          echo "Waiting for Ollama service..."
+          for i in {1..30}; do
+            if curl -s http://localhost:11434/api/version > /dev/null; then
+              echo "Ollama is ready!"
+              break
+            fi
+            echo "Attempt $i: Ollama not ready yet..."
+            sleep 2
+          done
+
+      - name: Pull LLM model for testing
+        run: |
+          echo "Pulling qwen3:0.6b model for testing..."
+          curl -X POST http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}'
+          echo "Model pull initiated, waiting for completion..."
+          # Wait for model to be available
+          for i in {1..60}; do
+            if curl -s http://localhost:11434/api/tags | grep -q "qwen3:0.6b"; then
+              echo "Model is ready!"
+              break
+            fi
+            echo "Attempt $i: Model not ready yet..."
+            sleep 5
+          done
+
+      - name: Run LLM integration tests
+        run: |
+          dotnet test tests/ChangeDetection.Tests/ChangeDetection.Tests.csproj \
+            --no-build \
+            --configuration Release \
+            --filter "Category=RequiresOllama" \
+            --logger "trx;LogFileName=llm-test-results.trx" \
+            --results-directory ./TestResults
+        env:
+          OLLAMA_HOST: http://localhost:11434
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: llm-test-results
+          path: ./TestResults/*.trx
+          retention-days: 30
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: LLM Tests Report
+          path: ./TestResults/*.trx
+          reporter: dotnet-trx
+          fail-on-error: true
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: llm-tests
+    if: failure()
+    
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Nightly LLM Tests Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            The nightly LLM integration tests have failed.
+            
+            **Workflow Run:** [View Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            
+            Please investigate the test failures and fix any issues.
+            
+            Common issues:
+            - LLM model not responding correctly
+            - Price extraction schema changes
+            - Stock status classification issues
+            `;
+            
+            // Check if an issue already exists for today
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'nightly-tests-failed',
+              state: 'open'
+            });
+            
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['nightly-tests-failed', 'automated']
+              });
+            }

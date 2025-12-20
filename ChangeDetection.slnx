@@ -8,6 +8,7 @@
     <Project Path="src/ChangeDetection/ChangeDetection/ChangeDetection.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ChangeDetection.Core.Tests/ChangeDetection.Core.Tests.csproj" />
     <Project Path="tests/ChangeDetection.Tests/ChangeDetection.Tests.csproj" />
   </Folder>
 </Solution>
