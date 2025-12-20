@@ -41,20 +41,52 @@ public class MyServiceTests : TestBase
 
 ## Running Tests
 
-```powershell
-# All tests with output capture
-dotnet test --logger "trx;LogFileName=results.trx" --logger "console;verbosity=detailed" --results-directory ./TestResults 2>&1 | Tee-Object -FilePath test-output.log
+> **⚠️ MANDATORY: Always use `./test.ps1` - NEVER call `dotnet test` directly!**
+>
+> The `test.ps1` script ensures all test output is captured to `test-output.log`.
+> This is critical for debugging failed tests and reviewing test behavior.
 
-# Specific test
-dotnet test --filter "FullyQualifiedName~TestClassName" --logger "console;verbosity=detailed" 2>&1 | Tee-Object -FilePath test-output.log
+```powershell
+# All tests
+./test.ps1
+
+# Specific test by name
+./test.ps1 -Filter "FullyQualifiedName~TestClassName"
 
 # By category
-dotnet test --filter "Category=EndToEnd" --logger "trx;LogFileName=results.trx" --results-directory ./TestResults
+./test.ps1 -Filter "Category=EndToEnd"
+
+# Skip build (after recent build)
+./test.ps1 -Filter "FullyQualifiedName~MyTest" -NoBuild
+
+# Show more/less console output (default: 50 lines)
+./test.ps1 -TailLines 100
+./test.ps1 -TailLines 0  # Show all
 ```
+
+### Script Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `-Filter` | xUnit filter expression | (all tests) |
+| `-NoBuild` | Skip building before tests | `$false` |
+| `-Project` | Test project path | `tests/ChangeDetection.Tests` |
+| `-TailLines` | Lines to show in console | `50` |
 
 ## Test Output Files
 
 | File | Content |
 |------|---------|
-| `test-output.log` | Full console output with stack traces |
+| `test-output.log` | Full console output with stack traces (ALWAYS generated) |
 | `TestResults/results.trx` | Structured XML results |
+
+## ❌ Forbidden Patterns
+
+**NEVER** run tests like this - logs will be lost:
+```powershell
+# ❌ WRONG - No logging!
+dotnet test --filter "..."
+
+# ❌ WRONG - Partial output only!  
+dotnet test ... | Select-Object -Last 20
+```

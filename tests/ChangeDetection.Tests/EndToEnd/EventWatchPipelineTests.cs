@@ -629,39 +629,6 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         return await response.Content.ReadAsStringAsync();
     }
 
-    private static string CssToXPath(string cssSelector)
-    {
-        // Simple CSS to XPath conversion for common patterns
-        if (cssSelector.StartsWith("//") || cssSelector.StartsWith("("))
-            return cssSelector; // Already XPath
-
-        var xpath = cssSelector;
-
-        // Handle class selectors: .classname -> [contains(@class,'classname')]
-        xpath = System.Text.RegularExpressions.Regex.Replace(
-            xpath, 
-            @"\.([a-zA-Z0-9_-]+)", 
-            "[contains(@class,'$1')]");
-
-        // Handle ID selectors: #id -> [@id='id']
-        xpath = System.Text.RegularExpressions.Regex.Replace(
-            xpath, 
-            @"#([a-zA-Z0-9_-]+)", 
-            "[@id='$1']");
-
-        // Handle child combinator: >
-        xpath = xpath.Replace(" > ", "/");
-        
-        // Handle descendant combinator (space)
-        xpath = xpath.Replace(" ", "//");
-
-        // Ensure it starts with //
-        if (!xpath.StartsWith("/"))
-            xpath = "//" + xpath;
-
-        return xpath;
-    }
-
     private static string CleanText(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;

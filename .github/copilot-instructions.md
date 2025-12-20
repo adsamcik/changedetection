@@ -33,12 +33,14 @@ tests/
 # Build
 dotnet build
 
-# Run tests (capture output for analysis)
-dotnet test --logger "console;verbosity=detailed" 2>&1 | Tee-Object -FilePath test-output.log
-
-# Run specific tests
-dotnet test --filter "FullyQualifiedName~TestName"
+# ⚠️ MANDATORY: Run tests via test.ps1 script - NEVER use dotnet test directly!
+./test.ps1                                           # All tests
+./test.ps1 -Filter "FullyQualifiedName~TestName"     # Specific test
+./test.ps1 -Filter "Category=Unit" -NoBuild          # By category, skip build
 ```
+
+> **Why test.ps1?** It ensures all output is logged to `test-output.log` for debugging.
+> Direct `dotnet test` calls lose important diagnostic information.
 
 ## Key Interfaces
 
