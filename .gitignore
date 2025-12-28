@@ -3,6 +3,9 @@
 [Rr]elease/
 x64/
 x86/
+
+# Auto-generated Blazor scoped CSS bundles
+**/wwwroot/*.styles.css
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
@@ -91,6 +94,8 @@ Desktop.ini
 
 # LiteDB
 *.db
+# Exception: LLM response cache for deterministic testing
+!tests/ChangeDetection.Tests/Llm/Cache/llm-responses.db
 
 # Test output files (used by Copilot for debugging)
 test-output.log
