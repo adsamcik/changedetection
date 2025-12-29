@@ -96,10 +96,17 @@ Desktop.ini
 *.db
 # Exception: LLM response cache for deterministic testing
 !tests/ChangeDetection.Tests/Llm/Cache/llm-responses.db
+# Exception: Content cache for deterministic testing  
+!tests/ChangeDetection.Tests/Scraping/Cache/content-cache.db
+
+# SQLite WAL files (transient, not committed)
+*.db-shm
+*.db-wal
 
 # Test output files (used by Copilot for debugging)
 test-output.log
 test-output-*.log
+*.log
 
 # User-specific files
 *.env
@@ -120,3 +127,6 @@ publish/
 # JetBrains Rider
 *.sln.iml
 /.dotnet
+
+# .NET SDK artifacts
+.artifacts/
