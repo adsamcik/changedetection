@@ -42,6 +42,9 @@
         </div>
 
         <div class="cmd-actions">
+            <button class="btn-cmd @(isBulkMode ? "active" : "")" @onclick="ToggleBulkMode" title="@(isBulkMode ? "Exit bulk edit mode" : "Enter bulk edit mode")">
+                <span class="icon">☑️</span> @(isBulkMode ? "Done" : "Select")
+            </button>
             <button class="btn-cmd" @onclick="RunAllChecks" disabled="@isCheckingAll">
                 <span class="icon">@(isCheckingAll ? "⏳" : "▶")</span> Run All
             </button>
@@ -50,6 +53,44 @@
             </button>
         </div>
     </header>
+
+    <!-- Bulk Actions Bar (shown when in bulk mode with selections) -->
+    @if (isBulkMode)
+    {
+        <div class="bulk-actions-bar">
+            <div class="bulk-selection-info">
+                <input type="checkbox" 
+                       checked="@IsAllSelected" 
+                       @onchange="ToggleSelectAll" 
+                       title="Select all" />
+                <span>@selectedWatchIds.Count selected</span>
+            </div>
+            <div class="bulk-actions">
+                <button class="btn-bulk" @onclick="BulkEnable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Enable selected watches">
+                    <span class="icon">✓</span> Enable
+                </button>
+                <button class="btn-bulk" @onclick="BulkDisable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Disable selected watches">
+                    <span class="icon">⏸</span> Disable
+                </button>
+                <button class="btn-bulk" @onclick="BulkCheck" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Check selected watches now">
+                    <span class="icon">▶</span> Check Now
+                </button>
+                <button class="btn-bulk btn-bulk-edit" @onclick="OpenBulkEditDialog" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Edit selected watches">
+                    <span class="icon">✎</span> Edit
+                </button>
+                <button class="btn-bulk btn-bulk-danger" @onclick="BulkDelete" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Delete selected watches">
+                    <span class="icon">🗑</span> Delete
+                </button>
+            </div>
+            @if (bulkOperationMessage is not null)
+            {
+                <div class="bulk-message @(bulkOperationIsError ? "error" : "success")">
+                    @bulkOperationMessage
+                    <button class="dismiss-btn" @onclick="ClearBulkMessage">✕</button>
+                </div>
+            }
+        </div>
+    }
 
     <!-- Main Content Area -->
     <div class="cmd-main">
@@ -95,6 +136,15 @@
                     <table class="data-grid">
                         <thead>
                             <tr>
+                                @if (isBulkMode)
+                                {
+                                    <th width="40" class="checkbox-cell">
+                                        <input type="checkbox" 
+                                               checked="@IsAllSelected" 
+                                               @onchange="ToggleSelectAll" 
+                                               title="Select all" />
+                                    </th>
+                                }
                                 <th width="40">St</th>
                                 <th>Name / URL</th>
                                 <th width="120">Last Check</th>
@@ -107,28 +157,26 @@
                             @* Pending setup sessions appear first *@
                             @foreach (var setup in pendingSetups)
                             {
-                                <tr class="grid-row pending-setup-row @(setup.IsBackgrounded ? "background-session-row" : "")" @onclick="() => ResumeSetup(setup.SessionId)">
+                                <tr class="grid-row pending-setup-row" @onclick="() => ResumeSetup(setup.SessionId)">
+                                    @if (isBulkMode)
+                                    {
+                                        <td class="checkbox-cell" @onclick:stopPropagation>
+                                            <!-- Pending setups are not selectable -->
+                                        </td>
+                                    }
                                     <td class="status-cell">
-                                        <div class="status-indicator @(setup.IsBackgrounded ? "background" : setup.IsProcessing ? "checking" : "pending")" title="@GetSetupStatusTitle(setup)">
-                                            @if (!setup.IsProcessing && !setup.IsBackgrounded && !string.IsNullOrEmpty(setup.CurrentPrompt))
+                                        <div class="status-indicator @(setup.IsProcessing ? "checking" : "pending")" title="@GetSetupStatusTitle(setup)">
+                                            @if (!setup.IsProcessing && !string.IsNullOrEmpty(setup.CurrentPrompt))
                                             {
                                                 <span class="needs-input-badge">!</span>
-                                            }
-                                            @if (setup.IsBackgrounded)
-                                            {
-                                                <span class="background-badge">↻</span>
                                             }
                                         </div>
                                     </td>
                                     <td class="name-cell">
                                         <div class="watch-title pending-title">
-                                            <span class="pending-icon">@(setup.IsBackgrounded ? "🔄" : setup.IsProcessing ? "⚙️" : "⏳")</span>
+                                            <span class="pending-icon">@(setup.IsProcessing ? "⚙️" : "⏳")</span>
                                             @(setup.DisplayName ?? "New Watch")
-                                            @if (setup.IsBackgrounded)
-                                            {
-                                                <span class="background-label">Running in background</span>
-                                            }
-                                            else if (!setup.IsProcessing && !string.IsNullOrEmpty(setup.CurrentPrompt))
+                                            @if (!setup.IsProcessing && !string.IsNullOrEmpty(setup.CurrentPrompt))
                                             {
                                                 <span class="needs-input-label">Needs input</span>
                                             }
@@ -149,7 +197,7 @@
                                         <span class="tag-badge @GetSetupTagClass(setup)">@GetSetupTagText(setup)</span>
                                     </td>
                                     <td class="actions-cell" @onclick:stopPropagation>
-                                        <button class="btn-icon btn-resume" title="@(setup.IsBackgrounded ? "View Progress" : setup.IsProcessing ? "View Progress" : "Resume Setup")" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
+                                        <button class="btn-icon btn-resume" title="@(setup.IsProcessing ? "View Progress" : "Resume Setup")" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
                                         <button class="btn-icon btn-cancel" title="Cancel Setup" @onclick="() => CancelSetup(setup.SessionId)">✕</button>
                                     </td>
                                 </tr>
@@ -157,7 +205,15 @@
                             @* Regular watches *@
                             @foreach (var watch in FilteredWatches)
                             {
-                                <tr class="grid-row @(watch.HasRecentChanges ? "highlight-change" : "")" @onclick="() => NavigateToWatch(watch.Id)">
+                                <tr class="grid-row @(watch.HasRecentChanges ? "highlight-change" : "") @(selectedWatchIds.Contains(watch.Id) ? "selected" : "")" @onclick="() => OnRowClick(watch.Id)">
+                                    @if (isBulkMode)
+                                    {
+                                        <td class="checkbox-cell" @onclick:stopPropagation>
+                                            <input type="checkbox" 
+                                                   checked="@selectedWatchIds.Contains(watch.Id)" 
+                                                   @onchange="() => ToggleWatchSelection(watch.Id)" />
+                                        </td>
+                                    }
                                     <td class="status-cell">
                                         <div class="status-indicator @watch.Status.ToLower()" title="@watch.Status"></div>
                                     </td>
@@ -257,6 +313,96 @@
 
 </div>
 
+@* Bulk Edit Dialog *@
+@if (showBulkEditDialog)
+{
+    <div class="modal-overlay" @onclick="CloseBulkEditDialog">
+        <div class="bulk-edit-dialog" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h2>Edit @selectedWatchIds.Count Watches</h2>
+                <button class="dialog-close" @onclick="CloseBulkEditDialog">✕</button>
+            </div>
+            <div class="dialog-content">
+                <div class="form-group">
+                    <label>Add Tags</label>
+                    <input type="text" 
+                           class="form-control" 
+                           placeholder="tag1, tag2, tag3" 
+                           @bind="bulkEditModel.AddTags" />
+                    <small class="form-hint">Comma-separated tags to add to all selected watches</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Remove Tags</label>
+                    <input type="text" 
+                           class="form-control" 
+                           placeholder="tag1, tag2" 
+                           @bind="bulkEditModel.RemoveTags" />
+                    <small class="form-hint">Comma-separated tags to remove from all selected watches</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="bulkEditModel.ChangeCheckInterval" />
+                        <span>Change check interval</span>
+                    </label>
+                    @if (bulkEditModel.ChangeCheckInterval)
+                    {
+                        <div class="interval-input">
+                            <input type="number" 
+                                   class="form-control" 
+                                   min="1" 
+                                   @bind="checkIntervalMinutes" />
+                            <span>minutes</span>
+                        </div>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="bulkEditModel.ChangeUseJavaScript" />
+                        <span>Change JavaScript rendering</span>
+                    </label>
+                    @if (bulkEditModel.ChangeUseJavaScript)
+                    {
+                        <label class="checkbox-label sub-option">
+                            <input type="checkbox" @bind="bulkEditModel.UseJavaScript" />
+                            <span>Enable JavaScript rendering</span>
+                        </label>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="bulkEditModel.ChangeNotifications" />
+                        <span>Change notifications</span>
+                    </label>
+                    @if (bulkEditModel.ChangeNotifications)
+                    {
+                        <label class="checkbox-label sub-option">
+                            <input type="checkbox" @bind="bulkEditModel.NotificationsEnabled" />
+                            <span>Enable notifications</span>
+                        </label>
+                    }
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-secondary" @onclick="CloseBulkEditDialog">Cancel</button>
+                <button class="btn-primary" @onclick="ApplyBulkEdit" disabled="@isBulkOperating">
+                    @if (isBulkOperating)
+                    {
+                        <span>Applying...</span>
+                    }
+                    else
+                    {
+                        <span>Apply Changes</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter]
     public string? ViewId { get; set; }
@@ -269,6 +415,26 @@
     private string? error;
     private string? creationMessage;
     private bool creationIsError;
+
+    // Bulk editing state
+    private bool isBulkMode;
+    private HashSet<string> selectedWatchIds = [];
+    private bool isBulkOperating;
+    private string? bulkOperationMessage;
+    private bool bulkOperationIsError;
+    private bool showBulkEditDialog;
+    
+    // Bulk edit form model
+    private BulkEditModel bulkEditModel = new();
+
+    private bool IsAllSelected => FilteredWatches.Any() && FilteredWatches.All(w => selectedWatchIds.Contains(w.Id));
+
+    // Helper property for check interval input
+    private int checkIntervalMinutes
+    {
+        get => (int)(bulkEditModel.CheckInterval?.TotalMinutes ?? 60);
+        set => bulkEditModel.CheckInterval = TimeSpan.FromMinutes(value);
+    }
 
     /// <summary>
     /// Represents a watch currently being checked.
@@ -438,8 +604,6 @@
                     currentPrompt = promptProp.GetString();
                 }
                 
-                // Read new background-related fields
-                var isBackgrounded = data.TryGetProperty("isBackgrounded", out var bgProp) && bgProp.GetBoolean();
                 string? currentStage = null;
                 if (data.TryGetProperty("currentStage", out var stageProp) && stageProp.ValueKind != System.Text.Json.JsonValueKind.Null)
                 {
@@ -452,7 +616,6 @@
                     existing.DisplayName = displayName;
                     existing.IsProcessing = isProcessing;
                     existing.CurrentPrompt = currentPrompt;
-                    existing.IsBackgrounded = isBackgrounded;
                     existing.CurrentStage = currentStage;
                     existing.LastActivityAt = DateTimeOffset.UtcNow;
                 }
@@ -464,7 +627,6 @@
                         DisplayName = displayName,
                         IsProcessing = isProcessing,
                         CurrentPrompt = currentPrompt,
-                        IsBackgrounded = isBackgrounded,
                         CurrentStage = currentStage,
                         CreatedAt = DateTimeOffset.UtcNow,
                         LastActivityAt = DateTimeOffset.UtcNow
@@ -579,15 +741,12 @@
 
     private static string GetSetupStatusTitle(PendingSetupDto setup)
     {
-        if (setup.IsBackgrounded) return $"Running in background: {setup.CurrentStage ?? "Processing"}";
         if (setup.IsProcessing) return "Processing";
         return "Awaiting input";
     }
 
     private static string GetSetupStatusText(PendingSetupDto setup)
     {
-        if (setup.IsBackgrounded && !string.IsNullOrEmpty(setup.CurrentStage))
-            return setup.CurrentStage;
         if (!string.IsNullOrEmpty(setup.CurrentPrompt))
             return setup.CurrentPrompt;
         if (setup.IsProcessing)
@@ -597,14 +756,12 @@
 
     private static string GetSetupTagClass(PendingSetupDto setup)
     {
-        if (setup.IsBackgrounded) return "background-tag";
         if (setup.IsProcessing) return "processing-tag";
         return "pending-tag";
     }
 
     private static string GetSetupTagText(PendingSetupDto setup)
     {
-        if (setup.IsBackgrounded) return "Background";
         if (setup.IsProcessing) return "Processing";
         return "Setting up";
     }
@@ -694,6 +851,315 @@
     {
         if (url.Length <= 50) return url;
         return url[..47] + "...";
+    }
+
+    // ============================================================================
+    // Bulk Operations
+    // ============================================================================
+
+    private void ToggleBulkMode()
+    {
+        isBulkMode = !isBulkMode;
+        if (!isBulkMode)
+        {
+            selectedWatchIds.Clear();
+            ClearBulkMessage();
+        }
+    }
+
+    private void OnRowClick(string watchId)
+    {
+        if (isBulkMode)
+        {
+            ToggleWatchSelection(watchId);
+        }
+        else
+        {
+            NavigateToWatch(watchId);
+        }
+    }
+
+    private void ToggleWatchSelection(string watchId)
+    {
+        if (!selectedWatchIds.Add(watchId))
+        {
+            selectedWatchIds.Remove(watchId);
+        }
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (IsAllSelected)
+        {
+            selectedWatchIds.Clear();
+        }
+        else
+        {
+            foreach (var watch in FilteredWatches)
+            {
+                selectedWatchIds.Add(watch.Id);
+            }
+        }
+    }
+
+    private void ClearBulkMessage()
+    {
+        bulkOperationMessage = null;
+        bulkOperationIsError = false;
+    }
+
+    private async Task BulkEnable()
+    {
+        if (selectedWatchIds.Count == 0) return;
+
+        isBulkOperating = true;
+        ClearBulkMessage();
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/watches/bulk/enable", new BulkWatchOperationDto
+            {
+                WatchIds = selectedWatchIds.ToList()
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
+                bulkOperationMessage = $"Enabled {result?.SuccessCount ?? 0} watches";
+                if (result?.FailureCount > 0)
+                {
+                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                }
+                await LoadWatches();
+                selectedWatchIds.Clear();
+            }
+            else
+            {
+                bulkOperationMessage = "Failed to enable watches";
+                bulkOperationIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkOperationMessage = $"Error: {ex.Message}";
+            bulkOperationIsError = true;
+        }
+        finally
+        {
+            isBulkOperating = false;
+        }
+    }
+
+    private async Task BulkDisable()
+    {
+        if (selectedWatchIds.Count == 0) return;
+
+        isBulkOperating = true;
+        ClearBulkMessage();
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/watches/bulk/disable", new BulkWatchOperationDto
+            {
+                WatchIds = selectedWatchIds.ToList()
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
+                bulkOperationMessage = $"Disabled {result?.SuccessCount ?? 0} watches";
+                if (result?.FailureCount > 0)
+                {
+                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                }
+                await LoadWatches();
+                selectedWatchIds.Clear();
+            }
+            else
+            {
+                bulkOperationMessage = "Failed to disable watches";
+                bulkOperationIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkOperationMessage = $"Error: {ex.Message}";
+            bulkOperationIsError = true;
+        }
+        finally
+        {
+            isBulkOperating = false;
+        }
+    }
+
+    private async Task BulkCheck()
+    {
+        if (selectedWatchIds.Count == 0) return;
+
+        isBulkOperating = true;
+        ClearBulkMessage();
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/watches/bulk/check", new BulkWatchOperationDto
+            {
+                WatchIds = selectedWatchIds.ToList()
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
+                bulkOperationMessage = $"Triggered check for {result?.SuccessCount ?? 0} watches";
+                if (result?.FailureCount > 0)
+                {
+                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                }
+                selectedWatchIds.Clear();
+            }
+            else
+            {
+                bulkOperationMessage = "Failed to trigger checks";
+                bulkOperationIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkOperationMessage = $"Error: {ex.Message}";
+            bulkOperationIsError = true;
+        }
+        finally
+        {
+            isBulkOperating = false;
+        }
+    }
+
+    private async Task BulkDelete()
+    {
+        if (selectedWatchIds.Count == 0) return;
+
+        // Simple confirmation - in a real app, use a modal dialog
+        isBulkOperating = true;
+        ClearBulkMessage();
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/watches/bulk/delete", new BulkWatchOperationDto
+            {
+                WatchIds = selectedWatchIds.ToList()
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
+                bulkOperationMessage = $"Deleted {result?.SuccessCount ?? 0} watches";
+                if (result?.FailureCount > 0)
+                {
+                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                }
+                await LoadWatches();
+                selectedWatchIds.Clear();
+            }
+            else
+            {
+                bulkOperationMessage = "Failed to delete watches";
+                bulkOperationIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkOperationMessage = $"Error: {ex.Message}";
+            bulkOperationIsError = true;
+        }
+        finally
+        {
+            isBulkOperating = false;
+        }
+    }
+
+    private void OpenBulkEditDialog()
+    {
+        bulkEditModel = new BulkEditModel();
+        showBulkEditDialog = true;
+    }
+
+    private void CloseBulkEditDialog()
+    {
+        showBulkEditDialog = false;
+    }
+
+    private async Task ApplyBulkEdit()
+    {
+        if (selectedWatchIds.Count == 0) return;
+
+        isBulkOperating = true;
+        ClearBulkMessage();
+        StateHasChanged();
+
+        try
+        {
+            var dto = new BulkWatchEditDto
+            {
+                WatchIds = selectedWatchIds.ToList(),
+                AddTags = string.IsNullOrWhiteSpace(bulkEditModel.AddTags) 
+                    ? null 
+                    : bulkEditModel.AddTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+                RemoveTags = string.IsNullOrWhiteSpace(bulkEditModel.RemoveTags) 
+                    ? null 
+                    : bulkEditModel.RemoveTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+                ChangeCategoryId = bulkEditModel.ChangeCategoryId,
+                CategoryId = bulkEditModel.ChangeCategoryId ? bulkEditModel.CategoryId : null,
+                CheckInterval = bulkEditModel.ChangeCheckInterval ? bulkEditModel.CheckInterval : null,
+                UseJavaScript = bulkEditModel.ChangeUseJavaScript ? bulkEditModel.UseJavaScript : null,
+                NotificationsEnabled = bulkEditModel.ChangeNotifications ? bulkEditModel.NotificationsEnabled : null
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/watches/bulk/edit", dto);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
+                bulkOperationMessage = $"Updated {result?.SuccessCount ?? 0} watches";
+                if (result?.FailureCount > 0)
+                {
+                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                }
+                await LoadWatches();
+                selectedWatchIds.Clear();
+                showBulkEditDialog = false;
+            }
+            else
+            {
+                bulkOperationMessage = "Failed to update watches";
+                bulkOperationIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkOperationMessage = $"Error: {ex.Message}";
+            bulkOperationIsError = true;
+        }
+        finally
+        {
+            isBulkOperating = false;
+        }
+    }
+
+    private class BulkEditModel
+    {
+        public string? AddTags { get; set; }
+        public string? RemoveTags { get; set; }
+        public bool ChangeCategoryId { get; set; }
+        public string? CategoryId { get; set; }
+        public bool ChangeCheckInterval { get; set; }
+        public TimeSpan? CheckInterval { get; set; }
+        public bool ChangeUseJavaScript { get; set; }
+        public bool? UseJavaScript { get; set; }
+        public bool ChangeNotifications { get; set; }
+        public bool? NotificationsEnabled { get; set; }
     }
 
     public async ValueTask DisposeAsync()

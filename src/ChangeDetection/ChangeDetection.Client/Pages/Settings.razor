@@ -555,6 +555,13 @@
     private string smtpUsername = "";
     private string smtpPassword = "";
     private string fromEmail = "";
+    private string fromName = "";
+    private bool isLoadingNotifications = false;
+    private bool isSavingNotifications = false;
+    private string? notificationMessage;
+    private bool notificationSuccess = false;
+    private List<PlaceholderInfoDto> placeholders = new();
+    private string notificationSubTab = "smtp";
 
     // General settings
     private int defaultCheckInterval = 60;
@@ -572,6 +579,15 @@
     private bool isSavingGeneralSettings = false;
     private string? generalSettingsMessage;
     private bool generalSettingsSuccess = false;
+
+    // Notification templates
+    private List<NotificationTemplateDto> templates = new();
+    private bool isLoadingTemplates = false;
+    private bool showTemplateModal = false;
+    private NotificationTemplateDto? editingTemplate;
+    private NotificationTemplateCreateDto templateForm = new() { Name = "", Type = "ContentChange" };
+    private string? templateModalError;
+    private bool isSavingTemplate = false;
 
     // LLM Logs
     private List<LlmLogEntryDto> llmLogs = new();
@@ -744,7 +760,6 @@
         activeTab = "logs";
         _ = LoadLogs();
     }
-    private void SetNotificationsTab() => activeTab = "notifications";
     private void SetGeneralTab()
     {
         activeTab = "general";
@@ -795,9 +810,294 @@
 
     private async Task SaveNotificationSettings()
     {
-        // TODO: Implement saving notification settings
-        await Task.CompletedTask;
+        // Legacy method - now uses SaveSmtpSettings
+        await SaveSmtpSettings();
     }
+
+    // ========== Notification Methods ==========
+
+    private void SetNotificationsTab()
+    {
+        activeTab = "notifications";
+        _ = LoadSmtpSettings();
+    }
+
+    private void SetTemplatesTab()
+    {
+        notificationSubTab = "templates";
+        _ = LoadTemplates();
+        _ = LoadPlaceholders();
+    }
+
+    private async Task LoadSmtpSettings()
+    {
+        isLoadingNotifications = true;
+        notificationMessage = null;
+        StateHasChanged();
+        
+        try
+        {
+            var response = await Http.GetAsync("/api/notifications/smtp");
+            if (response.IsSuccessStatusCode)
+            {
+                var settings = await response.Content.ReadFromJsonAsync<SmtpSettingsDto>();
+                if (settings != null)
+                {
+                    smtpHost = settings.Host;
+                    smtpPort = settings.Port;
+                    smtpUseSsl = settings.UseSsl;
+                    smtpUsername = settings.Username ?? "";
+                    fromEmail = settings.FromEmail ?? "";
+                    fromName = settings.FromName ?? "Change Detection";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Failed to load SMTP settings: {ex.Message}";
+            notificationSuccess = false;
+        }
+        finally
+        {
+            isLoadingNotifications = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveSmtpSettings()
+    {
+        isSavingNotifications = true;
+        notificationMessage = null;
+        StateHasChanged();
+        
+        try
+        {
+            var update = new SmtpSettingsUpdateDto
+            {
+                Host = smtpHost,
+                Port = smtpPort,
+                UseSsl = smtpUseSsl,
+                Username = smtpUsername,
+                Password = string.IsNullOrWhiteSpace(smtpPassword) ? null : smtpPassword,
+                FromEmail = fromEmail,
+                FromName = fromName
+            };
+            
+            var response = await Http.PutAsJsonAsync("/api/notifications/smtp", update);
+            if (response.IsSuccessStatusCode)
+            {
+                notificationMessage = "SMTP settings saved successfully!";
+                notificationSuccess = true;
+                smtpPassword = ""; // Clear password field after save
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                notificationMessage = $"Failed to save SMTP settings: {error}";
+                notificationSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Failed to save SMTP settings: {ex.Message}";
+            notificationSuccess = false;
+        }
+        finally
+        {
+            isSavingNotifications = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestEmailNotification()
+    {
+        if (string.IsNullOrWhiteSpace(fromEmail))
+        {
+            notificationMessage = "Please enter a 'From Email Address' to send a test email.";
+            notificationSuccess = false;
+            return;
+        }
+
+        isSavingNotifications = true;
+        notificationMessage = null;
+        StateHasChanged();
+        
+        try
+        {
+            var testDto = new TestNotificationDto
+            {
+                ChannelType = "Email",
+                Target = fromEmail
+            };
+            
+            var response = await Http.PostAsJsonAsync("/api/notifications/test", testDto);
+            var result = await response.Content.ReadFromJsonAsync<TestNotificationResultDto>();
+            
+            if (result?.Success == true)
+            {
+                notificationMessage = result.Details ?? "Test notification validated successfully!";
+                notificationSuccess = true;
+            }
+            else
+            {
+                notificationMessage = $"Test failed: {result?.ErrorMessage ?? "Unknown error"}";
+                notificationSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Test failed: {ex.Message}";
+            notificationSuccess = false;
+        }
+        finally
+        {
+            isSavingNotifications = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadTemplates()
+    {
+        isLoadingTemplates = true;
+        StateHasChanged();
+        
+        try
+        {
+            var response = await Http.GetAsync("/api/notifications/templates");
+            if (response.IsSuccessStatusCode)
+            {
+                templates = await response.Content.ReadFromJsonAsync<List<NotificationTemplateDto>>() ?? new();
+            }
+        }
+        catch { }
+        finally
+        {
+            isLoadingTemplates = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadPlaceholders()
+    {
+        try
+        {
+            var response = await Http.GetAsync("/api/notifications/placeholders");
+            if (response.IsSuccessStatusCode)
+            {
+                placeholders = await response.Content.ReadFromJsonAsync<List<PlaceholderInfoDto>>() ?? new();
+            }
+        }
+        catch { }
+    }
+
+    private void ShowAddTemplate()
+    {
+        editingTemplate = null;
+        templateForm = new NotificationTemplateCreateDto
+        {
+            Name = "My Custom Template",
+            Type = "ContentChange"
+        };
+        templateModalError = null;
+        showTemplateModal = true;
+    }
+
+    private void EditTemplate(NotificationTemplateDto template)
+    {
+        editingTemplate = template;
+        templateForm = new NotificationTemplateCreateDto
+        {
+            Name = template.IsBuiltIn ? $"{template.Name} (Custom)" : template.Name,
+            Type = template.Type,
+            GenerateLlmSummary = template.GenerateLlmSummary,
+            EmailSubjectTemplate = template.EmailSubjectTemplate,
+            EmailBodyHtmlTemplate = template.EmailBodyHtmlTemplate,
+            EmailBodyTextTemplate = template.EmailBodyTextTemplate,
+            DiscordTitleTemplate = template.DiscordTitleTemplate,
+            DiscordBodyTemplate = template.DiscordBodyTemplate,
+            WebhookPayloadTemplate = template.WebhookPayloadTemplate
+        };
+        templateModalError = null;
+        showTemplateModal = true;
+    }
+
+    private void CloseTemplateModal()
+    {
+        showTemplateModal = false;
+        editingTemplate = null;
+    }
+
+    private async Task SaveTemplate()
+    {
+        if (string.IsNullOrWhiteSpace(templateForm.Name))
+        {
+            templateModalError = "Template name is required.";
+            return;
+        }
+
+        isSavingTemplate = true;
+        templateModalError = null;
+        StateHasChanged();
+
+        try
+        {
+            HttpResponseMessage response;
+            if (editingTemplate != null && !editingTemplate.IsBuiltIn)
+            {
+                response = await Http.PutAsJsonAsync($"/api/notifications/templates/{editingTemplate.Id}", templateForm);
+            }
+            else
+            {
+                response = await Http.PostAsJsonAsync("/api/notifications/templates", templateForm);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                CloseTemplateModal();
+                await LoadTemplates();
+            }
+            else
+            {
+                templateModalError = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            templateModalError = ex.Message;
+        }
+        finally
+        {
+            isSavingTemplate = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteTemplate(NotificationTemplateDto template)
+    {
+        if (template.IsBuiltIn) return;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/notifications/templates/{template.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadTemplates();
+            }
+        }
+        catch { }
+    }
+
+    private static string FormatTemplateType(string type) => type switch
+    {
+        "ContentChange" => "📄 Content Change",
+        "PriceAlert" => "💰 Price Alert",
+        "StockAlert" => "📦 Stock Alert",
+        "ThresholdTriggered" => "⚠️ Threshold",
+        "ItemAdded" => "➕ Item Added",
+        "ItemRemoved" => "➖ Item Removed",
+        "SchemaDrift" => "⚙️ Schema Drift",
+        _ => type
+    };
 
     private async Task LoadGeneralSettings()
     {

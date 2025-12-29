@@ -4,9 +4,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    width: 100%;
     max-width: 600px;
     margin: 0 auto;
-    width: 100%;
     padding: 1rem 0;
 }
 
@@ -196,12 +196,6 @@
         opacity: 1;
         transform: translateY(0) scale(1.02);
     }
-}
-
-/* Smooth list reordering - entries move up as new ones appear */
-.state-timeline {
-    /* Use CSS containment for better animation performance */
-    contain: layout;
 }
 
 /* Thinking entries - collapsible AI reasoning */

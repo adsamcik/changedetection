@@ -123,6 +123,12 @@
 
     protected override void OnParametersSet()
     {
+        // Reset state when question changes to prevent stale values
+        _selectedOption = null;
+        _freetextValue = "";
+        _customValue = "";
+        _showCustomInput = false;
+        
         ParseInputType();
     }
 

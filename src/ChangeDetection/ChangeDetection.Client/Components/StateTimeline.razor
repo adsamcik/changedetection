@@ -1,10 +1,10 @@
 @using ChangeDetection.Shared.Dtos
 
-<div class="state-timeline">
+<div class="state-timeline" role="log" aria-live="polite" aria-label="Setup progress timeline">
     @if (Entries.Count == 0)
     {
-        <div class="timeline-empty">
-            <span class="empty-icon">🔄</span>
+        <div class="timeline-empty" aria-label="Waiting for setup to begin">
+            <span class="empty-icon" aria-hidden="true">🔄</span>
             <span>Waiting to start...</span>
         </div>
     }
@@ -16,16 +16,19 @@
         {
             @if (item.IsThinkingGroup)
             {
-                <div class="timeline-entry thinking @(item.IsExpanded ? "expanded" : "collapsed")">
-                    <span class="timeline-icon">💭</span>
+                <div class="timeline-entry thinking @(item.IsExpanded ? "expanded" : "collapsed")" role="group" aria-label="AI thinking step">
+                    <span class="timeline-icon" aria-hidden="true">💭</span>
                     <div class="timeline-content">
-                        <button class="thinking-toggle" @onclick="@(() => ToggleThinking(item.ThinkingKey ?? ""))">
-                            <span class="toggle-icon">@(item.IsExpanded ? "▼" : "▶")</span>
+                        <button class="thinking-toggle" 
+                                @onclick="@(() => ToggleThinking(item.ThinkingKey ?? ""))"
+                                aria-expanded="@(item.IsExpanded ? "true" : "false")"
+                                aria-controls="thinking-@item.ThinkingKey?.GetHashCode()">
+                            <span class="toggle-icon" aria-hidden="true">@(item.IsExpanded ? "▼" : "▶")</span>
                             <span class="thinking-label">AI Thinking (@item.ThinkingStep)...</span>
                         </button>
                         @if (item.IsExpanded)
                         {
-                            <div class="thinking-content">
+                            <div class="thinking-content" id="thinking-@item.ThinkingKey?.GetHashCode()">
                                 <span class="thinking-text">@item.ThinkingContent</span>
                             </div>
                         }
@@ -34,8 +37,10 @@
             }
             else
             {
-                <div class="timeline-entry @GetStatusClass(item.Entry!.Status) @(item.Entry.IsCurrentState ? "current" : "")">
-                    <span class="timeline-icon">@GetStatusIcon(item.Entry.Status)</span>
+                <div class="timeline-entry @GetStatusClass(item.Entry!.Status) @(item.Entry.IsCurrentState ? "current" : "")" 
+                     role="listitem"
+                     aria-current="@(item.Entry.IsCurrentState ? "step" : null)">
+                    <span class="timeline-icon" aria-hidden="true">@GetStatusIcon(item.Entry.Status)</span>
                     <div class="timeline-content">
                         <span class="timeline-summary">@item.Entry.Summary</span>
                         @if (!string.IsNullOrEmpty(item.Entry.Details) && item.Entry.Status is FlowStateStatus.Failed or FlowStateStatus.Recovery)

@@ -9,18 +9,12 @@
 <PageTitle>Setup Watch - Change Detection</PageTitle>
 
 <div class="flow-container">
-    @* Header with back button and background option *@
+    @* Header with back button *@
     <header class="flow-header">
-        <button class="back-button" @onclick="GoBack">
-            <span class="icon">←</span> Back to Dashboard
+        <button class="back-button" @onclick="GoBack" aria-label="Go back to dashboard">
+            <span class="icon" aria-hidden="true">←</span> Back to Dashboard
         </button>
         <h1>Setting up your watch</h1>
-        @if (_isProcessing && !_isComplete && !_hasError)
-        {
-            <button class="btn-background" @onclick="SendToBackground" title="Continue in background">
-                <span class="icon">📤</span> Send to Background
-            </button>
-        }
     </header>
 
     @* Timeline section - history scrolls up, current state centered *@
@@ -43,10 +37,11 @@
     @* Error state *@
     @if (_hasError)
     {
-        <div class="flow-error">
+        <div class="flow-error" role="alertdialog" aria-modal="true" aria-labelledby="error-title" aria-describedby="error-message">
             <div class="error-content">
-                <span class="error-icon">⚠️</span>
-                <p>@_errorMessage</p>
+                <span class="error-icon" aria-hidden="true">⚠️</span>
+                <p id="error-title" class="visually-hidden">Error occurred</p>
+                <p id="error-message" role="alert">@_errorMessage</p>
                 <div class="error-actions">
                     <button class="btn-retry" @onclick="RetrySetup">Try Again</button>
                     <button class="btn-back" @onclick="GoBack">Back to Dashboard</button>
@@ -58,11 +53,11 @@
     @* Success state *@
     @if (_isComplete)
     {
-        <div class="flow-success">
+        <div class="flow-success" role="dialog" aria-modal="true" aria-labelledby="success-title" aria-describedby="success-message">
             <div class="success-content">
-                <span class="success-icon">✅</span>
-                <h2>Watch Created Successfully!</h2>
-                <p>@_successMessage</p>
+                <span class="success-icon" aria-hidden="true">✅</span>
+                <h2 id="success-title">Watch Created Successfully!</h2>
+                <p id="success-message">@_successMessage</p>
                 <div class="success-actions">
                     <button class="btn-primary" @onclick="ViewWatch">View Watch</button>
                     <button class="btn-secondary" @onclick="CreateAnother">Create Another</button>
@@ -74,17 +69,26 @@
     @* Connection status - only show after first render (not during prerender) *@
     @if (_hasRendered && !_isConnected && !_hasError)
     {
-        <div class="flow-connecting">
-            <span class="spinner"></span>
+        <div class="flow-connecting" role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
             <span>Connecting...</span>
+        </div>
+    }
+
+    @* Reconnecting indicator *@
+    @if (_isReconnecting)
+    {
+        <div class="flow-reconnecting" role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Connection lost. Reconnecting...</span>
         </div>
     }
 
     @* Resuming indicator *@
     @if (_isResuming)
     {
-        <div class="flow-resuming">
-            <span class="spinner"></span>
+        <div class="flow-resuming" role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
             <span>Resuming session...</span>
         </div>
     }
@@ -110,16 +114,19 @@
     private CancellationTokenSource _cts = new();
     private List<FlowStateEntry> _stateEntries = [];
     private bool _isConnected;
+    private bool _isReconnecting;
     private bool _isProcessing;
     private bool _awaitingInput;
     private bool _hasError;
     private bool _isComplete;
     private bool _isResuming;
-    private bool _sentToBackground;
+    private bool _disposed;
     private string? _errorMessage;
     private string? _successMessage;
     private Guid? _watchId;
     private Guid? _currentSessionId;
+    private Task? _streamingTask;
+    private readonly List<IDisposable> _hubSubscriptions = [];
 
     // Current question state
     private string? _currentQuestion;
@@ -151,25 +158,52 @@
             })
             .Build();
 
-        _hubConnection.On<FlowStateEntry>("ReceiveStateEntry", async (entry) => await OnStateEntryReceivedAsync(entry));
-        _hubConnection.On<string>("ReceiveError", async (error) => await OnErrorReceivedAsync(error));
-        _hubConnection.On<Guid, string>("SetupCompleted", async (watchId, summary) => await OnSetupCompletedAsync(watchId, summary));
+        _hubSubscriptions.Add(_hubConnection.On<FlowStateEntry>("ReceiveStateEntry", async (entry) => await OnStateEntryReceivedAsync(entry)));
+        _hubSubscriptions.Add(_hubConnection.On<string>("ReceiveError", async (error) => await OnErrorReceivedAsync(error)));
+        _hubSubscriptions.Add(_hubConnection.On<Guid, string>("SetupCompleted", async (watchId, summary) => await OnSetupCompletedAsync(watchId, summary)));
 
         _hubConnection.Closed += async (error) =>
         {
             _isConnected = false;
+            _isReconnecting = false;
+            await InvokeAsync(StateHasChanged);
+        };
+
+        _hubConnection.Reconnecting += async (error) =>
+        {
+            _isConnected = false;
+            _isReconnecting = true;
             await InvokeAsync(StateHasChanged);
         };
 
         _hubConnection.Reconnected += async (connectionId) =>
         {
             _isConnected = true;
+            _isReconnecting = false;
+            _hasError = false; // Clear error state on successful reconnect
+            _errorMessage = null;
+            
+            // Rejoin session group and sync state if we have an active session
+            if (_currentSessionId.HasValue)
+            {
+                try
+                {
+                    await ResumeSession(_currentSessionId.Value);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to rejoin session after reconnect: {ex.Message}");
+                }
+            }
+            
             await InvokeAsync(StateHasChanged);
         };
 
         try
         {
-            await _hubConnection.StartAsync();
+            // Use timeout to prevent indefinite connection attempts
+            using var connectionCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _hubConnection.StartAsync(connectionCts.Token);
             _isConnected = true;
 
             // If SessionId is provided in the route, use it for page refresh resilience
@@ -179,10 +213,15 @@
             }
             // No session - show empty state (handled in UI)
         }
+        catch (OperationCanceledException ex)
+        {
+            _hasError = true;
+            _errorMessage = GetFriendlyErrorMessage(ex, "connect");
+        }
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to connect: {ex.Message}";
+            _errorMessage = GetFriendlyErrorMessage(ex, "connect");
         }
 
         StateHasChanged();
@@ -233,7 +272,7 @@
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to start session: {ex.Message}";
+            _errorMessage = GetFriendlyErrorMessage(ex, "session");
             _isProcessing = false;
             _isResuming = false;
         }
@@ -259,7 +298,7 @@
         });
 
         StateHasChanged();
-        _ = StreamMessagesAsync(input);
+        _streamingTask = StreamMessagesAsync(input);
     }
 
     private async Task ResumeSession(Guid sessionId)
@@ -271,8 +310,8 @@
 
         try
         {
-            // First, get the full state history from the hub
-            var history = await _hubConnection.InvokeAsync<List<FlowStateEntryDto>?>("GetSessionHistory", sessionId);
+            // First, get the full state history from the hub (use async version)
+            var history = await _hubConnection.InvokeAsync<List<FlowStateEntryDto>?>("GetSessionHistoryAsync", sessionId);
             
             // Get current session state from hub
             var state = await _hubConnection.InvokeAsync<SetupSessionStateDto?>("GetSessionState", sessionId);
@@ -355,14 +394,11 @@
                 {
                     // Session is actively processing - indicate this in the UI
                     _isProcessing = true;
-                    var stageDisplay = state.IsBackgrounded 
-                        ? $"Processing in background: {state.Stage}" 
-                        : "Processing...";
                     AddStateEntry(new FlowStateEntry
                     {
                         Stage = state.Stage,
                         Status = FlowStateStatus.InProgress,
-                        Summary = stageDisplay,
+                        Summary = "Processing...",
                         IsCurrentState = true
                     });
                 }
@@ -371,10 +407,10 @@
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to resume session: {ex.Message}";
+            _errorMessage = GetFriendlyErrorMessage(ex, "resume");
         }
 
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task StreamMessagesAsync(string input)
@@ -403,7 +439,7 @@
         {
             _hasError = true;
             // Include exception type for debugging - helps identify the root cause
-            _errorMessage = $"Error ({ex.GetType().Name}): {ex.Message}";
+            _errorMessage = GetFriendlyErrorMessage(ex, "stream");
             _isProcessing = false;
             
             // Log to console for development debugging
@@ -438,6 +474,8 @@
 
     private async Task OnStateEntryReceivedAsync(FlowStateEntry entry)
     {
+        if (_disposed) return;
+        
         // Mark previous current state as not current
         // Use a for loop to avoid modifying collection during enumeration
         for (var i = 0; i < _stateEntries.Count; i++)
@@ -489,11 +527,16 @@
             _isProcessing = false;
         }
 
-        await InvokeAsync(StateHasChanged);
+        if (!_disposed)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task OnErrorReceivedAsync(string error)
     {
+        if (_disposed) return;
+        
         _hasError = true;
         _errorMessage = error;
         _isProcessing = false;
@@ -502,6 +545,8 @@
 
     private async Task OnSetupCompletedAsync(Guid watchId, string summary)
     {
+        if (_disposed) return;
+        
         _isComplete = true;
         _watchId = watchId;
         _successMessage = summary;
@@ -520,7 +565,8 @@
 
     private async Task HandleUserResponse(string response)
     {
-        if (_hubConnection is null || _currentSessionId is null) return;
+        // Guard against re-entry during processing (prevents double submission)
+        if (_isProcessing || _hubConnection is null || _currentSessionId is null) return;
 
         _awaitingInput = false;
         _isProcessing = true;
@@ -548,15 +594,15 @@
 
         try
         {
-            // Stream results from the hub
-            _ = StreamMessagesAsync(response);
+            // Track streaming task for proper disposal
+            _streamingTask = StreamMessagesAsync(response);
         }
         catch (Exception ex)
         {
             _hasError = true;
-            _errorMessage = $"Failed to send response: {ex.Message}";
+            _errorMessage = GetFriendlyErrorMessage(ex, "send");
             _isProcessing = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -580,29 +626,6 @@
     private void GoBack()
     {
         Navigation.NavigateTo("/");
-    }
-
-    private async Task SendToBackground()
-    {
-        if (_hubConnection is null || _currentSessionId is null) return;
-
-        try
-        {
-            // Mark as sent to background so DisposeAsync doesn't end the session
-            _sentToBackground = true;
-            
-            // Tell the server this session is going to the background
-            await _hubConnection.SendAsync("SendToBackground", _currentSessionId.Value);
-            
-            // Navigate back to dashboard
-            Navigation.NavigateTo("/");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to send to background: {ex.Message}");
-            // Still navigate away
-            Navigation.NavigateTo("/");
-        }
     }
 
     private void RetrySetup()
@@ -631,24 +654,79 @@
 
     public async ValueTask DisposeAsync()
     {
-        // Cancel any ongoing streaming operations
+        _disposed = true;
+        
+        // Cancel any ongoing streaming first
         await _cts.CancelAsync();
-        _cts.Dispose();
-
+        
+        // Wait for streaming task to complete (it should exit quickly after cancellation)
+        if (_streamingTask is not null)
+        {
+            try
+            {
+                await _streamingTask.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (TimeoutException)
+            {
+                // Task didn't complete in time, continue with disposal
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected
+            }
+            catch
+            {
+                // Ignore other exceptions during disposal
+            }
+        }
+        
+        // Dispose On subscriptions
+        foreach (var subscription in _hubSubscriptions)
+        {
+            subscription.Dispose();
+        }
+        _hubSubscriptions.Clear();
+        
+        // Dispose hub connection
+        // Sessions automatically continue in background when client disconnects.
+        // The pipeline uses application-scoped cancellation, not connection-scoped,
+        // so it will complete even after we disconnect.
         if (_hubConnection is not null)
         {
-            // Only end session if it wasn't sent to background and is still active
-            // Sessions sent to background should continue processing
-            if (_currentSessionId.HasValue && !_sentToBackground && !_isComplete)
-            {
-                try
-                {
-                    await _hubConnection.SendAsync("EndSession", _currentSessionId.Value);
-                }
-                catch { /* Ignore errors during cleanup */ }
-            }
-
             await _hubConnection.DisposeAsync();
         }
+
+        // Now safe to dispose the CTS
+        _cts.Dispose();
+    }
+
+    /// <summary>
+    /// Generates user-friendly error messages with recovery suggestions.
+    /// </summary>
+    private static string GetFriendlyErrorMessage(Exception ex, string context)
+    {
+        var baseMessage = ex switch
+        {
+            OperationCanceledException => "The operation was cancelled.",
+            TimeoutException => "The operation timed out. The server may be busy.",
+            HttpRequestException httpEx when httpEx.Message.Contains("refused") => 
+                "Could not connect to the server. Please check if the service is running.",
+            HttpRequestException => "Network error occurred. Please check your internet connection.",
+            InvalidOperationException when ex.Message.Contains("not in a connected state") => 
+                "Connection to server was lost. Please try refreshing the page.",
+            _ => ex.Message
+        };
+
+        var suggestion = context switch
+        {
+            "connect" => " Try refreshing the page or check your network connection.",
+            "session" => " The session may have expired. Try starting a new setup.",
+            "resume" => " If the problem persists, start a new setup.",
+            "send" => " Please wait a moment and try again.",
+            "stream" => " Your progress is saved. Try refreshing the page to continue.",
+            _ => ""
+        };
+
+        return $"{baseMessage}{suggestion}";
     }
 }
