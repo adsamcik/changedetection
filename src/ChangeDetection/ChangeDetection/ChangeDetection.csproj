@@ -13,14 +13,6 @@
     <InternalsVisibleTo Include="ChangeDetection.Tests" />
   </ItemGroup>
 
-  <!-- Copy client scoped CSS to wwwroot after build -->
-  <Target Name="CopyClientScopedCss" AfterTargets="Build">
-    <PropertyGroup>
-      <ClientScopedCssPath>$(MSBuildThisFileDirectory)..\ChangeDetection.Client\obj\$(Configuration)\$(TargetFramework)\scopedcss\bundle\ChangeDetection.Client.styles.css</ClientScopedCssPath>
-    </PropertyGroup>
-    <Copy SourceFiles="$(ClientScopedCssPath)" DestinationFolder="$(MSBuildThisFileDirectory)wwwroot" SkipUnchangedFiles="true" Condition="Exists('$(ClientScopedCssPath)')" />
-  </Target>
-
   <ItemGroup>
     <PackageReference Include="DiffPlex" Version="1.9.0" />
     <PackageReference Include="Fizzler.Systems.HtmlAgilityPack" Version="1.2.1" />
@@ -31,12 +23,12 @@
     <PackageReference Include="Microsoft.SemanticKernel" Version="1.68.0" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.Google" Version="1.67.1-alpha" />
     <PackageReference Include="Lost.SemanticKernel.Connectors.Anthropic" Version="1.25.0-alpha3" />
-    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.11.2" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.11.2" />
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
     <PackageReference Include="Polly" Version="8.6.5" />
     <PackageReference Include="System.Linq.Async" Version="7.0.0" />
     <ProjectReference Include="..\ChangeDetection.Client\ChangeDetection.Client.csproj" Condition="'$(SkipClientProjectReference)' != 'true'" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.1" />
   </ItemGroup>
 
   <ItemGroup>
