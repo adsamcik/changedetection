@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-price-extraction-amazon-de",
+  "description": "Price extraction from Amazon Germany - EUR price with in stock status",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Extract price from HTML...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-202\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"price\\\":{\\\"value\\\":29.99,\\\"currency\\\":\\\"EUR\\\"},\\\"stock\\\":{\\\"status\\\":\\\"InStock\\\",\\\"rawText\\\":\\\"Auf Lager\\\"},\\\"productName\\\":\\\"Test Product\\\",\\\"confidence\\\":0.9}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":500,\"completion_tokens\":50,\"total_tokens\":550}}",
+    "content": "{\"price\":{\"value\":29.99,\"currency\":\"EUR\"},\"stock\":{\"status\":\"InStock\",\"rawText\":\"Auf Lager\"},\"productName\":\"Test Product\",\"confidence\":0.9}"
+  },
+  "durationMs": 800
+}

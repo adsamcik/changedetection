@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-sections-events",
+  "description": "Section identification for events page - identifies event cards",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Analyze this HTML and find 1-3 content sections...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-102\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"[{\\\"name\\\":\\\"Event Cards\\\",\\\"selector\\\":\\\".shadow.bg-white\\\",\\\"isTarget\\\":true,\\\"description\\\":\\\"Individual event cards containing title, date (Termín), and location (Místo)\\\"},{\\\"name\\\":\\\"Event Titles\\\",\\\"selector\\\":\\\"h3\\\",\\\"isTarget\\\":false,\\\"description\\\":\\\"Event title headings\\\"},{\\\"name\\\":\\\"Event Container\\\",\\\"selector\\\":\\\".lg\\\\\\\\:flex.lg\\\\\\\\:flex-wrap\\\",\\\"isTarget\\\":false,\\\"description\\\":\\\"Main container holding all event cards\\\"}]\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":100,\"total_tokens\":400}}",
+    "content": "[{\"name\":\"Event Cards\",\"selector\":\".shadow.bg-white\",\"isTarget\":true,\"description\":\"Individual event cards containing title, date (Termín), and location (Místo)\"},{\"name\":\"Event Titles\",\"selector\":\"h3\",\"isTarget\":false,\"description\":\"Event title headings\"},{\"name\":\"Event Container\",\"selector\":\".lg\\:flex.lg\\:flex-wrap\",\"isTarget\":false,\"description\":\"Main container holding all event cards\"}]"
+  },
+  "durationMs": 800
+}

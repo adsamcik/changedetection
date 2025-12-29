@@ -1,0 +1,16 @@
+{
+  "name": "change-analysis",
+  "description": "Change summary between two content versions - price and stock changes",
+  "capturedAt": "2025-12-27T10:22:34.7068551Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\u0022messages\u0022:[{\u0022role\u0022:\u0022system\u0022,\u0022content\u0022:\u0022You analyze changes between content versions and summarize what changed.\u0022},{\u0022role\u0022:\u0022user\u0022,\u0022content\u0022:\u0022Compare these two versions:\\r\\n\\r\\nBEFORE:\\r\\nProduct: Widget Pro\\r\\nPrice: $99.99\\r\\nStatus: In Stock\\r\\n\\r\\nAFTER:\\r\\nProduct: Widget Pro\\r\\nPrice: $79.99\\r\\nStatus: Low Stock\\r\\n\\r\\nSummarize what changed in one sentence.\u0022}],\u0022model\u0022:\u0022ministral-3:3b\u0022}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\u0022id\u0022:\u0022chatcmpl-191\u0022,\u0022object\u0022:\u0022chat.completion\u0022,\u0022created\u0022:1766830954,\u0022model\u0022:\u0022ministral-3:3b\u0022,\u0022system_fingerprint\u0022:\u0022fp_ollama\u0022,\u0022choices\u0022:[{\u0022index\u0022:0,\u0022message\u0022:{\u0022role\u0022:\u0022assistant\u0022,\u0022content\u0022:\u0022The primary change is that the price of **Widget Pro** was reduced by **$20.00**, dropping from **$99.99 to $79.99**, while the stock status decreased from **\\\u0022In Stock\\\u0022** to **\\\u0022Low Stock.\\\u0022**\u0022},\u0022finish_reason\u0022:\u0022stop\u0022}],\u0022usage\u0022:{\u0022prompt_tokens\u0022:92,\u0022completion_tokens\u0022:57,\u0022total_tokens\u0022:149}}\n",
+    "content": "The primary change is that the price of **Widget Pro** was reduced by **$20.00**, dropping from **$99.99 to $79.99**, while the stock status decreased from **\u0022In Stock\u0022** to **\u0022Low Stock.\u0022**"
+  },
+  "durationMs": 16242
+}

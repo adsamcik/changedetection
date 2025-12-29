@@ -1,0 +1,16 @@
+{
+  "name": "selector-generation",
+  "description": "CSS selector generation for product title element",
+  "capturedAt": "2025-12-27T10:22:24.4712397Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\u0022messages\u0022:[{\u0022role\u0022:\u0022system\u0022,\u0022content\u0022:\u0022You are a CSS selector generation assistant. Output only valid JSON.\u0022},{\u0022role\u0022:\u0022user\u0022,\u0022content\u0022:\u0022Given this HTML structure, generate a CSS selector to find the main product title:\\r\\n\u003Chtml\u003E\\r\\n  \u003Cbody\u003E\\r\\n    \u003Cdiv class=\\\u0022container\\\u0022\u003E\\r\\n      \u003Ch1 class=\\\u0022product-title\\\u0022 id=\\\u0022main-title\\\u0022\u003EAwesome Product\u003C/h1\u003E\\r\\n      \u003Cp class=\\\u0022description\\\u0022\u003EGreat product description here\u003C/p\u003E\\r\\n    \u003C/div\u003E\\r\\n  \u003C/body\u003E\\r\\n\u003C/html\u003E\\r\\n\\r\\nReturn JSON: {\\\u0022selector\\\u0022: string, \\\u0022confidence\\\u0022: number between 0 and 1}\u0022}],\u0022model\u0022:\u0022ministral-3:3b\u0022}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\u0022id\u0022:\u0022chatcmpl-723\u0022,\u0022object\u0022:\u0022chat.completion\u0022,\u0022created\u0022:1766830944,\u0022model\u0022:\u0022ministral-3:3b\u0022,\u0022system_fingerprint\u0022:\u0022fp_ollama\u0022,\u0022choices\u0022:[{\u0022index\u0022:0,\u0022message\u0022:{\u0022role\u0022:\u0022assistant\u0022,\u0022content\u0022:\u0022\u0060\u0060\u0060json\\n{\\n  \\\u0022selector\\\u0022: \\\u0022#main-title\\\u0022,\\n  \\\u0022confidence\\\u0022: 0.95\\n}\\n\u0060\u0060\u0060\u0022},\u0022finish_reason\u0022:\u0022stop\u0022}],\u0022usage\u0022:{\u0022prompt_tokens\u0022:132,\u0022completion_tokens\u0022:64,\u0022total_tokens\u0022:196}}\n",
+    "content": "\u0060\u0060\u0060json\n{\n  \u0022selector\u0022: \u0022#main-title\u0022,\n  \u0022confidence\u0022: 0.95\n}\n\u0060\u0060\u0060"
+  },
+  "durationMs": 6830
+}

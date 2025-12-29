@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-content-type-eventlist",
+  "description": "Content type classification for IMG CAS events page - returns EventList",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Webpage category? Reply ONE word only...Content: Akce...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-100\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"EventList\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"total_tokens\":102}}",
+    "content": "EventList"
+  },
+  "durationMs": 500
+}

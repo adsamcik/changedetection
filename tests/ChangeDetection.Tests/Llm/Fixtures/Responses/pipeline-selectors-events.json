@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-selectors-events",
+  "description": "Selector generation for events page - CSS selectors for event cards",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Generate 2-3 CSS or XPath selectors...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-103\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"[{\\\"selector\\\":\\\".shadow.bg-white\\\",\\\"type\\\":\\\"CssSelector\\\",\\\"description\\\":\\\"Event cards with shadow and white background\\\",\\\"reasoning\\\":\\\"Each event is contained in a div with these classes, making it a stable selector for individual events\\\"},{\\\"selector\\\":\\\".lg\\\\\\\\:w-1\\\\\\\\/3.lg\\\\\\\\:pl-4 > .shadow\\\",\\\"type\\\":\\\"CssSelector\\\",\\\"description\\\":\\\"Event card within grid column\\\",\\\"reasoning\\\":\\\"More specific selector using the grid layout classes for event cards\\\"},{\\\"selector\\\":\\\"//div[contains(@class,'shadow') and contains(@class,'bg-white')]//h3\\\",\\\"type\\\":\\\"XPath\\\",\\\"description\\\":\\\"Event titles within event cards\\\",\\\"reasoning\\\":\\\"XPath selector for h3 elements inside event cards\\\"}]\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":400,\"completion_tokens\":150,\"total_tokens\":550}}",
+    "content": "[{\"selector\":\".shadow.bg-white\",\"type\":\"CssSelector\",\"description\":\"Event cards with shadow and white background\",\"reasoning\":\"Each event is contained in a div with these classes, making it a stable selector for individual events\"},{\"selector\":\".lg\\:w-1\\/3.lg\\:pl-4 > .shadow\",\"type\":\"CssSelector\",\"description\":\"Event card within grid column\",\"reasoning\":\"More specific selector using the grid layout classes for event cards\"},{\"selector\":\"//div[contains(@class,'shadow') and contains(@class,'bg-white')]//h3\",\"type\":\"XPath\",\"description\":\"Event titles within event cards\",\"reasoning\":\"XPath selector for h3 elements inside event cards\"}]"
+  },
+  "durationMs": 1000
+}

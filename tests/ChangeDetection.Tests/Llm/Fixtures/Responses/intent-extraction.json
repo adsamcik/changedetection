@@ -1,0 +1,16 @@
+{
+  "name": "intent-extraction",
+  "description": "User intent extraction from webpage description",
+  "capturedAt": "2025-12-27T10:22:25.686566Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\u0022messages\u0022:[{\u0022role\u0022:\u0022system\u0022,\u0022content\u0022:\u0022You extract user intent from webpage descriptions. Be concise.\u0022},{\u0022role\u0022:\u0022user\u0022,\u0022content\u0022:\u0022The user wants to monitor this page:\\r\\nURL: https://example.com/events\\r\\nContent: A list of upcoming community events with dates, titles, and locations.\\r\\n\\r\\nWhat does the user want to track? Respond in one sentence.\u0022}],\u0022model\u0022:\u0022ministral-3:3b\u0022}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\u0022id\u0022:\u0022chatcmpl-407\u0022,\u0022object\u0022:\u0022chat.completion\u0022,\u0022created\u0022:1766830945,\u0022model\u0022:\u0022ministral-3:3b\u0022,\u0022system_fingerprint\u0022:\u0022fp_ollama\u0022,\u0022choices\u0022:[{\u0022index\u0022:0,\u0022message\u0022:{\u0022role\u0022:\u0022assistant\u0022,\u0022content\u0022:\u0022The user wants to **monitor upcoming community event details (title, date, location)** on this page for scheduling or updates.\u0022},\u0022finish_reason\u0022:\u0022stop\u0022}],\u0022usage\u0022:{\u0022prompt_tokens\u0022:68,\u0022completion_tokens\u0022:26,\u0022total_tokens\u0022:94}}\n",
+    "content": "The user wants to **monitor upcoming community event details (title, date, location)** on this page for scheduling or updates."
+  },
+  "durationMs": 8070
+}

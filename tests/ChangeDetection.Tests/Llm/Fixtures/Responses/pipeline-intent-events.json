@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-intent-events",
+  "description": "Intent extraction for watching events on a page",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"User monitors: I want to watch for the events...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-101\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Monitor new events and seminars on the page\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":10,\"total_tokens\":60}}",
+    "content": "Monitor new events and seminars on the page"
+  },
+  "durationMs": 300
+}

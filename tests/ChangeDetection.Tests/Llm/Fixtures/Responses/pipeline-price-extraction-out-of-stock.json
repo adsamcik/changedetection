@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-price-extraction-out-of-stock",
+  "description": "Price extraction for out of stock product",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Extract price from HTML...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-203\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"price\\\":{\\\"value\\\":199.99,\\\"currency\\\":\\\"USD\\\"},\\\"stock\\\":{\\\"status\\\":\\\"OutOfStock\\\",\\\"rawText\\\":\\\"Out of Stock\\\"},\\\"productName\\\":\\\"Test Product\\\",\\\"confidence\\\":0.85}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":500,\"completion_tokens\":50,\"total_tokens\":550}}",
+    "content": "{\"price\":{\"value\":199.99,\"currency\":\"USD\"},\"stock\":{\"status\":\"OutOfStock\",\"rawText\":\"Out of Stock\"},\"productName\":\"Test Product\",\"confidence\":0.85}"
+  },
+  "durationMs": 800
+}

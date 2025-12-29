@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-price-extraction-fyft-cz",
+  "description": "Price extraction from Czech e-commerce site Fyft.cz - discontinued product with CZK price",
+  "capturedAt": "2025-12-25T14:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"Extract price from HTML...\"}],\"model\":\"ministral-3:3b\"}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\"id\":\"chatcmpl-200\",\"object\":\"chat.completion\",\"created\":1766665378,\"model\":\"ministral-3:3b\",\"system_fingerprint\":\"fp_ollama\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"price\\\":{\\\"value\\\":2499.00,\\\"currency\\\":\\\"CZK\\\"},\\\"stock\\\":{\\\"status\\\":\\\"Discontinued\\\",\\\"rawText\\\":\\\"Ukončený prodej\\\"},\\\"productName\\\":\\\"Test Product\\\",\\\"confidence\\\":0.9}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":500,\"completion_tokens\":50,\"total_tokens\":550}}",
+    "content": "{\"price\":{\"value\":2499.00,\"currency\":\"CZK\"},\"stock\":{\"status\":\"Discontinued\",\"rawText\":\"Ukončený prodej\"},\"productName\":\"Test Product\",\"confidence\":0.9}"
+  },
+  "durationMs": 800
+}

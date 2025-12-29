@@ -1,0 +1,16 @@
+{
+  "name": "simple-greeting",
+  "description": "Basic greeting test - LLM responds with \u0027Hi there!\u0027",
+  "capturedAt": "2025-12-27T10:22:36.1292344Z",
+  "request": {
+    "method": "POST",
+    "uri": "http://localhost:11434/v1/chat/completions",
+    "body": "{\u0022messages\u0022:[{\u0022role\u0022:\u0022user\u0022,\u0022content\u0022:\u0022Hello! Please respond with exactly \u0027Hi there!\u0027 and nothing else.\u0022}],\u0022model\u0022:\u0022ministral-3:3b\u0022}"
+  },
+  "response": {
+    "statusCode": 200,
+    "body": "{\u0022id\u0022:\u0022chatcmpl-524\u0022,\u0022object\u0022:\u0022chat.completion\u0022,\u0022created\u0022:1766830956,\u0022model\u0022:\u0022ministral-3:3b\u0022,\u0022system_fingerprint\u0022:\u0022fp_ollama\u0022,\u0022choices\u0022:[{\u0022index\u0022:0,\u0022message\u0022:{\u0022role\u0022:\u0022assistant\u0022,\u0022content\u0022:\u0022Hello! How can I assist you?\u0022},\u0022finish_reason\u0022:\u0022stop\u0022}],\u0022usage\u0022:{\u0022prompt_tokens\u0022:553,\u0022completion_tokens\u0022:9,\u0022total_tokens\u0022:562}}\n",
+    "content": "Hello! How can I assist you?"
+  },
+  "durationMs": 8381
+}
