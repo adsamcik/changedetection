@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 
 namespace ChangeDetection.Services.Pipeline;
@@ -6,6 +8,7 @@ namespace ChangeDetection.Services.Pipeline;
 /// <summary>
 /// Orchestrates the multi-stage watch setup pipeline.
 /// Manages the flow, iterations, and feedback loops.
+/// Records all events to database for history and debugging.
 /// </summary>
 public class WatchSetupPipeline(
     UrlExtractionStage urlExtraction,
@@ -14,10 +17,18 @@ public class WatchSetupPipeline(
     SelectorGenerationStage selectorGeneration,
     SelectorValidationStage selectorValidation,
     ILlmProviderChain llmProvider,
+    IPipelineEventService eventService,
+    IUserContext userContext,
     ILogger<WatchSetupPipeline> logger) : IWatchSetupPipeline
 {
     private const int DefaultMaxIterations = 3;
     private const float DefaultMinConfidence = 0.6f;
+    
+    /// <summary>
+    /// Tracks the current pipeline run for event recording.
+    /// Stored per-session via AsyncLocal to support concurrent pipelines.
+    /// </summary>
+    private static readonly AsyncLocal<PipelineRun?> CurrentRun = new();
 
     /// <inheritdoc />
     public async Task<PipelineResult> ProcessAsync(
@@ -31,38 +42,86 @@ public class WatchSetupPipeline(
             OriginalInput = userInput
         };
 
-        logger.LogInformation("Starting pipeline for input: {Input}", TruncateForLog(userInput));
+        // Start tracking the pipeline run
+        var run = await eventService.StartRunAsync(
+            session.SessionId, 
+            userInput, 
+            userContext.CurrentUserId, 
+            ct);
+        CurrentRun.Value = run;
+
+        logger.LogInformation("Starting pipeline for input: {Input}, run: {RunId}", TruncateForLog(userInput), run.Id);
 
         try
         {
             // Stage 1: Extract URLs
+            await RecordStageStartAsync(run.Id, PipelineStageNames.UrlExtraction, ct);
             var result = await ExecuteUrlExtractionAsync(session, ct);
-            if (result != null) return result;
+            if (result != null)
+            {
+                await HandleResultAsync(run.Id, result, ct);
+                return result;
+            }
+            await RecordStageCompletedAsync(run.Id, PipelineStageNames.UrlExtraction, 
+                $"Extracted URL: {session.SelectedUrl?.NormalizedUrl}", ct);
+            await eventService.UpdateExtractedUrlAsync(run.Id, session.SelectedUrl?.NormalizedUrl ?? "", ct);
 
             // Stage 2: Fetch Content
+            await RecordStageStartAsync(run.Id, PipelineStageNames.ContentFetching, ct);
             result = await ExecuteContentFetchingAsync(session, options, ct);
-            if (result != null) return result;
+            if (result != null)
+            {
+                await HandleResultAsync(run.Id, result, ct);
+                return result;
+            }
+            await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentFetching, 
+                $"Fetched {session.FetchedContent?.TextContent?.Length ?? 0} chars", ct);
 
             // Stage 3: Analyze Content
+            await RecordStageStartAsync(run.Id, PipelineStageNames.ContentAnalysis, ct);
             result = await ExecuteContentAnalysisAsync(session, ct);
-            if (result != null) return result;
+            if (result != null)
+            {
+                await HandleResultAsync(run.Id, result, ct);
+                return result;
+            }
+            await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentAnalysis, 
+                $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}", ct);
 
             // Stage 4-5: Generate and Validate Selectors (with iteration loop)
+            await RecordStageStartAsync(run.Id, PipelineStageNames.SelectorGeneration, ct);
             result = await ExecuteSelectorIterationAsync(session, options, ct);
-            if (result != null) return result;
+            if (result != null)
+            {
+                await HandleResultAsync(run.Id, result, ct);
+                return result;
+            }
+            await RecordStageCompletedAsync(run.Id, PipelineStageNames.SelectorValidation, 
+                session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector", ct);
 
             // Stage 6: Build final configuration
-            return BuildFinalResult(session, options);
+            var finalResult = BuildFinalResult(session, options);
+            await HandleResultAsync(run.Id, finalResult, ct);
+            return finalResult;
         }
         catch (OperationCanceledException)
         {
             logger.LogWarning("Pipeline cancelled");
+            await eventService.CancelRunAsync(run.Id, ct);
             return CreateFailedResult(session, PipelineStage.Failed, "Operation was cancelled");
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Pipeline failed with exception");
+            await eventService.RecordFailureAsync(run.Id, session.ContentAnalysis != null 
+                ? PipelineStageNames.SelectorGeneration : PipelineStageNames.ContentAnalysis, 
+                ex.Message, ex.StackTrace, ct);
+            await eventService.FailRunAsync(run.Id, ex.Message, ct);
             return CreateFailedResult(session, PipelineStage.Failed, $"Pipeline error: {ex.Message}");
+        }
+        finally
+        {
+            CurrentRun.Value = null;
         }
     }
 
@@ -78,12 +137,22 @@ public class WatchSetupPipeline(
             OriginalInput = userInput
         };
 
-        logger.LogInformation("Starting streaming pipeline for input: {Input}", TruncateForLog(userInput));
+        // Start tracking the pipeline run
+        var run = await eventService.StartRunAsync(
+            session.SessionId, 
+            userInput, 
+            userContext.CurrentUserId, 
+            ct);
+        CurrentRun.Value = run;
+
+        logger.LogInformation("Starting streaming pipeline for input: {Input}, run: {RunId}", 
+            TruncateForLog(userInput), run.Id);
 
         PipelineResult? result = null;
         Exception? error = null;
 
         // Stage 1: URL Extraction
+        await RecordStageStartAsync(run.Id, PipelineStageNames.UrlExtraction, ct);
         yield return new PipelineProgress
         {
             Stage = PipelineStage.UrlExtraction,
@@ -103,15 +172,24 @@ public class WatchSetupPipeline(
 
         if (error != null)
         {
+            await eventService.RecordFailureAsync(run.Id, PipelineStageNames.UrlExtraction, error.Message, ct: ct);
+            await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.UrlExtraction, error.Message);
+            CurrentRun.Value = null;
             yield break;
         }
 
         if (result != null)
         {
+            await HandleResultAsync(run.Id, result, ct);
             yield return CreateResultProgress(result);
+            CurrentRun.Value = null;
             yield break;
         }
+
+        await RecordStageCompletedAsync(run.Id, PipelineStageNames.UrlExtraction, 
+            $"Extracted URL: {session.SelectedUrl?.NormalizedUrl}", ct);
+        await eventService.UpdateExtractedUrlAsync(run.Id, session.SelectedUrl?.NormalizedUrl ?? "", ct);
 
         yield return new PipelineProgress
         {
@@ -124,6 +202,7 @@ public class WatchSetupPipeline(
 
         // Stage 2: Content Fetching
         error = null;
+        await RecordStageStartAsync(run.Id, PipelineStageNames.ContentFetching, ct);
         yield return new PipelineProgress
         {
             Stage = PipelineStage.ContentFetching,
@@ -143,15 +222,23 @@ public class WatchSetupPipeline(
 
         if (error != null)
         {
+            await eventService.RecordFailureAsync(run.Id, PipelineStageNames.ContentFetching, error.Message, ct: ct);
+            await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.ContentFetching, error.Message);
+            CurrentRun.Value = null;
             yield break;
         }
 
         if (result != null)
         {
+            await HandleResultAsync(run.Id, result, ct);
             yield return CreateResultProgress(result);
+            CurrentRun.Value = null;
             yield break;
         }
+
+        await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentFetching, 
+            $"Fetched {session.FetchedContent?.TextContent?.Length ?? 0} chars", ct);
 
         yield return new PipelineProgress
         {
@@ -164,6 +251,7 @@ public class WatchSetupPipeline(
 
         // Stage 3: Content Analysis (with streaming thinking)
         error = null;
+        await RecordStageStartAsync(run.Id, PipelineStageNames.ContentAnalysis, ct);
         yield return new PipelineProgress
         {
             Stage = PipelineStage.ContentAnalysis,
@@ -207,14 +295,25 @@ public class WatchSetupPipeline(
 
         if (error != null)
         {
+            await eventService.RecordFailureAsync(run.Id, PipelineStageNames.ContentAnalysis, 
+                error.Message, ct: ct);
+            await eventService.FailRunAsync(run.Id, error.Message, ct);
+            CurrentRun.Value = null;
             yield break;
         }
 
         if (session.ContentAnalysis == null)
         {
+            await eventService.RecordFailureAsync(run.Id, PipelineStageNames.ContentAnalysis, 
+                "Content analysis failed", ct: ct);
+            await eventService.FailRunAsync(run.Id, "Content analysis failed", ct);
             yield return CreateFailedProgress(session, PipelineStage.ContentAnalysis, "Content analysis failed");
+            CurrentRun.Value = null;
             yield break;
         }
+
+        await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentAnalysis, 
+            $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}", ct);
 
         yield return new PipelineProgress
         {
@@ -227,6 +326,7 @@ public class WatchSetupPipeline(
 
         // Stage 4-5: Selector Generation and Validation
         error = null;
+        await RecordStageStartAsync(run.Id, PipelineStageNames.SelectorGeneration, ct);
         yield return new PipelineProgress
         {
             Stage = PipelineStage.SelectorGeneration,
@@ -246,15 +346,27 @@ public class WatchSetupPipeline(
 
         if (error != null)
         {
+            await eventService.RecordFailureAsync(run.Id, PipelineStageNames.SelectorGeneration, 
+                error.Message, ct: ct);
+            await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.SelectorGeneration, error.Message);
+            CurrentRun.Value = null;
             yield break;
         }
 
         if (result != null)
         {
+            await HandleResultAsync(run.Id, result, ct);
             yield return CreateResultProgress(result);
+            if (!result.NeedsUserInput)
+            {
+                CurrentRun.Value = null;
+            }
             yield break;
         }
+
+        await RecordStageCompletedAsync(run.Id, PipelineStageNames.SelectorValidation, 
+            session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector", ct);
 
         yield return new PipelineProgress
         {
@@ -268,7 +380,9 @@ public class WatchSetupPipeline(
 
         // Stage 6: Build final configuration
         var finalResult = BuildFinalResult(session, options);
+        await HandleResultAsync(run.Id, finalResult, ct);
         yield return CreateResultProgress(finalResult);
+        CurrentRun.Value = null;
     }
 
     /// <inheritdoc />
@@ -278,6 +392,21 @@ public class WatchSetupPipeline(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         logger.LogInformation("Continuing pipeline with feedback (streaming): {Feedback}", TruncateForLog(feedback));
+
+        // Try to find existing run for this session
+        var run = await eventService.GetRunBySessionIdAsync(session.SessionId, ct);
+        if (run != null)
+        {
+            CurrentRun.Value = run;
+            await eventService.RecordUserInteractionAsync(
+                run.Id,
+                PipelineEventTypes.UserInputReceived,
+                feedback,
+                $"User feedback: {TruncateForLog(feedback)}",
+                ct);
+            await eventService.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+                PipelineStageNames.SelectorGeneration, ct);
+        }
 
         yield return new PipelineProgress
         {
@@ -301,11 +430,24 @@ public class WatchSetupPipeline(
 
         if (error != null)
         {
+            if (run != null)
+            {
+                await eventService.RecordFailureAsync(run.Id, PipelineStageNames.SelectorGeneration, 
+                    error.Message, ct: ct);
+                await eventService.FailRunAsync(run.Id, error.Message, ct);
+            }
             yield return CreateFailedProgress(session, PipelineStage.Failed, error.Message);
+            CurrentRun.Value = null;
             yield break;
         }
 
+        if (run != null)
+        {
+            await HandleResultAsync(run.Id, result!, ct);
+        }
+
         yield return CreateResultProgress(result!);
+        CurrentRun.Value = null;
     }
 
     private static PipelineProgress CreateResultProgress(PipelineResult result)
@@ -1416,4 +1558,99 @@ public class WatchSetupPipeline(
             return text;
         return text[..maxLength] + "...";
     }
+    
+    #region Event Tracking Helpers
+    
+    private Task RecordStageStartAsync(Guid runId, string stage, CancellationToken ct)
+    {
+        return eventService.RecordEventAsync(
+            runId, 
+            stage, 
+            PipelineEventTypes.StageStarted, 
+            $"Starting {stage}", 
+            ct: ct);
+    }
+    
+    private Task RecordStageCompletedAsync(Guid runId, string stage, string? summary, CancellationToken ct)
+    {
+        return eventService.RecordEventAsync(
+            runId, 
+            stage, 
+            PipelineEventTypes.StageCompleted, 
+            summary ?? $"Completed {stage}", 
+            ct: ct);
+    }
+    
+    private async Task HandleResultAsync(Guid runId, PipelineResult result, CancellationToken ct)
+    {
+        if (result.NeedsUserInput)
+        {
+            await eventService.UpdateRunStatusAsync(runId, PipelineRunStatus.AwaitingUserInput, 
+                result.CurrentStage.ToString(), ct);
+            await eventService.RecordEventAsync(
+                runId,
+                result.CurrentStage.ToString(),
+                PipelineEventTypes.UserInputRequested,
+                string.Join("; ", result.UserPrompts),
+                ct: ct);
+        }
+        else if (result.IsSuccess && result.FinalConfiguration != null)
+        {
+            // Pipeline completed successfully - the watch creation will call CompleteRunAsync
+            var configJson = JsonSerializer.Serialize(result.FinalConfiguration);
+            await eventService.RecordEventAsync(
+                runId,
+                PipelineStageNames.Configuration,
+                PipelineEventTypes.ConfigurationBuilt,
+                $"Configuration built for {result.FinalConfiguration.Url}",
+                dataJson: configJson,
+                ct: ct);
+        }
+        else if (!result.IsSuccess)
+        {
+            await eventService.RecordFailureAsync(
+                runId,
+                result.CurrentStage.ToString(),
+                result.ErrorMessage ?? "Unknown error",
+                ct: ct);
+            await eventService.FailRunAsync(runId, result.ErrorMessage ?? "Pipeline failed", ct);
+        }
+    }
+    
+    /// <summary>
+    /// Gets the current pipeline run ID for external callers to record watch creation.
+    /// </summary>
+    public static Guid? GetCurrentRunId() => CurrentRun.Value?.Id;
+    
+    /// <summary>
+    /// Completes the current pipeline run when a watch is created.
+    /// Should be called by the hub/service that creates the watch.
+    /// </summary>
+    public async Task CompleteCurrentRunAsync(Guid watchId, string? configJson = null, CancellationToken ct = default)
+    {
+        var run = CurrentRun.Value;
+        if (run != null)
+        {
+            await eventService.CompleteRunAsync(run.Id, watchId, configJson, ct);
+        }
+    }
+    
+    /// <summary>
+    /// Records a user interaction event for the current run.
+    /// </summary>
+    public async Task RecordUserFeedbackAsync(string feedback, CancellationToken ct = default)
+    {
+        var run = CurrentRun.Value;
+        if (run != null)
+        {
+            await eventService.RecordUserInteractionAsync(
+                run.Id,
+                PipelineEventTypes.UserInputReceived,
+                feedback,
+                $"User provided feedback: {TruncateForLog(feedback)}",
+                ct);
+        }
+    }
+    
+    #endregion
 }

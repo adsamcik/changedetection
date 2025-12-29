@@ -112,53 +112,139 @@ public partial class SelectorValidationStage(
         var doc = new HtmlDocument();
         doc.LoadHtml(content.Html ?? string.Empty);
 
-        IEnumerable<HtmlNode> nodes;
-        try
-        {
-            // Use Fizzler for native CSS selector support
-            nodes = doc.DocumentNode.QuerySelectorAll(selector.Selector);
-        }
-        catch (Exception ex)
-        {
-            return new SelectorValidation
-            {
-                Selector = selector,
-                IsValid = false,
-                ValidationMessage = $"Invalid CSS selector: {ex.Message}"
-            };
-        }
-
-        var nodeList = nodes.ToList();
-        if (nodeList.Count == 0)
-        {
-            return new SelectorValidation
-            {
-                Selector = selector,
-                IsValid = false,
-                MatchCount = 0,
-                ValidationMessage = "No elements matched"
-            };
-        }
-
-        // Get sample content
-        var firstNode = nodeList[0];
-        var sample = CleanText(firstNode.InnerText);
+        // Try the original selector first, then normalized alternatives
+        var selectorsToTry = GetSelectorAlternatives(selector.Selector);
         
-        // Calculate match quality
-        var quality = CalculateMatchQuality(sample, analysis, nodeList.Count);
+        foreach (var selectorString in selectorsToTry)
+        {
+            IEnumerable<HtmlNode> nodes;
+            try
+            {
+                // Use Fizzler for native CSS selector support
+                nodes = doc.DocumentNode.QuerySelectorAll(selectorString);
+            }
+            catch (Exception)
+            {
+                // Try next alternative
+                continue;
+            }
 
+            var nodeList = nodes.ToList();
+            if (nodeList.Count > 0)
+            {
+                // Found matches with this selector variant
+                var firstNode = nodeList[0];
+                var sample = CleanText(firstNode.InnerText);
+                var quality = CalculateMatchQuality(sample, analysis, nodeList.Count);
+
+                // Create a new selector with the working selector string
+                var workingSelector = new GeneratedSelector
+                {
+                    Selector = selectorString,
+                    Type = selector.Type,
+                    Description = selector.Description,
+                    Reasoning = selector.Reasoning,
+                    Confidence = selector.Confidence,
+                    Priority = selector.Priority
+                };
+
+                return new SelectorValidation
+                {
+                    Selector = workingSelector,
+                    IsValid = true,
+                    MatchCount = nodeList.Count,
+                    ExtractedSample = TruncateText(sample, 500),
+                    MatchQuality = quality,
+                    ValidationMessage = nodeList.Count == 1 
+                        ? "Unique match found" 
+                        : $"Found {nodeList.Count} matches"
+                };
+            }
+        }
+
+        // No alternatives worked
         return new SelectorValidation
         {
             Selector = selector,
-            IsValid = true,
-            MatchCount = nodeList.Count,
-            ExtractedSample = TruncateText(sample, 500),
-            MatchQuality = quality,
-            ValidationMessage = nodeList.Count == 1 
-                ? "Unique match found" 
-                : $"Found {nodeList.Count} matches"
+            IsValid = false,
+            MatchCount = 0,
+            ValidationMessage = "No elements matched (tried multiple selector variants)"
         };
     }
+
+    /// <summary>
+    /// Generate alternative selectors to handle CSS escape sequences that Fizzler may not support.
+    /// </summary>
+    private static IEnumerable<string> GetSelectorAlternatives(string selector)
+    {
+        // First, try the original
+        yield return selector;
+        
+        // If selector has escaped characters, try attribute selectors for class matching
+        if (selector.Contains('\\'))
+        {
+            // Extract simple class names and convert to attribute selectors
+            // e.g., "div.lg\:flex.shadow" -> "[class*='shadow']"
+            var simpleClasses = ExtractSimpleClassNames(selector);
+            foreach (var className in simpleClasses)
+            {
+                yield return $"[class*='{className}']";
+            }
+            
+            // Try stripping escaped parts and using remaining simple selectors
+            var simplified = SimplifySelector(selector);
+            if (!string.IsNullOrEmpty(simplified) && simplified != selector)
+            {
+                yield return simplified;
+            }
+        }
+        
+        // Try extracting just the tag name
+        var tagMatch = TagNameRegex().Match(selector);
+        if (tagMatch.Success)
+        {
+            yield return tagMatch.Value;
+        }
+    }
+
+    /// <summary>
+    /// Extract simple class names (without special characters) from a CSS selector.
+    /// </summary>
+    private static IEnumerable<string> ExtractSimpleClassNames(string selector)
+    {
+        // Match class names like .shadow, .bg-white (but not .lg\:flex)
+        var matches = SimpleClassRegex().Matches(selector);
+        foreach (Match match in matches)
+        {
+            var className = match.Groups[1].Value;
+            // Skip classes with escaped characters
+            if (!className.Contains('\\') && !className.Contains(':'))
+            {
+                yield return className;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Simplify a selector by removing escaped class names but keeping simple ones.
+    /// </summary>
+    private static string SimplifySelector(string selector)
+    {
+        // Remove escaped class selectors like .lg\:flex but keep .shadow
+        var result = EscapedClassRegex().Replace(selector, "");
+        // Clean up any remaining issues
+        result = result.Replace(" >  > ", " > ").Replace("  ", " ").Trim();
+        return result.TrimEnd('>').Trim();
+    }
+
+    [GeneratedRegex(@"^(\w+)")]
+    private static partial Regex TagNameRegex();
+    
+    [GeneratedRegex(@"\.([a-zA-Z][\w-]*)")]
+    private static partial Regex SimpleClassRegex();
+    
+    [GeneratedRegex(@"\.\w+\\[^.\s>]+")]
+    private static partial Regex EscapedClassRegex();
 
     private SelectorValidation ValidateXPathSelector(
         FetchedContent content,

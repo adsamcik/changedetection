@@ -10,6 +10,7 @@ namespace ChangeDetection.Services.Pipeline;
 /// </summary>
 public class SelectorGenerationStage(
     ILlmProviderChain llmChain,
+    IDomCompactor domCompactor,
     ILogger<SelectorGenerationStage> logger)
 {
     /// <summary>
@@ -130,15 +131,19 @@ public class SelectorGenerationStage(
         ContentAnalysis analysis,
         CancellationToken ct)
     {
-        // Use more HTML for context (8000 chars) - critical for finding selectors
-        var htmlSample = TruncateText(content.CleanedHtml ?? content.Html ?? "", 8000);
+        // Use DomCompactor to reduce HTML size while preserving selector-relevant structure
+        var rawHtml = content.CleanedHtml ?? content.Html ?? "";
+        var compactionResult = domCompactor.CompactToTokenBudget(rawHtml, targetTokens: 2000);
+        var htmlSample = compactionResult.Html;
         
-        logger.LogDebug("Generating selectors with LLM for intent: {Intent}, ContentType: {Type}, HTML length: {Length}",
-            analysis.UserIntent, analysis.ContentType, htmlSample.Length);
+        logger.LogDebug(
+            "Generating selectors with LLM for intent: {Intent}, ContentType: {Type}, HTML: {Original} -> {Compacted} chars ({Ratio:P0})",
+            analysis.UserIntent, analysis.ContentType, 
+            compactionResult.OriginalSize, compactionResult.CompactedSize, compactionResult.CompressionRatio);
 
         // More detailed prompt to help LLM understand the task
         var prompt = $$"""
-            Generate 2-3 CSS or XPath selectors to extract content matching this goal: {{analysis.UserIntent}}
+            Generate 2-3 CSS selectors to extract content matching this goal: {{analysis.UserIntent}}
             
             Content type: {{analysis.ContentType}}
             Page title: {{content.Title ?? "Unknown"}}
@@ -146,12 +151,21 @@ public class SelectorGenerationStage(
             HTML structure:
             {{htmlSample}}
             
-            Requirements:
-            - Prefer stable selectors (IDs, data attributes) over fragile ones (nth-child)
-            - Include a description of what content the selector targets
-            - If content appears dynamic, prefer class-based selectors
+            CRITICAL SELECTOR RULES:
+            - Use ONLY simple, standard CSS selectors that work with any CSS parser
+            - BEST: Simple tag selectors: h3, a, li, div
+            - GOOD: Attribute selectors for complex class names: [class*="shadow"], [class*="bg-white"]
+            - GOOD: Simple class selectors without special characters: .shadow, .container
+            - AVOID: Class names with colons (lg:, md:, sm:) - these are Tailwind responsive prefixes
+            - AVOID: Child combinators (>) with positional selectors (:nth-child)
+            - Target the repeating items (e.g., event titles, list items) not the container
             
-            Return JSON array: [{"selector":"css or xpath","type":"CssSelector|XPath","description":"what it selects","reasoning":"why this selector"}]
+            EXAMPLES of good selectors:
+            - "h3" - selects all headings (good for event titles)
+            - "[class*='shadow']" - selects elements containing 'shadow' class
+            - "a[href*='seminar']" - selects links containing 'seminar' in URL
+            
+            Return JSON array: [{"selector":"css selector","type":"CssSelector","description":"what it selects","reasoning":"why this selector"}]
             """;
 
         var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions

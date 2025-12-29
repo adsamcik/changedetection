@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Authentication;
@@ -19,6 +20,7 @@ public class SetupConversationHub(
     IHubContext<ChangeDetectionHub> changeHubContext,
     IUserContext userContext,
     IHostApplicationLifetime applicationLifetime,
+    IServiceScopeFactory scopeFactory,
     ILogger<SetupConversationHub> logger) : Hub
 {
     // In-memory storage for pipeline sessions (keyed by conversation session ID)
@@ -97,8 +99,9 @@ public class SetupConversationHub(
 
     /// <summary>
     /// Records a state entry in history and returns it for yielding.
+    /// Also persists the history to durable storage asynchronously.
     /// </summary>
-    private static FlowStateEntryDto RecordStateEntry(Guid sessionId, FlowStateEntryDto entry)
+    private FlowStateEntryDto RecordStateEntry(Guid sessionId, FlowStateEntryDto entry)
     {
         var history = SessionStateHistory.GetOrAdd(sessionId, _ => []);
         
@@ -113,13 +116,43 @@ public class SetupConversationHub(
             history.Add(entry);
         }
         
+        // Persist asynchronously (fire and forget, but log errors)
+        _ = PersistStateHistoryAsync(sessionId, history);
+        
         return entry;
     }
 
     /// <summary>
-    /// Gets the state history for a session.
+    /// Persists the state history to durable storage.
     /// </summary>
-    public List<FlowStateEntryDto> GetSessionHistory(Guid sessionId)
+    private async Task PersistStateHistoryAsync(Guid sessionId, List<FlowStateEntryDto> history)
+    {
+        try
+        {
+            string json;
+            lock (history)
+            {
+                json = JsonSerializer.Serialize(history);
+            }
+            
+            using var scope = scopeFactory.CreateScope();
+            var persistence = scope.ServiceProvider.GetService<ISessionPersistenceService>();
+            if (persistence != null)
+            {
+                await persistence.SaveStateHistoryAsync(sessionId, json);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to persist state history for session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// Gets the state history for a session.
+    /// Loads from persistent storage if not in memory (e.g., after app restart).
+    /// </summary>
+    public async Task<List<FlowStateEntryDto>> GetSessionHistoryAsync(Guid sessionId)
     {
         if (SessionStateHistory.TryGetValue(sessionId, out var history))
         {
@@ -128,7 +161,42 @@ public class SetupConversationHub(
                 return [.. history]; // Return a copy
             }
         }
+        
+        // Try to load from persistence
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var persistence = scope.ServiceProvider.GetService<ISessionPersistenceService>();
+            if (persistence != null)
+            {
+                var json = await persistence.LoadStateHistoryAsync(sessionId);
+                var loadedHistory = JsonSerializer.Deserialize<List<FlowStateEntryDto>>(json) ?? [];
+                
+                if (loadedHistory.Count > 0)
+                {
+                    // Store in memory for future access
+                    SessionStateHistory[sessionId] = loadedHistory;
+                    logger.LogDebug("Loaded {Count} state history entries from persistence for session {SessionId}", 
+                        loadedHistory.Count, sessionId);
+                    return [.. loadedHistory];
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load state history from persistence for session {SessionId}", sessionId);
+        }
+        
         return [];
+    }
+
+    /// <summary>
+    /// Gets the state history for a session (synchronous version for backward compatibility).
+    /// </summary>
+    [Obsolete("Use GetSessionHistoryAsync instead")]
+    public List<FlowStateEntryDto> GetSessionHistory(Guid sessionId)
+    {
+        return GetSessionHistoryAsync(sessionId).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -193,6 +261,7 @@ public class SetupConversationHub(
 
     /// <summary>
     /// Sends a message in an existing session and streams pipeline state updates.
+    /// The pipeline runs to completion even if the client disconnects.
     /// </summary>
     public async IAsyncEnumerable<FlowStateEntryDto> SendMessage(
         SendSetupMessageRequest request,
@@ -215,33 +284,51 @@ public class SetupConversationHub(
         logger.LogInformation("Processing message in session {SessionId}: {Message}", 
             request.SessionId, TruncateForLog(request.Message));
 
+        // Mark session as actively processing
+        conversationSession.IsActivelyProcessing = true;
+        sessionManager.UpdateSession(conversationSession);
+        
+        // Notify dashboard clients that this session is now processing
+        await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("SetupSessionUpdated", new SetupSessionUpdatedEvent(
+            request.SessionId,
+            conversationSession.DisplayName ?? "New Watch",
+            CurrentPrompt: null,
+            IsProcessing: true,
+            IsCompleted: false,
+            IsCancelled: false,
+            IsBackgrounded: false,
+            CurrentStage: conversationSession.CurrentPipelineStage));
+
         // Get or create pipeline session
         PipelineSessions.TryGetValue(request.SessionId, out var pipelineSession);
 
         // Stream pipeline updates with exception handling
-        // Note: We can't use try-catch around yield return, so we use a channel-based approach
+        // CRITICAL: The pipeline must run to completion even if the client disconnects.
+        // We use CancellationToken.None for the task and channel operations so the pipeline
+        // continues. The client's ct is only used to stop yielding results.
         var channel = System.Threading.Channels.Channel.CreateUnbounded<FlowStateEntryDto>();
         
-        var streamTask = Task.Run(async () =>
+        // Start the pipeline task with no cancellation - it runs to completion
+        // regardless of client connection state
+        _ = Task.Run(async () =>
         {
             try
             {
-                await foreach (var entry in StreamPipelineAsync(request.SessionId, request.Message, pipelineSession, ct))
+                await foreach (var entry in StreamPipelineAsync(request.SessionId, request.Message, pipelineSession))
                 {
-                    await channel.Writer.WriteAsync(entry, ct);
+                    // Always record state entries, even if client disconnected
+                    RecordStateEntry(request.SessionId, entry);
+                    
+                    // Try to write to channel (may fail if reader stopped, that's OK)
+                    await channel.Writer.WriteAsync(entry, CancellationToken.None);
                 }
             }
-            catch (OperationCanceledException)
-            {
-                // Expected when client disconnects
-                logger.LogDebug("Pipeline streaming cancelled for session {SessionId}", request.SessionId);
-            }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogError(ex, "Pipeline streaming failed for session {SessionId}", request.SessionId);
                 
-                // Write error entry before completing
-                await channel.Writer.WriteAsync(new FlowStateEntryDto
+                // Write error entry
+                var errorEntry = new FlowStateEntryDto
                 {
                     Stage = "Failed",
                     Status = FlowStateStatusDto.Failed,
@@ -249,34 +336,49 @@ public class SetupConversationHub(
                     Details = ex.GetType().Name,
                     Timestamp = DateTimeOffset.UtcNow,
                     IsCurrentState = true
-                }, CancellationToken.None);
+                };
+                RecordStateEntry(request.SessionId, errorEntry);
+                await channel.Writer.WriteAsync(errorEntry, CancellationToken.None);
             }
             finally
             {
+                // Clear actively processing flag when pipeline completes
+                var session = sessionManager.GetSession(request.SessionId);
+                if (session != null)
+                {
+                    session.IsActivelyProcessing = false;
+                    sessionManager.UpdateSession(session);
+                }
+                
                 channel.Writer.Complete();
             }
-        }, ct);
+        }, CancellationToken.None);
 
+        // Read from channel and yield to client while connected
+        // When client disconnects (ct cancelled), we stop yielding but the task continues
         await foreach (var entry in channel.Reader.ReadAllAsync(ct))
         {
-            yield return RecordStateEntry(request.SessionId, entry);
+            yield return entry;
         }
-
-        await streamTask;
+        
+        // Log if client disconnected mid-processing
+        if (ct.IsCancellationRequested)
+        {
+            logger.LogInformation("Client disconnected from session {SessionId}, pipeline will complete", request.SessionId);
+        }
     }
 
     /// <summary>
     /// Streams pipeline execution as FlowStateEntry updates.
+    /// Runs to completion regardless of client connection - uses application lifetime for cancellation.
     /// </summary>
     private async IAsyncEnumerable<FlowStateEntryDto> StreamPipelineAsync(
         Guid sessionId,
         string message,
-        PipelineSession? existingSession,
-        [EnumeratorCancellation] CancellationToken ct)
+        PipelineSession? existingSession)
     {
-        // Use application shutdown token for pipeline operations instead of connection token.
+        // Use application shutdown token for pipeline operations.
         // This ensures pipeline operations complete even if the client disconnects.
-        // We still check the connection token for yielding results back to the client.
         var pipelineCt = applicationLifetime.ApplicationStopping;
         
         var options = new PipelineOptions { MaxRecoveryAttempts = 2 };
@@ -296,9 +398,6 @@ public class SetupConversationHub(
             // Continue existing session with feedback - stream progress
             await foreach (var progress in pipeline.ContinueWithFeedbackStreamingAsync(existingSession, message, pipelineCt))
             {
-                if (ct.IsCancellationRequested)
-                    yield break;
-
                 yield return MapProgressToFlowState(progress);
                 
                 // Capture final result
@@ -314,9 +413,6 @@ public class SetupConversationHub(
             // New pipeline execution - stream progress
             await foreach (var progress in pipeline.ProcessStreamingAsync(message, options, pipelineCt))
             {
-                if (ct.IsCancellationRequested)
-                    yield break;
-
                 yield return MapProgressToFlowState(progress);
                 
                 // Capture final result and update session
@@ -331,10 +427,6 @@ public class SetupConversationHub(
                 }
             }
         }
-
-        // If client disconnected, stop yielding results but pipeline completed successfully
-        if (ct.IsCancellationRequested)
-            yield break;
 
         // Handle the final result
         if (finalResult == null)
@@ -398,26 +490,19 @@ public class SetupConversationHub(
             // Attempt recovery
             if (finalResult.Session.RecoveryAttempts < options.MaxRecoveryAttempts)
             {
-                if (!ct.IsCancellationRequested)
+                yield return new FlowStateEntryDto
                 {
-                    yield return new FlowStateEntryDto
-                    {
-                        Stage = "Recovery",
-                        Status = FlowStateStatusDto.Recovery,
-                        Summary = "Attempting to recover...",
-                        Timestamp = DateTimeOffset.UtcNow,
-                        IsCurrentState = true
-                    };
-                }
+                    Stage = "Recovery",
+                    Status = FlowStateStatusDto.Recovery,
+                    Summary = "Attempting to recover...",
+                    Timestamp = DateTimeOffset.UtcNow,
+                    IsCurrentState = true
+                };
 
                 var recoveryResult = await pipeline.RecoverFromFailureAsync(finalResult.Session, finalResult, options, pipelineCt);
                 
                 // Update stored session
                 PipelineSessions[sessionId] = recoveryResult.Session;
-
-                // If client disconnected, stop yielding results
-                if (ct.IsCancellationRequested)
-                    yield break;
 
                 // Emit recovery diagnostic
                 if (!string.IsNullOrEmpty(recoveryResult.Session.RecoveryDiagnosticContext))
@@ -471,15 +556,27 @@ public class SetupConversationHub(
                             IsProcessing: false,
                             IsCompleted: true,
                             IsCancelled: false), pipelineCt);
-                        
-                        // Send the SetupCompleted event with the watch ID
-                        await Clients.Caller.SendAsync("SetupCompleted", createdWatch.Id, 
-                            $"URL: {recoveryResult.FinalConfiguration.Url}", pipelineCt);
                     }
                     catch (Exception ex)
                     {
                         logger.LogError(ex, "Failed to create watch after recovery for URL {Url}", recoveryResult.FinalConfiguration.Url);
                         persistError = ex.Message;
+                    }
+                    
+                    // Try to notify caller - this may fail if client disconnected, which is OK
+                    if (createdWatch != null)
+                    {
+                        try
+                        {
+                            await Clients.Caller.SendAsync("SetupCompleted", createdWatch.Id, 
+                                $"URL: {recoveryResult.FinalConfiguration.Url}", pipelineCt);
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // Client disconnected before we could notify them - this is fine,
+                            // the watch was created and dashboard was notified via changeHubContext
+                            logger.LogDebug("Client disconnected before SetupCompleted notification for watch {WatchId}", createdWatch.Id);
+                        }
                     }
                     
                     if (persistError != null)
@@ -595,18 +692,29 @@ public class SetupConversationHub(
                     IsProcessing: false,
                     IsCompleted: true,
                     IsCancelled: false), pipelineCt);
-                
-                // Don't remove session or history yet - keep for page reload resilience
-                // They will be cleaned up when the session expires or is explicitly ended
-                
-                // Send the SetupCompleted event with the watch ID
-                await Clients.Caller.SendAsync("SetupCompleted", createdWatch.Id, 
-                    $"URL: {finalResult.FinalConfiguration.Url}", pipelineCt);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to create watch for URL {Url}", finalResult.FinalConfiguration.Url);
                 persistError = ex.Message;
+            }
+            
+            // Try to notify caller - this may fail if client disconnected, which is OK
+            // Don't remove session or history yet - keep for page reload resilience
+            // They will be cleaned up when the session expires or is explicitly ended
+            if (createdWatch != null)
+            {
+                try
+                {
+                    await Clients.Caller.SendAsync("SetupCompleted", createdWatch.Id, 
+                        $"URL: {finalResult.FinalConfiguration.Url}", pipelineCt);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Client disconnected before we could notify them - this is fine,
+                    // the watch was created and dashboard was notified via changeHubContext
+                    logger.LogDebug("Client disconnected before SetupCompleted notification for watch {WatchId}", createdWatch.Id);
+                }
             }
             
             if (persistError != null)
@@ -694,7 +802,7 @@ public class SetupConversationHub(
             SessionId = session.SessionId,
             Stage = pipelineSession?.BestSelector != null ? "Complete" : (session.CurrentPipelineStage ?? "InProgress"),
             AwaitingInput = session.AwaitingUserInput,
-            IsBackgrounded = session.IsBackgrounded,
+            IsBackgrounded = false, // Background mode removed
             CurrentPrompt = session.CurrentPrompt,
             Configuration = pipelineSession?.BestSelector != null 
                 ? new PartialWatchConfigurationDto
@@ -806,57 +914,6 @@ public class SetupConversationHub(
         SessionStateHistory.TryRemove(sessionId, out _);
         
         logger.LogInformation("Ended session {SessionId}", sessionId);
-    }
-
-    /// <summary>
-    /// Sends a session to the background. The session continues processing,
-    /// but the client is disconnecting and navigating away.
-    /// Unlike EndSession, this preserves the session state for later resumption
-    /// or completion notification.
-    /// </summary>
-    public async Task SendToBackground(Guid sessionId)
-    {
-        var session = sessionManager.GetSession(sessionId);
-        if (session == null)
-        {
-            logger.LogWarning("Attempted to background non-existent session {SessionId}", sessionId);
-            return;
-        }
-
-        // Mark session as backgrounded
-        session.IsBackgrounded = true;
-        sessionManager.UpdateSession(session);
-
-        // Remove connection from session group (client is leaving)
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"session-{sessionId}");
-
-        // Get current pipeline stage for display
-        PipelineSessions.TryGetValue(sessionId, out var pipelineSession);
-        var currentStage = pipelineSession switch
-        {
-            { BestSelector: not null } => "Validating",
-            { ContentAnalysis: not null } => "Generating selectors",
-            { FetchedContent: not null } => "Analyzing content",
-            { SelectedUrl: not null } => "Fetching page",
-            { ExtractedUrls.Count: > 0 } => "URL extracted",
-            _ => "Processing"
-        };
-
-        session.CurrentPipelineStage = currentStage;
-        sessionManager.UpdateSession(session);
-
-        // Broadcast to dashboard that session is now backgrounded
-        await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("SetupSessionUpdated", new SetupSessionUpdatedEvent(
-            sessionId,
-            session.DisplayName ?? "New Watch",
-            CurrentPrompt: session.CurrentPrompt,
-            IsProcessing: !session.AwaitingUserInput,
-            IsCompleted: false,
-            IsCancelled: false,
-            IsBackgrounded: true,
-            CurrentStage: currentStage));
-
-        logger.LogInformation("Session {SessionId} sent to background, stage: {Stage}", sessionId, currentStage);
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
