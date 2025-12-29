@@ -78,6 +78,27 @@ public static class WatchEndpoints
             .Produces(204)
             .Produces(404);
 
+        // Bulk operations
+        group.MapPost("/bulk/enable", BulkEnable)
+            .WithName("BulkEnableWatches")
+            .Produces<BulkOperationResultDto>();
+
+        group.MapPost("/bulk/disable", BulkDisable)
+            .WithName("BulkDisableWatches")
+            .Produces<BulkOperationResultDto>();
+
+        group.MapPost("/bulk/delete", BulkDelete)
+            .WithName("BulkDeleteWatches")
+            .Produces<BulkOperationResultDto>();
+
+        group.MapPost("/bulk/check", BulkCheck)
+            .WithName("BulkCheckWatches")
+            .Produces<BulkOperationResultDto>();
+
+        group.MapPost("/bulk/edit", BulkEdit)
+            .WithName("BulkEditWatches")
+            .Produces<BulkOperationResultDto>();
+
         return group;
     }
 
@@ -376,6 +397,297 @@ public static class WatchEndpoints
 
         await watchService.DisableWatchAsync(guidId, ct);
         return Results.NoContent();
+    }
+
+    // ============================================================================
+    // Bulk Operations
+    // ============================================================================
+
+    private static async Task<IResult> BulkEnable(
+        BulkWatchOperationDto dto,
+        IWatchService watchService,
+        IOutputCacheStore cache,
+        CancellationToken ct)
+    {
+        var result = new BulkOperationResultDto();
+
+        foreach (var id in dto.WatchIds)
+        {
+            try
+            {
+                if (!Guid.TryParse(id, out var guidId))
+                {
+                    result.Failures[id] = "Invalid ID format";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var watch = await watchService.GetByIdAsync(guidId, ct);
+                if (watch == null)
+                {
+                    result.Failures[id] = "Watch not found";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                await watchService.EnableWatchAsync(guidId, ct);
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                result.Failures[id] = ex.Message;
+                result.FailureCount++;
+            }
+        }
+
+        await cache.EvictByTagAsync("watches", ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BulkDisable(
+        BulkWatchOperationDto dto,
+        IWatchService watchService,
+        IOutputCacheStore cache,
+        CancellationToken ct)
+    {
+        var result = new BulkOperationResultDto();
+
+        foreach (var id in dto.WatchIds)
+        {
+            try
+            {
+                if (!Guid.TryParse(id, out var guidId))
+                {
+                    result.Failures[id] = "Invalid ID format";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var watch = await watchService.GetByIdAsync(guidId, ct);
+                if (watch == null)
+                {
+                    result.Failures[id] = "Watch not found";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                await watchService.DisableWatchAsync(guidId, ct);
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                result.Failures[id] = ex.Message;
+                result.FailureCount++;
+            }
+        }
+
+        await cache.EvictByTagAsync("watches", ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BulkDelete(
+        BulkWatchOperationDto dto,
+        IWatchService watchService,
+        IOutputCacheStore cache,
+        CancellationToken ct)
+    {
+        var result = new BulkOperationResultDto();
+
+        foreach (var id in dto.WatchIds)
+        {
+            try
+            {
+                if (!Guid.TryParse(id, out var guidId))
+                {
+                    result.Failures[id] = "Invalid ID format";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var watch = await watchService.GetByIdAsync(guidId, ct);
+                if (watch == null)
+                {
+                    result.Failures[id] = "Watch not found";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                await watchService.DeleteWatchAsync(guidId, ct);
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                result.Failures[id] = ex.Message;
+                result.FailureCount++;
+            }
+        }
+
+        await cache.EvictByTagAsync("watches", ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BulkCheck(
+        BulkWatchOperationDto dto,
+        IWatchService watchService,
+        CancellationToken ct)
+    {
+        var result = new BulkOperationResultDto();
+
+        // Note: Checks are triggered asynchronously, so success means the check was initiated
+        foreach (var id in dto.WatchIds)
+        {
+            try
+            {
+                if (!Guid.TryParse(id, out var guidId))
+                {
+                    result.Failures[id] = "Invalid ID format";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var watch = await watchService.GetByIdAsync(guidId, ct);
+                if (watch == null)
+                {
+                    result.Failures[id] = "Watch not found";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                // Fire and forget - don't await the check
+                _ = watchService.CheckForChangesAsync(guidId, ct);
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                result.Failures[id] = ex.Message;
+                result.FailureCount++;
+            }
+        }
+
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BulkEdit(
+        BulkWatchEditDto dto,
+        IWatchService watchService,
+        ICategoryService categoryService,
+        IOutputCacheStore cache,
+        CancellationToken ct)
+    {
+        var result = new BulkOperationResultDto();
+
+        // Validate category if provided
+        Guid? categoryGuid = null;
+        if (dto.ChangeCategoryId && !string.IsNullOrEmpty(dto.CategoryId))
+        {
+            if (!Guid.TryParse(dto.CategoryId, out var catId))
+            {
+                return Results.BadRequest("Invalid category ID format");
+            }
+            var category = await categoryService.GetByIdAsync(catId, ct);
+            if (category == null)
+            {
+                return Results.BadRequest("Category not found");
+            }
+            categoryGuid = catId;
+        }
+
+        foreach (var id in dto.WatchIds)
+        {
+            try
+            {
+                if (!Guid.TryParse(id, out var guidId))
+                {
+                    result.Failures[id] = "Invalid ID format";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var watch = await watchService.GetByIdAsync(guidId, ct);
+                if (watch == null)
+                {
+                    result.Failures[id] = "Watch not found";
+                    result.FailureCount++;
+                    continue;
+                }
+
+                var modified = false;
+
+                // Add tags
+                if (dto.AddTags?.Count > 0)
+                {
+                    var normalizedTags = TagNormalizer.NormalizeList(dto.AddTags);
+                    foreach (var tag in normalizedTags)
+                    {
+                        if (!watch.Tags.Contains(tag))
+                        {
+                            watch.Tags.Add(tag);
+                            modified = true;
+                        }
+                    }
+                }
+
+                // Remove tags
+                if (dto.RemoveTags?.Count > 0)
+                {
+                    var normalizedTags = TagNormalizer.NormalizeList(dto.RemoveTags);
+                    foreach (var tag in normalizedTags)
+                    {
+                        if (watch.Tags.Remove(tag))
+                        {
+                            watch.TagColors.Remove(tag);
+                            modified = true;
+                        }
+                    }
+                }
+
+                // Update category
+                if (dto.ChangeCategoryId)
+                {
+                    watch.CategoryId = categoryGuid;
+                    modified = true;
+                }
+
+                // Update check interval
+                if (dto.CheckInterval.HasValue)
+                {
+                    watch.CheckInterval = dto.CheckInterval.Value;
+                    watch.ScheduleSettings.BaseInterval = dto.CheckInterval.Value;
+                    modified = true;
+                }
+
+                // Update JavaScript setting
+                if (dto.UseJavaScript.HasValue)
+                {
+                    watch.FetchSettings.UseJavaScript = dto.UseJavaScript.Value;
+                    modified = true;
+                }
+
+                // Update notifications enabled
+                if (dto.NotificationsEnabled.HasValue)
+                {
+                    watch.Notifications.EmailEnabled = dto.NotificationsEnabled.Value;
+                    watch.Notifications.WebhookEnabled = dto.NotificationsEnabled.Value && !string.IsNullOrEmpty(watch.Notifications.WebhookUrl);
+                    watch.Notifications.DiscordEnabled = dto.NotificationsEnabled.Value && !string.IsNullOrEmpty(watch.Notifications.DiscordWebhookUrl);
+                    modified = true;
+                }
+
+                if (modified)
+                {
+                    await watchService.UpdateWatchAsync(watch, ct);
+                }
+
+                result.SuccessCount++;
+            }
+            catch (Exception ex)
+            {
+                result.Failures[id] = ex.Message;
+                result.FailureCount++;
+            }
+        }
+
+        await cache.EvictByTagAsync("watches", ct);
+        return Results.Ok(result);
     }
 
     private static WatchDetailDto MapToDetailDto(WatchedSite watch, ChangeSnapshot? snapshot, Category? category)

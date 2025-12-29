@@ -171,9 +171,9 @@ public static class LlmEndpoints
                 CurrentPrompt = s.CurrentPrompt,
                 LastActivityAt = s.LastActivityAt,
                 CreatedAt = s.CreatedAt,
-                // Session is processing if not awaiting input and either has pending input or is backgrounded
-                IsProcessing = !s.AwaitingUserInput && (!string.IsNullOrEmpty(s.PendingInput) || s.IsBackgrounded),
-                IsBackgrounded = s.IsBackgrounded,
+                // Session is processing if actively running OR has pending input to process
+                IsProcessing = s.IsActivelyProcessing || (!s.AwaitingUserInput && !string.IsNullOrEmpty(s.PendingInput)),
+                IsBackgrounded = false, // Background mode removed
                 CurrentStage = s.CurrentPipelineStage
             })
             .ToList();

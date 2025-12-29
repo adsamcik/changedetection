@@ -207,6 +207,7 @@ builder.Services.AddSingleton<PlaywrightFetcher>();
 builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<PlaywrightFetcher>());
 builder.Services.AddSingleton<ILlmLogService, LlmLogService>();
 builder.Services.AddScoped<IContentExtractor, ContentExtractor>();
+builder.Services.AddScoped<IDomCompactor, DomCompactor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
 builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
@@ -214,9 +215,17 @@ builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
 
+// Notification outbox for reliable delivery
+builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepository>();
+builder.Services.AddScoped<INotificationOutboxService, NotificationOutboxService>();
+
+// Session persistence for resumable setup wizards
+builder.Services.AddScoped<ISessionPersistenceService, SessionPersistenceService>();
+
 // LLM-powered content analysis services
 builder.Services.AddScoped<IChangeAnalyzer, ChangeAnalyzer>();
 builder.Services.AddScoped<IContentEnricher, ContentEnricher>();
+builder.Services.AddScoped<IDeduplicationService, DeduplicationService>();
 
 // Watch setup pipeline stages and orchestrator
 builder.Services.AddScoped<UrlExtractionStage>();
@@ -225,6 +234,15 @@ builder.Services.AddScoped<ContentAnalysisStage>();
 builder.Services.AddScoped<SelectorGenerationStage>();
 builder.Services.AddScoped<SelectorValidationStage>();
 builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
+
+// Pipeline queue for persistent, concurrent pipeline execution
+builder.Services.AddSingleton<IPipelineQueueRepository, PipelineQueueRepository>();
+builder.Services.AddSingleton<PipelineQueueService>();
+builder.Services.AddSingleton<IPipelineQueueService>(sp => sp.GetRequiredService<PipelineQueueService>());
+builder.Services.AddHostedService<PipelineWorkerService>();
+
+// Pipeline event tracking for history and debugging
+builder.Services.AddScoped<IPipelineEventService, PipelineEventService>();
 
 // Pipeline support services
 builder.Services.AddSingleton<IConversationSessionManager, ConversationSessionManager>();
@@ -245,8 +263,13 @@ builder.Services.AddScoped<IAlertThresholdEvaluator, AlertThresholdEvaluator>();
 builder.Services.AddScoped<INotificationTemplateEngine, NotificationTemplateEngine>();
 builder.Services.AddScoped<IPriceTrackingService, PriceTrackingService>();
 
+// Startup/shutdown services (registered first so they stop last during shutdown)
+builder.Services.AddHostedService<GracefulShutdownService>();
+builder.Services.AddHostedService<WatchStatusRecoveryService>();
+
 // Background services
 builder.Services.AddHostedService<ChangeCheckBackgroundService>();
+builder.Services.AddHostedService<NotificationOutboxProcessor>();
 
 // Graceful shutdown for Playwright
 builder.Services.AddHostedService<PlaywrightShutdownService>();
@@ -309,6 +332,11 @@ app.MapGroup("/api/llm")
 app.MapGroup("/api/settings")
     .RequireAdminInSsoMode(builder.Configuration)
     .MapSettingsEndpoints();
+
+// Notification settings and templates requires admin in SSO mode
+app.MapGroup("/api/notifications")
+    .RequireAdminInSsoMode(builder.Configuration)
+    .MapNotificationEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
