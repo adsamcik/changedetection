@@ -4,7 +4,7 @@ using ChangeDetection.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Services;
 
@@ -25,8 +25,8 @@ public class AlertThresholdEvaluatorTests
 
     #region DropsBelow Tests
 
-    [Fact]
-    public void Evaluate_DropsBelow_Triggers_WhenValueDropsBelowThreshold()
+    [Test]
+    public async Task Evaluate_DropsBelow_Triggers_WhenValueDropsBelowThreshold()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -42,10 +42,11 @@ public class AlertThresholdEvaluatorTests
         result.HasTriggeredAlerts.ShouldBeTrue();
         result.TriggeredThresholds.ShouldHaveSingleItem();
         result.TriggeredThresholds[0].Message.ShouldContain("dropped below");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_DropsBelow_DoesNotTrigger_WhenValueStaysAbove()
+    [Test]
+    public async Task Evaluate_DropsBelow_DoesNotTrigger_WhenValueStaysAbove()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -59,10 +60,11 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_DropsBelow_DoesNotTrigger_WhenAlreadyBelow()
+    [Test]
+    public async Task Evaluate_DropsBelow_DoesNotTrigger_WhenAlreadyBelow()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -76,14 +78,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region RisesAbove Tests
 
-    [Fact]
-    public void Evaluate_RisesAbove_Triggers_WhenValueRisesAboveThreshold()
+    [Test]
+    public async Task Evaluate_RisesAbove_Triggers_WhenValueRisesAboveThreshold()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -98,14 +101,15 @@ public class AlertThresholdEvaluatorTests
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
         result.TriggeredThresholds[0].Message.ShouldContain("rose above");
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region DropsByPercent Tests
 
-    [Fact]
-    public void Evaluate_DropsByPercent_Triggers_WhenDropExceedsThreshold()
+    [Test]
+    public async Task Evaluate_DropsByPercent_Triggers_WhenDropExceedsThreshold()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -120,10 +124,11 @@ public class AlertThresholdEvaluatorTests
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
         result.TriggeredThresholds[0].CalculatedChange.ShouldBe(-30);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_DropsByPercent_DoesNotTrigger_WhenDropBelowThreshold()
+    [Test]
+    public async Task Evaluate_DropsByPercent_DoesNotTrigger_WhenDropBelowThreshold()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -137,14 +142,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region RisesByPercent Tests
 
-    [Fact]
-    public void Evaluate_RisesByPercent_Triggers_WhenRiseExceedsThreshold()
+    [Test]
+    public async Task Evaluate_RisesByPercent_Triggers_WhenRiseExceedsThreshold()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -158,14 +164,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region ChangesBy Tests
 
-    [Fact]
-    public void Evaluate_ChangesBy_Triggers_ForAbsoluteChange()
+    [Test]
+    public async Task Evaluate_ChangesBy_Triggers_ForAbsoluteChange()
     {
         // Arrange
         var field = CreateField("Stock", new FieldAlertThreshold
@@ -179,10 +186,11 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_ChangesBy_Triggers_ForNegativeChange()
+    [Test]
+    public async Task Evaluate_ChangesBy_Triggers_ForNegativeChange()
     {
         // Arrange
         var field = CreateField("Stock", new FieldAlertThreshold
@@ -196,14 +204,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region ChangesByPercent Tests
 
-    [Fact]
-    public void Evaluate_ChangesByPercent_Triggers_ForLargeChange()
+    [Test]
+    public async Task Evaluate_ChangesByPercent_Triggers_ForLargeChange()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -217,14 +226,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region EntersRange/ExitsRange Tests
 
-    [Fact]
-    public void Evaluate_EntersRange_Triggers_WhenValueEntersRange()
+    [Test]
+    public async Task Evaluate_EntersRange_Triggers_WhenValueEntersRange()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -239,10 +249,11 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_ExitsRange_Triggers_WhenValueExitsRange()
+    [Test]
+    public async Task Evaluate_ExitsRange_Triggers_WhenValueExitsRange()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -257,14 +268,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region NewMinimum/NewMaximum Tests
 
-    [Fact]
-    public void Evaluate_NewMinimum_Triggers_WhenNewHistoricalMin()
+    [Test]
+    public async Task Evaluate_NewMinimum_Triggers_WhenNewHistoricalMin()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -278,10 +290,11 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_NewMaximum_Triggers_WhenNewHistoricalMax()
+    [Test]
+    public async Task Evaluate_NewMaximum_Triggers_WhenNewHistoricalMax()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -295,14 +308,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region TargetReached Tests
 
-    [Fact]
-    public void Evaluate_TargetReached_Triggers_WhenPriceReachesTarget()
+    [Test]
+    public async Task Evaluate_TargetReached_Triggers_WhenPriceReachesTarget()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -316,14 +330,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Cooldown Tests
 
-    [Fact]
-    public void Evaluate_WithCooldown_DoesNotTrigger_WhenInCooldownPeriod()
+    [Test]
+    public async Task Evaluate_WithCooldown_DoesNotTrigger_WhenInCooldownPeriod()
     {
         // Arrange
         var threshold = new FieldAlertThreshold
@@ -340,10 +355,11 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Evaluate_WithCooldown_Triggers_WhenCooldownExpired()
+    [Test]
+    public async Task Evaluate_WithCooldown_Triggers_WhenCooldownExpired()
     {
         // Arrange
         var threshold = new FieldAlertThreshold
@@ -360,14 +376,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region OneTime Tests
 
-    [Fact]
-    public void RecordTrigger_OneTime_DisablesThreshold()
+    [Test]
+    public async Task RecordTrigger_OneTime_DisablesThreshold()
     {
         // Arrange
         var threshold = new FieldAlertThreshold
@@ -385,10 +402,11 @@ public class AlertThresholdEvaluatorTests
         threshold.IsEnabled.ShouldBeFalse();
         threshold.TriggerCount.ShouldBe(1);
         threshold.LastTriggeredAt.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void RecordTrigger_NotOneTime_KeepsEnabled()
+    [Test]
+    public async Task RecordTrigger_NotOneTime_KeepsEnabled()
     {
         // Arrange
         var threshold = new FieldAlertThreshold
@@ -405,14 +423,15 @@ public class AlertThresholdEvaluatorTests
         // Assert
         threshold.IsEnabled.ShouldBeTrue();
         threshold.TriggerCount.ShouldBe(1);
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Stock Status Tests
 
-    [Fact]
-    public void EvaluateStockChange_BackInStock_Triggers()
+    [Test]
+    public async Task EvaluateStockChange_BackInStock_Triggers()
     {
         // Arrange
         var field = CreateField("Stock", new FieldAlertThreshold
@@ -426,10 +445,11 @@ public class AlertThresholdEvaluatorTests
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
         result.TriggeredThresholds[0].Message.ShouldContain("back in stock");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void EvaluateStockChange_OutOfStock_Triggers()
+    [Test]
+    public async Task EvaluateStockChange_OutOfStock_Triggers()
     {
         // Arrange
         var field = CreateField("Stock", new FieldAlertThreshold
@@ -443,10 +463,11 @@ public class AlertThresholdEvaluatorTests
         // Assert
         result.HasTriggeredAlerts.ShouldBeTrue();
         result.TriggeredThresholds[0].Message.ShouldContain("out of stock");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void EvaluateStockChange_NoChange_DoesNotTrigger()
+    [Test]
+    public async Task EvaluateStockChange_NoChange_DoesNotTrigger()
     {
         // Arrange
         var field = CreateField("Stock", new FieldAlertThreshold
@@ -459,14 +480,15 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Disabled Threshold Tests
 
-    [Fact]
-    public void Evaluate_DisabledThreshold_IsSkipped()
+    [Test]
+    public async Task Evaluate_DisabledThreshold_IsSkipped()
     {
         // Arrange
         var field = CreateField("Price", new FieldAlertThreshold
@@ -481,6 +503,7 @@ public class AlertThresholdEvaluatorTests
 
         // Assert
         result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
     #endregion

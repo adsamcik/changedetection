@@ -1,5 +1,6 @@
 using ChangeDetection.Shared.Dtos;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Pipeline;
 
@@ -11,8 +12,8 @@ public class FlowStateEntryTests
 {
     #region FlowStateEntry Tests
 
-    [Fact]
-    public void FlowStateEntry_HasRequiredProperties()
+    [Test]
+    public async Task FlowStateEntry_HasRequiredProperties()
     {
         var entry = new FlowStateEntry
         {
@@ -24,10 +25,11 @@ public class FlowStateEntryTests
         entry.Stage.ShouldBe("UrlExtraction");
         entry.Status.ShouldBe(FlowStateStatus.InProgress);
         entry.Summary.ShouldBe("Extracting URL from input...");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntry_SupportsOptionalProperties()
+    [Test]
+    public async Task FlowStateEntry_SupportsOptionalProperties()
     {
         var entry = new FlowStateEntry
         {
@@ -42,10 +44,11 @@ public class FlowStateEntryTests
         entry.Details.ShouldNotBeNullOrEmpty();
         entry.IsCurrentState.ShouldBeTrue();
         entry.WatchId.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntry_SupportsOptions()
+    [Test]
+    public async Task FlowStateEntry_SupportsOptions()
     {
         var options = new List<FlowOption>
         {
@@ -66,10 +69,11 @@ public class FlowStateEntryTests
         entry.Options.Count.ShouldBe(2);
         entry.Options[0].IsRecommended.ShouldBeTrue();
         entry.Options[1].Preview.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntry_DefaultTimestamp_IsUtcNow()
+    [Test]
+    public async Task FlowStateEntry_DefaultTimestamp_IsUtcNow()
     {
         var before = DateTimeOffset.UtcNow;
         
@@ -84,14 +88,15 @@ public class FlowStateEntryTests
 
         entry.Timestamp.ShouldBeGreaterThanOrEqualTo(before.AddMilliseconds(-10));
         entry.Timestamp.ShouldBeLessThanOrEqualTo(after.AddMilliseconds(10));
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region FlowStateEntryDto Tests
 
-    [Fact]
-    public void FlowStateEntryDto_HasAllProperties()
+    [Test]
+    public async Task FlowStateEntryDto_HasAllProperties()
     {
         var dto = new FlowStateEntryDto
         {
@@ -109,10 +114,11 @@ public class FlowStateEntryTests
         dto.Stage.ShouldBe("UrlExtraction");
         dto.Status.ShouldBe(FlowStateStatusDto.Completed);
         dto.Summary.ShouldBe("URL extracted successfully");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntryDto_WatchId_CanBeSet()
+    [Test]
+    public async Task FlowStateEntryDto_WatchId_CanBeSet()
     {
         var watchId = Guid.NewGuid();
         
@@ -125,10 +131,11 @@ public class FlowStateEntryTests
         };
 
         dto.WatchId.ShouldBe(watchId);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntryDto_Options_CanBeSet()
+    [Test]
+    public async Task FlowStateEntryDto_Options_CanBeSet()
     {
         var dto = new FlowStateEntryDto
         {
@@ -145,21 +152,22 @@ public class FlowStateEntryTests
         dto.Options.ShouldNotBeNull();
         dto.Options.Count.ShouldBe(2);
         dto.Options[0].Label.ShouldBe("Option 1");
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region FlowStateStatus Mapping Tests
 
-    [Theory]
-    [InlineData(FlowStateStatusDto.Pending, FlowStateStatus.Pending)]
-    [InlineData(FlowStateStatusDto.InProgress, FlowStateStatus.InProgress)]
-    [InlineData(FlowStateStatusDto.Thinking, FlowStateStatus.Thinking)]
-    [InlineData(FlowStateStatusDto.Completed, FlowStateStatus.Completed)]
-    [InlineData(FlowStateStatusDto.Failed, FlowStateStatus.Failed)]
-    [InlineData(FlowStateStatusDto.Question, FlowStateStatus.Question)]
-    [InlineData(FlowStateStatusDto.Recovery, FlowStateStatus.Recovery)]
-    public void FlowStateStatus_MapsCorrectlyBetweenDtoAndRecord(FlowStateStatusDto dtoStatus, FlowStateStatus expectedStatus)
+    [Test]
+    [Arguments(FlowStateStatusDto.Pending, FlowStateStatus.Pending)]
+    [Arguments(FlowStateStatusDto.InProgress, FlowStateStatus.InProgress)]
+    [Arguments(FlowStateStatusDto.Thinking, FlowStateStatus.Thinking)]
+    [Arguments(FlowStateStatusDto.Completed, FlowStateStatus.Completed)]
+    [Arguments(FlowStateStatusDto.Failed, FlowStateStatus.Failed)]
+    [Arguments(FlowStateStatusDto.Question, FlowStateStatus.Question)]
+    [Arguments(FlowStateStatusDto.Recovery, FlowStateStatus.Recovery)]
+    public async Task FlowStateStatus_MapsCorrectlyBetweenDtoAndRecord(FlowStateStatusDto dtoStatus, FlowStateStatus expectedStatus)
     {
         var mapped = dtoStatus switch
         {
@@ -174,14 +182,15 @@ public class FlowStateEntryTests
         };
 
         mapped.ShouldBe(expectedStatus);
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region FlowOption Tests
 
-    [Fact]
-    public void FlowOption_RecordCreation()
+    [Test]
+    public async Task FlowOption_RecordCreation()
     {
         var option = new FlowOption("Label", "value", true, "Preview text");
 
@@ -189,23 +198,25 @@ public class FlowStateEntryTests
         option.Value.ShouldBe("value");
         option.IsRecommended.ShouldBeTrue();
         option.Preview.ShouldBe("Preview text");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowOption_DefaultValues()
+    [Test]
+    public async Task FlowOption_DefaultValues()
     {
         var option = new FlowOption("Label", "value");
 
         option.IsRecommended.ShouldBeFalse();
         option.Preview.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Stage Progression Tests
 
-    [Fact]
-    public void FlowStateEntry_CommonStageProgression()
+    [Test]
+    public async Task FlowStateEntry_CommonStageProgression()
     {
         var entries = new List<FlowStateEntry>
         {
@@ -225,10 +236,11 @@ public class FlowStateEntryTests
         entries.First().Stage.ShouldBe("UrlExtraction");
         entries.Last().Stage.ShouldBe("Complete");
         entries.Last().WatchId.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntry_QuestionInterruptionFlow()
+    [Test]
+    public async Task FlowStateEntry_QuestionInterruptionFlow()
     {
         var entries = new List<FlowStateEntry>
         {
@@ -241,10 +253,11 @@ public class FlowStateEntryTests
         lastEntry.Status.ShouldBe(FlowStateStatus.Question);
         lastEntry.Options.ShouldNotBeNull();
         lastEntry.Options.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FlowStateEntry_ErrorFlow()
+    [Test]
+    public async Task FlowStateEntry_ErrorFlow()
     {
         var entries = new List<FlowStateEntry>
         {
@@ -258,6 +271,7 @@ public class FlowStateEntryTests
         lastEntry.Status.ShouldBe(FlowStateStatus.Failed);
         lastEntry.Details.ShouldNotBeNull();
         lastEntry.Details!.ShouldContain("timeout");
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -268,8 +282,8 @@ public class FlowStateEntryTests
 /// </summary>
 public class SessionStateHistoryManagementTests
 {
-    [Fact]
-    public void HistoryList_MarksOnlyLastEntryAsCurrent()
+    [Test]
+    public async Task HistoryList_MarksOnlyLastEntryAsCurrent()
     {
         var history = new List<FlowStateEntryDto>();
 
@@ -296,10 +310,11 @@ public class SessionStateHistoryManagementTests
         history.Count(e => e.IsCurrentState).ShouldBe(1);
         history.Last().IsCurrentState.ShouldBeTrue();
         history.First().IsCurrentState.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void HistoryList_PreservesAllEntries()
+    [Test]
+    public async Task HistoryList_PreservesAllEntries()
     {
         var history = new List<FlowStateEntryDto>();
 
@@ -320,10 +335,11 @@ public class SessionStateHistoryManagementTests
         {
             history[i].Stage.ShouldBe($"Stage{i}");
         }
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void HistoryList_CopyIsIndependent()
+    [Test]
+    public async Task HistoryList_CopyIsIndependent()
     {
         var history = new List<FlowStateEntryDto>
         {
@@ -340,6 +356,7 @@ public class SessionStateHistoryManagementTests
         // Copy should be unaffected
         copy.Count.ShouldBe(2);
         history.Count.ShouldBe(3);
+        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -362,8 +379,8 @@ public class SessionStateHistoryManagementTests
 /// </summary>
 public class HistoryStateRestorationTests
 {
-    [Fact]
-    public void RestoreState_QuestionEntry_SetsAwaitingInput()
+    [Test]
+    public async Task RestoreState_QuestionEntry_SetsAwaitingInput()
     {
         var history = new List<FlowStateEntryDto>
         {
@@ -386,10 +403,11 @@ public class HistoryStateRestorationTests
         currentInputType.ShouldBe("select");
         currentOptions.ShouldNotBeNull();
         currentOptions.Count.ShouldBe(1);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void RestoreState_CompletedEntry_SetsComplete()
+    [Test]
+    public async Task RestoreState_CompletedEntry_SetsComplete()
     {
         var watchId = Guid.NewGuid();
         var history = new List<FlowStateEntryDto>
@@ -409,10 +427,11 @@ public class HistoryStateRestorationTests
         isComplete.ShouldBeTrue();
         successMessage.ShouldBe("Watch created");
         restoredWatchId.ShouldBe(watchId);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void RestoreState_FailedEntry_SetsError()
+    [Test]
+    public async Task RestoreState_FailedEntry_SetsError()
     {
         var history = new List<FlowStateEntryDto>
         {
@@ -429,10 +448,11 @@ public class HistoryStateRestorationTests
 
         hasError.ShouldBeTrue();
         errorMessage.ShouldBe("Connection failed");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void RestoreState_InProgressEntry_ShowsProcessing()
+    [Test]
+    public async Task RestoreState_InProgressEntry_ShowsProcessing()
     {
         var history = new List<FlowStateEntryDto>
         {
@@ -453,15 +473,17 @@ public class HistoryStateRestorationTests
         isQuestion.ShouldBeFalse();
         isComplete.ShouldBeFalse();
         isError.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void RestoreState_EmptyHistory_ShowsEmpty()
+    [Test]
+    public async Task RestoreState_EmptyHistory_ShowsEmpty()
     {
         var history = new List<FlowStateEntryDto>();
 
         var hasHistory = history.Count > 0;
         
         hasHistory.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 }

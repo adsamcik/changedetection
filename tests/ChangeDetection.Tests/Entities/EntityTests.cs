@@ -1,12 +1,13 @@
 using ChangeDetection.Core.Entities;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Entities;
 
 public class WatchedSiteTests
 {
-    [Fact]
-    public void NewWatchedSite_HasDefaultValues()
+    [Test]
+    public async Task NewWatchedSite_HasDefaultValues()
     {
         // Act
         var site = new WatchedSite { Url = "https://example.com" };
@@ -20,18 +21,20 @@ public class WatchedSiteTests
         site.Notifications.ShouldNotBeNull();
         site.FetchSettings.ShouldNotBeNull();
         site.CreatedAt.ShouldBeInRange(DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(1));
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchedSite_UrlRequired()
+    [Test]
+    public async Task WatchedSite_UrlRequired()
     {
         // Act & Assert
         var site = new WatchedSite { Url = "https://example.com" };
         site.Url.ShouldNotBeNullOrEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchedSite_CanSetAllProperties()
+    [Test]
+    public async Task WatchedSite_CanSetAllProperties()
     {
         // Arrange
         var id = Guid.NewGuid();
@@ -63,10 +66,11 @@ public class WatchedSiteTests
         site.CheckInterval.ShouldBe(checkInterval);
         site.IsEnabled.ShouldBeFalse();
         site.Status.ShouldBe(WatchStatus.Paused);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchedSite_NotificationSettings_DefaultValues()
+    [Test]
+    public async Task WatchedSite_NotificationSettings_DefaultValues()
     {
         // Act
         var site = new WatchedSite { Url = "https://example.com" };
@@ -77,10 +81,11 @@ public class WatchedSiteTests
         site.Notifications.DiscordEnabled.ShouldBeFalse();
         site.Notifications.UseLlmSummary.ShouldBeFalse();
         site.Notifications.MinimumImportance.ShouldBe(ChangeImportance.Low);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchedSite_FetchSettings_DefaultValues()
+    [Test]
+    public async Task WatchedSite_FetchSettings_DefaultValues()
     {
         // Act
         var site = new WatchedSite { Url = "https://example.com" };
@@ -90,10 +95,11 @@ public class WatchedSiteTests
         site.FetchSettings.TimeoutSeconds.ShouldBe(30);
         site.FetchSettings.Headers.ShouldBeEmpty();
         site.FetchSettings.CaptureScreenshot.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchedSite_Tags_CanBeModified()
+    [Test]
+    public async Task WatchedSite_Tags_CanBeModified()
     {
         // Arrange
         var site = new WatchedSite { Url = "https://example.com" };
@@ -106,13 +112,14 @@ public class WatchedSiteTests
         site.Tags.Count.ShouldBe(2);
         site.Tags.ShouldContain("news");
         site.Tags.ShouldContain("tech");
+        await Task.CompletedTask;
     }
 }
 
 public class ChangeEventTests
 {
-    [Fact]
-    public void NewChangeEvent_HasDefaultValues()
+    [Test]
+    public async Task NewChangeEvent_HasDefaultValues()
     {
         // Act
         var change = new ChangeEvent();
@@ -122,10 +129,11 @@ public class ChangeEventTests
         change.DetectedAt.ShouldBeInRange(DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(1));
         change.IsViewed.ShouldBeFalse();
         change.IsNotified.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ChangeEvent_CanSetProperties()
+    [Test]
+    public async Task ChangeEvent_CanSetProperties()
     {
         // Arrange
         var watchId = Guid.NewGuid();
@@ -154,13 +162,14 @@ public class ChangeEventTests
         change.Importance.ShouldBe(ChangeImportance.High);
         change.LinesAdded.ShouldBe(10);
         change.LinesRemoved.ShouldBe(5);
+        await Task.CompletedTask;
     }
 }
 
 public class ChangeSnapshotTests
 {
-    [Fact]
-    public void NewChangeSnapshot_HasRequiredProperties()
+    [Test]
+    public async Task NewChangeSnapshot_HasRequiredProperties()
     {
         // Act
         var snapshot = new ChangeSnapshot
@@ -172,10 +181,11 @@ public class ChangeSnapshotTests
         // Assert
         snapshot.Id.ShouldNotBe(Guid.Empty);
         snapshot.CapturedAt.ShouldBeInRange(DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(1));
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ChangeSnapshot_CanSetContent()
+    [Test]
+    public async Task ChangeSnapshot_CanSetContent()
     {
         // Arrange
         var content = "Page content here";
@@ -191,13 +201,14 @@ public class ChangeSnapshotTests
         // Assert
         snapshot.Content.ShouldBe(content);
         snapshot.ContentHash.ShouldBe(hash);
+        await Task.CompletedTask;
     }
 }
 
 public class LlmProviderConfigTests
 {
-    [Fact]
-    public void NewLlmProviderConfig_HasDefaultValues()
+    [Test]
+    public async Task NewLlmProviderConfig_HasDefaultValues()
     {
         // Act
         var config = new LlmProviderConfig
@@ -214,15 +225,16 @@ public class LlmProviderConfigTests
         config.TimeoutSeconds.ShouldBe(60);
         config.TotalTokensUsed.ShouldBe(0);
         config.TotalCost.ShouldBe(0);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData(LlmProviderType.OpenAI)]
-    [InlineData(LlmProviderType.Ollama)]
-    [InlineData(LlmProviderType.Claude)]
-    [InlineData(LlmProviderType.Gemini)]
-    [InlineData(LlmProviderType.AzureOpenAI)]
-    public void LlmProviderConfig_SupportsAllProviderTypes(LlmProviderType providerType)
+    [Test]
+    [Arguments(LlmProviderType.OpenAI)]
+    [Arguments(LlmProviderType.Ollama)]
+    [Arguments(LlmProviderType.Claude)]
+    [Arguments(LlmProviderType.Gemini)]
+    [Arguments(LlmProviderType.AzureOpenAI)]
+    public async Task LlmProviderConfig_SupportsAllProviderTypes(LlmProviderType providerType)
     {
         // Act
         var config = new LlmProviderConfig
@@ -234,10 +246,11 @@ public class LlmProviderConfigTests
 
         // Assert
         config.ProviderType.ShouldBe(providerType);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmProviderConfig_CostTracking()
+    [Test]
+    public async Task LlmProviderConfig_CostTracking()
     {
         // Arrange
         var config = new LlmProviderConfig
@@ -251,13 +264,14 @@ public class LlmProviderConfigTests
         // Assert
         config.CostPer1KInputTokens.ShouldBe(0.03m);
         config.CostPer1KOutputTokens.ShouldBe(0.06m);
+        await Task.CompletedTask;
     }
 }
 
 public class AppSettingsTests
 {
-    [Fact]
-    public void NewAppSettings_HasDefaultValues()
+    [Test]
+    public async Task NewAppSettings_HasDefaultValues()
     {
         // Act
         var settings = new AppSettings();
@@ -271,10 +285,11 @@ public class AppSettingsTests
         settings.UseLlmForSummaries.ShouldBeTrue();
         settings.MaxPlaywrightInstances.ShouldBe(3);
         settings.Email.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void NewAppSettings_HasNewFieldDefaults()
+    [Test]
+    public async Task NewAppSettings_HasNewFieldDefaults()
     {
         // Act
         var settings = new AppSettings();
@@ -285,10 +300,11 @@ public class AppSettingsTests
         settings.EnableLlmDebugLogging.ShouldBeFalse();
         settings.MaxRetryAttempts.ShouldBe(3);
         settings.RetryDelaySeconds.ShouldBe(60);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void AppSettings_CanSetNewFields()
+    [Test]
+    public async Task AppSettings_CanSetNewFields()
     {
         // Arrange & Act
         var settings = new AppSettings
@@ -306,10 +322,11 @@ public class AppSettingsTests
         settings.EnableLlmDebugLogging.ShouldBeTrue();
         settings.MaxRetryAttempts.ShouldBe(5);
         settings.RetryDelaySeconds.ShouldBe(120);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void AppSettings_CanSetEmailSettings()
+    [Test]
+    public async Task AppSettings_CanSetEmailSettings()
     {
         // Arrange & Act
         var settings = new AppSettings
@@ -334,13 +351,14 @@ public class AppSettingsTests
         settings.Email.Username.ShouldBe("user@example.com");
         settings.Email.FromAddress.ShouldBe("noreply@example.com");
         settings.Email.FromName.ShouldBe("Test App");
+        await Task.CompletedTask;
     }
 }
 
 public class EmailSettingsTests
 {
-    [Fact]
-    public void EmailSettings_HasDefaultValues()
+    [Test]
+    public async Task EmailSettings_HasDefaultValues()
     {
         // Act
         var settings = new EmailSettings();
@@ -353,13 +371,14 @@ public class EmailSettingsTests
         settings.Username.ShouldBeNull();
         settings.Password.ShouldBeNull();
         settings.FromAddress.ShouldBeNull();
+        await Task.CompletedTask;
     }
 }
 
 public class LlmUsageRecordTests
 {
-    [Fact]
-    public void NewLlmUsageRecord_HasDefaultId()
+    [Test]
+    public async Task NewLlmUsageRecord_HasDefaultId()
     {
         // Act
         var record = new LlmUsageRecord
@@ -370,10 +389,11 @@ public class LlmUsageRecordTests
 
         // Assert
         record.Id.ShouldNotBe(Guid.Empty);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmUsageRecord_CanSetAllProperties()
+    [Test]
+    public async Task LlmUsageRecord_CanSetAllProperties()
     {
         // Arrange
         var providerId = Guid.NewGuid();
@@ -405,16 +425,17 @@ public class LlmUsageRecordTests
         record.Cost.ShouldBe(0.02m);
         record.DurationMs.ShouldBe(1500);
         record.IsSuccess.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData(LlmUsageType.IntentClassification)]
-    [InlineData(LlmUsageType.ChangeSummary)]
-    [InlineData(LlmUsageType.NotificationGeneration)]
-    [InlineData(LlmUsageType.EntityExtraction)]
-    [InlineData(LlmUsageType.Validation)]
-    [InlineData(LlmUsageType.Other)]
-    public void LlmUsageRecord_SupportsAllUsageTypes(LlmUsageType usageType)
+    [Test]
+    [Arguments(LlmUsageType.IntentClassification)]
+    [Arguments(LlmUsageType.ChangeSummary)]
+    [Arguments(LlmUsageType.NotificationGeneration)]
+    [Arguments(LlmUsageType.EntityExtraction)]
+    [Arguments(LlmUsageType.Validation)]
+    [Arguments(LlmUsageType.Other)]
+    public async Task LlmUsageRecord_SupportsAllUsageTypes(LlmUsageType usageType)
     {
         // Act
         var record = new LlmUsageRecord
@@ -426,13 +447,14 @@ public class LlmUsageRecordTests
 
         // Assert
         record.UsageType.ShouldBe(usageType);
+        await Task.CompletedTask;
     }
 }
 
 public class FetchSettingsTests
 {
-    [Fact]
-    public void NewFetchSettings_HasDefaultValues()
+    [Test]
+    public async Task NewFetchSettings_HasDefaultValues()
     {
         // Act
         var settings = new FetchSettings();
@@ -448,10 +470,11 @@ public class FetchSettingsTests
         settings.ViewportWidth.ShouldBe(1920);
         settings.ViewportHeight.ShouldBe(1080);
         settings.Headers.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchSettings_CanSetAllProperties()
+    [Test]
+    public async Task FetchSettings_CanSetAllProperties()
     {
         // Arrange & Act
         var settings = new FetchSettings
@@ -479,6 +502,7 @@ public class FetchSettingsTests
         settings.ViewportWidth.ShouldBe(1280);
         settings.ViewportHeight.ShouldBe(720);
         settings.Headers["X-Custom"].ShouldBe("value");
+        await Task.CompletedTask;
     }
 }
 

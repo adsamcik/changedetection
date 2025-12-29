@@ -1,11 +1,11 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.EndToEnd;
 
@@ -13,17 +13,12 @@ namespace ChangeDetection.Tests.EndToEnd;
 /// Integration tests for the streaming conversation flow.
 /// Tests the multi-turn dialogue pattern used in interactive watch setup.
 /// </summary>
-public class ConversationFlowIntegrationTests : TestBase
+public class ConversationFlowIntegrationTests
 {
-    public ConversationFlowIntegrationTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Multi-Turn Conversation Tests
 
-    [Fact]
-    public void ConversationSession_SupportsMultiTurnDialogue()
+    [Test]
+    public async Task ConversationSession_SupportsMultiTurnDialogue()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -40,10 +35,11 @@ public class ConversationFlowIntegrationTests : TestBase
 
         session.Messages.Count.ShouldBe(5);
         session.OriginalInputs.Count.ShouldBe(3);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSession_TracksAwaitingInput()
+    [Test]
+    public async Task ConversationSession_TracksAwaitingInput()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -52,24 +48,26 @@ public class ConversationFlowIntegrationTests : TestBase
 
         session.AwaitingUserInput.ShouldBeTrue();
         session.CurrentPrompt.ShouldNotBeNullOrWhiteSpace();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSession_MaintainsDisplayName()
+    [Test]
+    public async Task ConversationSession_MaintainsDisplayName()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
         session.DisplayName = "example.com/events";
 
         session.DisplayName.ShouldBe("example.com/events");
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Presented Options Tracking Tests
 
-    [Fact]
-    public void ConversationSession_TracksSelectorOptions()
+    [Test]
+    public async Task ConversationSession_TracksSelectorOptions()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -81,10 +79,11 @@ public class ConversationFlowIntegrationTests : TestBase
         session.PresentedOptions[0].OptionId.ShouldBe("sel-1");
         session.PresentedOptions[1].DisplayText.ShouldBe("Event titles (.event-title)");
         session.PresentedOptions[2].Value.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSession_TracksUrlSelectionOptions()
+    [Test]
+    public async Task ConversationSession_TracksUrlSelectionOptions()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -92,14 +91,15 @@ public class ConversationFlowIntegrationTests : TestBase
         session.RecordPresentedOption("url-2", "https://example.com/news", "https://example.com/news");
 
         session.PresentedOptions.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Input Anchor Validation Integration Tests
 
-    [Fact]
-    public void InputAnchorValidator_ValidatesAgainstConversationHistory()
+    [Test]
+    public async Task InputAnchorValidator_ValidatesAgainstConversationHistory()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -115,10 +115,11 @@ public class ConversationFlowIntegrationTests : TestBase
         // Validate that hallucinated URL fails
         var invalidResult = validator.ValidateUrl("https://other-site.com", session.OriginalInputs);
         invalidResult.IsValid.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void InputAnchorValidator_ValidatesAgainstPresentedOptions()
+    [Test]
+    public async Task InputAnchorValidator_ValidatesAgainstPresentedOptions()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -136,10 +137,11 @@ public class ConversationFlowIntegrationTests : TestBase
         // Invalid selection (not presented)
         var invalidResult = validator.ValidateSelection("Product prices", session.PresentedOptions);
         invalidResult.IsValid.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void InputAnchorValidator_ValidatesPartialConfiguration()
+    [Test]
+    public async Task InputAnchorValidator_ValidatesPartialConfiguration()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -158,17 +160,18 @@ public class ConversationFlowIntegrationTests : TestBase
 
         result.IsValid.ShouldBeTrue();
         result.InvalidFields.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Session Manager Integration Tests
 
-    [Fact]
-    public void ConversationSessionManager_HandlesMultipleConcurrentSessions()
+    [Test]
+    public async Task ConversationSessionManager_HandlesMultipleConcurrentSessions()
     {
         var logger = Substitute.For<ILogger<ConversationSessionManager>>();
-        var manager = new ConversationSessionManager(logger);
+        var manager = new ConversationSessionManager(Substitute.For<IServiceScopeFactory>(), logger);
 
         var session1 = manager.CreateSession();
         var session2 = manager.CreateSession();
@@ -187,13 +190,14 @@ public class ConversationFlowIntegrationTests : TestBase
         retrieved2.ShouldNotBeNull();
         retrieved1!.OriginalInputs[0].ShouldContain("site1.com");
         retrieved2!.OriginalInputs[0].ShouldContain("site2.com");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSessionManager_RemovesSession()
+    [Test]
+    public async Task ConversationSessionManager_RemovesSession()
     {
         var logger = Substitute.For<ILogger<ConversationSessionManager>>();
-        var manager = new ConversationSessionManager(logger);
+        var manager = new ConversationSessionManager(Substitute.For<IServiceScopeFactory>(), logger);
 
         var session = manager.CreateSession();
         var sessionId = session.SessionId;
@@ -204,13 +208,14 @@ public class ConversationFlowIntegrationTests : TestBase
 
         manager.ActiveSessionCount.ShouldBe(0);
         manager.GetSession(sessionId).ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSessionManager_UpdatesSession()
+    [Test]
+    public async Task ConversationSessionManager_UpdatesSession()
     {
         var logger = Substitute.For<ILogger<ConversationSessionManager>>();
-        var manager = new ConversationSessionManager(logger);
+        var manager = new ConversationSessionManager(Substitute.For<IServiceScopeFactory>(), logger);
 
         var session = manager.CreateSession();
         session.Configuration.Url = "https://example.com";
@@ -222,13 +227,14 @@ public class ConversationFlowIntegrationTests : TestBase
         retrieved.ShouldNotBeNull();
         retrieved!.Configuration.Url.ShouldBe("https://example.com");
         retrieved.CurrentStage.ShouldBe(SetupStage.Analyzing);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSessionManager_GetsSessionsAwaitingInput()
+    [Test]
+    public async Task ConversationSessionManager_GetsSessionsAwaitingInput()
     {
         var logger = Substitute.For<ILogger<ConversationSessionManager>>();
-        var manager = new ConversationSessionManager(logger);
+        var manager = new ConversationSessionManager(Substitute.For<IServiceScopeFactory>(), logger);
 
         var session1 = manager.CreateSession();
         session1.AwaitingUserInput = true;
@@ -248,14 +254,15 @@ public class ConversationFlowIntegrationTests : TestBase
 
         awaitingInput.Count.ShouldBe(2);
         awaitingInput.ShouldAllBe(s => s.AwaitingUserInput);
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Streaming Chunk DTO Tests
 
-    [Fact]
-    public void AgentStreamChunkDto_HasCorrectProperties()
+    [Test]
+    public async Task AgentStreamChunkDto_HasCorrectProperties()
     {
         var chunk = new AgentStreamChunkDto
         {
@@ -271,10 +278,11 @@ public class ConversationFlowIntegrationTests : TestBase
         chunk.ChunkType.ShouldBe("thinking");
         chunk.Confidence.ShouldBe(0.85);
         chunk.IsCollapsible.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ChunkTypeNames_HasAllExpectedTypes()
+    [Test]
+    public async Task ChunkTypeNames_HasAllExpectedTypes()
     {
         ChunkTypeNames.Thinking.ShouldBe("thinking");
         ChunkTypeNames.Intermediate.ShouldBe("intermediate");
@@ -284,10 +292,11 @@ public class ConversationFlowIntegrationTests : TestBase
         ChunkTypeNames.Error.ShouldBe("error");
         ChunkTypeNames.Started.ShouldBe("started");
         ChunkTypeNames.Completed.ShouldBe("completed");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void AgentNamesDtos_HasAllExpectedAgents()
+    [Test]
+    public async Task AgentNamesDtos_HasAllExpectedAgents()
     {
         AgentNamesDtos.UrlExtraction.ShouldBe("url-extraction");
         AgentNamesDtos.ContentAnalysis.ShouldBe("content-analysis");
@@ -296,10 +305,11 @@ public class ConversationFlowIntegrationTests : TestBase
         AgentNamesDtos.Synthesis.ShouldBe("synthesis");
         AgentNamesDtos.Resolution.ShouldBe("resolution");
         AgentNamesDtos.SchemaDiscovery.ShouldBe("schema-discovery");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void SetupStageNames_HasAllExpectedStages()
+    [Test]
+    public async Task SetupStageNames_HasAllExpectedStages()
     {
         SetupStageNames.Initial.ShouldBe("initial");
         SetupStageNames.Processing.ShouldBe("processing");
@@ -312,14 +322,15 @@ public class ConversationFlowIntegrationTests : TestBase
         SetupStageNames.Confirmation.ShouldBe("confirmation");
         SetupStageNames.Completed.ShouldBe("completed");
         SetupStageNames.Error.ShouldBe("error");
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Session State DTO Tests
 
-    [Fact]
-    public void SetupSessionStateDto_MapsFromConversationSession()
+    [Test]
+    public async Task SetupSessionStateDto_MapsFromConversationSession()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
         session.CurrentStage = SetupStage.SelectorRefinement;
@@ -347,14 +358,15 @@ public class ConversationFlowIntegrationTests : TestBase
         dto.CurrentPrompt.ShouldNotBeNull();
         dto.Configuration.ShouldNotBeNull();
         dto.Configuration!.Url.ShouldBe("https://example.com");
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Error Flow Tests
 
-    [Fact]
-    public void ConversationSession_HandlesErrorState()
+    [Test]
+    public async Task ConversationSession_HandlesErrorState()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -365,10 +377,11 @@ public class ConversationFlowIntegrationTests : TestBase
 
         session.CurrentStage.ShouldBe(SetupStage.Error);
         session.AwaitingUserInput.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ConversationSession_CanRecoverFromError()
+    [Test]
+    public async Task ConversationSession_CanRecoverFromError()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -382,6 +395,7 @@ public class ConversationFlowIntegrationTests : TestBase
 
         session.CurrentStage.ShouldBe(SetupStage.Fetching);
         session.OriginalInputs.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -390,17 +404,12 @@ public class ConversationFlowIntegrationTests : TestBase
 /// <summary>
 /// Tests for the pipeline result structure and final configuration building.
 /// </summary>
-public class PipelineResultIntegrationTests : TestBase
+public class PipelineResultIntegrationTests
 {
-    public PipelineResultIntegrationTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Pipeline Result Structure Tests
 
-    [Fact]
-    public void PipelineResult_SuccessfulCompletion()
+    [Test]
+    public async Task PipelineResult_SuccessfulCompletion()
     {
         var session = new PipelineSession
         {
@@ -439,10 +448,11 @@ public class PipelineResultIntegrationTests : TestBase
         result.NeedsUserInput.ShouldBeFalse();
         result.FinalConfiguration.ShouldNotBeNull();
         result.FinalConfiguration.CssSelector.ShouldBe(".event-card");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void PipelineResult_NeedsUserInput()
+    [Test]
+    public async Task PipelineResult_NeedsUserInput()
     {
         var result = new PipelineResult
         {
@@ -462,10 +472,11 @@ public class PipelineResultIntegrationTests : TestBase
         result.UserPrompts.ShouldNotBeEmpty();
         result.SuggestedOptions.Count.ShouldBe(3);
         result.SuggestedOptions.ShouldContain(o => o.IsRecommended);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void PipelineResult_FailureWithError()
+    [Test]
+    public async Task PipelineResult_FailureWithError()
     {
         var result = new PipelineResult
         {
@@ -478,14 +489,15 @@ public class PipelineResultIntegrationTests : TestBase
         result.IsSuccess.ShouldBeFalse();
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
         result.Summary.ShouldNotBeNullOrWhiteSpace();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Watch Configuration Tests
 
-    [Fact]
-    public void WatchConfiguration_HasAllRequiredFields()
+    [Test]
+    public async Task WatchConfiguration_HasAllRequiredFields()
     {
         var config = new WatchConfiguration
         {
@@ -506,10 +518,11 @@ public class PipelineResultIntegrationTests : TestBase
         config.CheckInterval.ShouldBe(TimeSpan.FromHours(1));
         config.Tags.Count.ShouldBe(2);
         config.Confidence.ShouldBe(0.92f);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchConfiguration_SupportsXPathSelector()
+    [Test]
+    public async Task WatchConfiguration_SupportsXPathSelector()
     {
         var config = new WatchConfiguration
         {
@@ -519,10 +532,11 @@ public class PipelineResultIntegrationTests : TestBase
 
         config.CssSelector.ShouldBeNull();
         config.XPathSelector.ShouldNotBeNullOrWhiteSpace();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchConfiguration_SupportsTextPattern()
+    [Test]
+    public async Task WatchConfiguration_SupportsTextPattern()
     {
         var config = new WatchConfiguration
         {
@@ -531,14 +545,15 @@ public class PipelineResultIntegrationTests : TestBase
         };
 
         config.TextPattern.ShouldNotBeNullOrWhiteSpace();
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Selector Option Tests
 
-    [Fact]
-    public void SelectorOption_HasPreviewContent()
+    [Test]
+    public async Task SelectorOption_HasPreviewContent()
     {
         var option = new SelectorOption
         {
@@ -552,10 +567,11 @@ public class PipelineResultIntegrationTests : TestBase
         option.Preview.ShouldNotBeNullOrWhiteSpace();
         option.Preview.ShouldContain("Conference");
         option.IsRecommended.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void SelectorOption_SortsCorrectly()
+    [Test]
+    public async Task SelectorOption_SortsCorrectly()
     {
         var options = new List<SelectorOption>
         {
@@ -569,7 +585,10 @@ public class PipelineResultIntegrationTests : TestBase
         sorted[0].Label.ShouldBe("High confidence");
         sorted[1].Label.ShouldBe("Medium confidence");
         sorted[2].Label.ShouldBe("Low confidence");
+        await Task.CompletedTask;
     }
 
     #endregion
 }
+
+

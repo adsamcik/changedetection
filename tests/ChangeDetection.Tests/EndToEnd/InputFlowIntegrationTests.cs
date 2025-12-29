@@ -2,11 +2,12 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Pipeline;
 using HtmlAgilityPack;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
+
 
 namespace ChangeDetection.Tests.EndToEnd;
 
@@ -20,11 +21,6 @@ namespace ChangeDetection.Tests.EndToEnd;
 /// </summary>
 public class InputFlowIntegrationTests : TestBase
 {
-    public InputFlowIntegrationTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Test Data
 
     private static class TestHtml
@@ -157,13 +153,13 @@ public class InputFlowIntegrationTests : TestBase
 
     #region URL Extraction Stage Tests
 
-    [Theory]
-    [InlineData("https://example.com/events", "https://example.com/events")]
-    [InlineData("http://example.com", "http://example.com")]
-    [InlineData("https://www.example.com/path/to/page?query=1", "https://www.example.com/path/to/page?query=1")]
-    [InlineData("Watch https://example.com for changes", "https://example.com")]
-    [InlineData("I want to monitor https://example.com/products daily", "https://example.com/products")]
-    [InlineData("https://example.com please track price changes", "https://example.com")]
+    [Test]
+    [Arguments("https://example.com/events", "https://example.com/events")]
+    [Arguments("http://example.com", "http://example.com")]
+    [Arguments("https://www.example.com/path/to/page?query=1", "https://www.example.com/path/to/page?query=1")]
+    [Arguments("Watch https://example.com for changes", "https://example.com")]
+    [Arguments("I want to monitor https://example.com/products daily", "https://example.com/products")]
+    [Arguments("https://example.com please track price changes", "https://example.com")]
     public void UrlExtraction_ExtractsUrlFromVariousInputFormats(string input, string expectedUrl)
     {
         var stage = new UrlExtractionStage();
@@ -173,11 +169,11 @@ public class InputFlowIntegrationTests : TestBase
         urls[0].NormalizedUrl.ShouldStartWith(expectedUrl.TrimEnd('/'));
     }
 
-    [Theory]
-    [InlineData("https://example.com I want to watch for events", "I want to watch for events")]
-    [InlineData("Monitor https://example.com/products for price drops", "Monitor for price drops")]
-    [InlineData("https://news.com track breaking news updates", "track breaking news updates")]
-    [InlineData("Please watch https://example.com for any changes to the page", "Please watch for any changes to the page")]
+    [Test]
+    [Arguments("https://example.com I want to watch for events", "I want to watch for events")]
+    [Arguments("Monitor https://example.com/products for price drops", "Monitor for price drops")]
+    [Arguments("https://news.com track breaking news updates", "track breaking news updates")]
+    [Arguments("Please watch https://example.com for any changes to the page", "Please watch for any changes to the page")]
     public void UrlExtraction_ExtractsUserIntent(string input, string expectedIntent)
     {
         var stage = new UrlExtractionStage();
@@ -186,8 +182,8 @@ public class InputFlowIntegrationTests : TestBase
         intent.Trim().ShouldBe(expectedIntent);
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesMultipleUrls()
+    [Test]
+    public async Task UrlExtraction_HandlesMultipleUrls()
     {
         var stage = new UrlExtractionStage();
         var input = "Compare https://site1.com/products and https://site2.com/products for prices";
@@ -199,8 +195,8 @@ public class InputFlowIntegrationTests : TestBase
         urls.ShouldContain(u => u.NormalizedUrl.Contains("site2.com"));
     }
 
-    [Fact]
-    public void UrlExtraction_SelectsPrimaryUrl_FromMultiple()
+    [Test]
+    public async Task UrlExtraction_SelectsPrimaryUrl_FromMultiple()
     {
         var stage = new UrlExtractionStage();
         var input = "https://main-target.com/events I also like https://other-site.com but focus on the first";
@@ -212,8 +208,8 @@ public class InputFlowIntegrationTests : TestBase
         primary.NormalizedUrl.ShouldContain("main-target.com");
     }
 
-    [Fact]
-    public void UrlExtraction_NormalizesUrls()
+    [Test]
+    public async Task UrlExtraction_NormalizesUrls()
     {
         var stage = new UrlExtractionStage();
 
@@ -224,8 +220,8 @@ public class InputFlowIntegrationTests : TestBase
         urls1[0].NormalizedUrl.TrimEnd('/').ShouldBe(urls2[0].NormalizedUrl.TrimEnd('/'));
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesUrlWithoutProtocol()
+    [Test]
+    public async Task UrlExtraction_HandlesUrlWithoutProtocol()
     {
         var stage = new UrlExtractionStage();
         var input = "Watch www.example.com/products for updates";
@@ -236,8 +232,8 @@ public class InputFlowIntegrationTests : TestBase
         urls[0].NormalizedUrl.ShouldStartWith("https://");
     }
 
-    [Fact]
-    public void UrlExtraction_ReturnsEmptyForNoUrl()
+    [Test]
+    public async Task UrlExtraction_ReturnsEmptyForNoUrl()
     {
         var stage = new UrlExtractionStage();
         var input = "I want to watch for price changes";
@@ -247,8 +243,8 @@ public class InputFlowIntegrationTests : TestBase
         urls.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void UrlExtraction_PreservesContext()
+    [Test]
+    public async Task UrlExtraction_PreservesContext()
     {
         var stage = new UrlExtractionStage();
         var input = "https://example.com/events I want to track new events on this page";
@@ -262,7 +258,7 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Content Fetching Stage Tests
 
-    [Fact]
+    [Test]
     public async Task ContentFetching_ReturnsSuccessfulContent()
     {
         var fetcher = CreateMockFetcher(TestHtml.EventsPage);
@@ -280,7 +276,7 @@ public class InputFlowIntegrationTests : TestBase
         result.TextContent!.ShouldContain("Conference");
     }
 
-    [Fact]
+    [Test]
     public async Task ContentFetching_HandlesFetchFailure()
     {
         var fetcher = Substitute.For<IContentFetcher>();
@@ -297,8 +293,8 @@ public class InputFlowIntegrationTests : TestBase
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
     }
 
-    [Fact]
-    public void ContentFetching_DetectsJavaScriptNeed()
+    [Test]
+    public async Task ContentFetching_DetectsJavaScriptNeed()
     {
         var fetcher = Substitute.For<IContentFetcher>();
         var extractor = CreateRealContentExtractor();
@@ -319,8 +315,8 @@ public class InputFlowIntegrationTests : TestBase
         shouldRetry.ShouldBeTrue("SPA content should trigger JavaScript retry");
     }
 
-    [Fact]
-    public void ContentFetching_DoesNotRetryStaticContent()
+    [Test]
+    public async Task ContentFetching_DoesNotRetryStaticContent()
     {
         var fetcher = Substitute.For<IContentFetcher>();
         var extractor = CreateRealContentExtractor();
@@ -346,12 +342,12 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Selector Validation Stage Tests
 
-    [Theory]
-    [InlineData(".event-card", 3)]
-    [InlineData(".event-title", 3)]
-    [InlineData("[data-event-id=\"1\"]", 1)]  // CssToXPath only handles attr=value, not presence-only
-    [InlineData(".events-container", 1)]
-    [InlineData("#nonexistent", 0)]
+    [Test]
+    [Arguments(".event-card", 3)]
+    [Arguments(".event-title", 3)]
+    [Arguments("[data-event-id=\"1\"]", 1)]  // CssToXPath only handles attr=value, not presence-only
+    [Arguments(".events-container", 1)]
+    [Arguments("#nonexistent", 0)]
     public void SelectorValidation_ValidatesCssSelectors(string selector, int expectedMatches)
     {
         var extractor = CreateRealContentExtractor();
@@ -378,11 +374,11 @@ public class InputFlowIntegrationTests : TestBase
         validations[0].IsValid.ShouldBe(expectedMatches > 0);
     }
 
-    [Theory]
-    [InlineData("//article[@class='event-card']", 3)]
-    [InlineData("//h2[contains(@class, 'event-title')]", 3)]
-    [InlineData("//div[@class='events-container']", 1)]
-    [InlineData("//div[@id='nonexistent']", 0)]
+    [Test]
+    [Arguments("//article[@class='event-card']", 3)]
+    [Arguments("//h2[contains(@class, 'event-title')]", 3)]
+    [Arguments("//div[@class='events-container']", 1)]
+    [Arguments("//div[@id='nonexistent']", 0)]
     public void SelectorValidation_ValidatesXPathSelectors(string xpath, int expectedMatches)
     {
         var extractor = CreateRealContentExtractor();
@@ -408,8 +404,8 @@ public class InputFlowIntegrationTests : TestBase
         validations[0].MatchCount.ShouldBe(expectedMatches);
     }
 
-    [Fact]
-    public void SelectorValidation_SelectsBestSelector()
+    [Test]
+    public async Task SelectorValidation_SelectsBestSelector()
     {
         var extractor = CreateRealContentExtractor();
         var logger = Substitute.For<ILogger<SelectorValidationStage>>();
@@ -437,8 +433,8 @@ public class InputFlowIntegrationTests : TestBase
         best.Selector.ShouldBe(".event-card");
     }
 
-    [Fact]
-    public void SelectorValidation_ExtractsSampleContent()
+    [Test]
+    public async Task SelectorValidation_ExtractsSampleContent()
     {
         var extractor = CreateRealContentExtractor();
         var logger = Substitute.For<ILogger<SelectorValidationStage>>();
@@ -463,8 +459,8 @@ public class InputFlowIntegrationTests : TestBase
         validations[0].ExtractedSample!.ShouldContain("Conference");
     }
 
-    [Fact]
-    public void SelectorValidation_HandlesInvalidSelector()
+    [Test]
+    public async Task SelectorValidation_HandlesInvalidSelector()
     {
         var extractor = CreateRealContentExtractor();
         var logger = Substitute.For<ILogger<SelectorValidationStage>>();
@@ -493,7 +489,7 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Full Pipeline Integration Tests
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_ProcessesEventPageSuccessfully()
     {
         var pipeline = CreatePipelineWithMockedLlm(
@@ -508,8 +504,8 @@ public class InputFlowIntegrationTests : TestBase
             "https://example.com/events I want to watch for new events",
             new PipelineOptions { MaxIterations = 3, MinConfidence = 0.5f });
 
-        Output.WriteLine($"Pipeline result: Success={result.IsSuccess}, Stage={result.CurrentStage}");
-        Output.WriteLine($"Best selector: {result.Session.BestSelector?.Selector}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Pipeline result: Success={result.IsSuccess}, Stage={result.CurrentStage}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Best selector: {result.Session.BestSelector?.Selector}");
 
         // Pipeline should at least extract the URL correctly
         result.Session.ExtractedUrls.ShouldNotBeEmpty();
@@ -528,7 +524,7 @@ public class InputFlowIntegrationTests : TestBase
         }
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_ProcessesProductPageSuccessfully()
     {
         var pipeline = CreatePipelineWithMockedLlm(
@@ -554,7 +550,7 @@ public class InputFlowIntegrationTests : TestBase
         }
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_HandlesNoUrlInInput()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "Unknown", []);
@@ -569,7 +565,7 @@ public class InputFlowIntegrationTests : TestBase
         result.CurrentStage.ShouldBe(PipelineStage.UrlExtraction);
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_HandlesMultipleUrls_AsksForSelection()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "EventList", []);
@@ -583,7 +579,7 @@ public class InputFlowIntegrationTests : TestBase
         result.SuggestedOptions.Count.ShouldBe(2);
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_HandlesContentFetchFailure()
     {
         var fetcher = Substitute.For<IContentFetcher>();
@@ -601,7 +597,7 @@ public class InputFlowIntegrationTests : TestBase
         result.CurrentStage.ShouldBe(PipelineStage.ContentFetching);
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_HandlesNoSelectorsGenerated()
     {
         var pipeline = CreatePipelineWithMockedLlm(
@@ -617,7 +613,7 @@ public class InputFlowIntegrationTests : TestBase
         result.SuggestedOptions.ShouldContain(o => o.Value == "fullpage");
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_IteratesWhenSelectorsNeedRefinement()
     {
         var llmChain = CreateMockLlmChain(
@@ -643,7 +639,7 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Pipeline Feedback Flow Tests
 
-    [Fact]
+    [Test]
     public async Task PipelineFeedback_HandlesUrlSelection()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "EventList",
@@ -664,7 +660,7 @@ public class InputFlowIntegrationTests : TestBase
         continuation.Session.SelectedUrl.NormalizedUrl.ShouldContain("site1.com");
     }
 
-    [Fact]
+    [Test]
     public async Task PipelineFeedback_HandlesSelectorSelection()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "EventList",
@@ -693,7 +689,7 @@ public class InputFlowIntegrationTests : TestBase
         result.Session.BestSelector.Selector.ShouldBe(".event-title");
     }
 
-    [Fact]
+    [Test]
     public async Task PipelineFeedback_HandlesFullPageSelection()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "EventList", []);
@@ -715,7 +711,7 @@ public class InputFlowIntegrationTests : TestBase
         result.FinalConfiguration.CssSelector.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task PipelineFeedback_HandlesCustomDescription()
     {
         var llmChain = CreateMockLlmChain(
@@ -748,8 +744,8 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Input Anchor Validation Tests
 
-    [Fact]
-    public void InputAnchorValidator_ValidatesUrlInOriginalInput()
+    [Test]
+    public async Task InputAnchorValidator_ValidatesUrlInOriginalInput()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -762,8 +758,8 @@ public class InputFlowIntegrationTests : TestBase
         result.MatchConfidence.ShouldBeGreaterThan(0.9f);
     }
 
-    [Fact]
-    public void InputAnchorValidator_RejectsHallucinatedUrl()
+    [Test]
+    public async Task InputAnchorValidator_RejectsHallucinatedUrl()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -775,8 +771,8 @@ public class InputFlowIntegrationTests : TestBase
         result.IsValid.ShouldBeFalse();
     }
 
-    [Fact]
-    public void InputAnchorValidator_ValidatesOptionSelection()
+    [Test]
+    public async Task InputAnchorValidator_ValidatesOptionSelection()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -795,8 +791,8 @@ public class InputFlowIntegrationTests : TestBase
         result.MatchedOption.OptionId.ShouldBe("opt1");
     }
 
-    [Fact]
-    public void InputAnchorValidator_RejectsInvalidSelection()
+    [Test]
+    public async Task InputAnchorValidator_RejectsInvalidSelection()
     {
         var logger = Substitute.For<ILogger<InputAnchorValidator>>();
         var validator = new InputAnchorValidator(logger);
@@ -816,8 +812,8 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Conversation Session Tests
 
-    [Fact]
-    public void ConversationSession_TracksMessages()
+    [Test]
+    public async Task ConversationSession_TracksMessages()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -831,8 +827,8 @@ public class InputFlowIntegrationTests : TestBase
         session.Messages[1].Role.ShouldBe(MessageRole.Assistant);
     }
 
-    [Fact]
-    public void ConversationSession_RecordsPresentedOptions()
+    [Test]
+    public async Task ConversationSession_RecordsPresentedOptions()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -843,8 +839,8 @@ public class InputFlowIntegrationTests : TestBase
         session.PresentedOptions[0].DisplayText.ShouldBe("Event cards");
     }
 
-    [Fact]
-    public void ConversationSession_UpdatesLastActivity()
+    [Test]
+    public async Task ConversationSession_UpdatesLastActivity()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
         var initialTime = session.LastActivityAt;
@@ -855,10 +851,11 @@ public class InputFlowIntegrationTests : TestBase
         session.LastActivityAt.ShouldBeGreaterThan(initialTime);
     }
 
-    [Fact]
-    public void ConversationSessionManager_CreatesAndRetrievesSessions()
+    [Test]
+    public async Task ConversationSessionManager_CreatesAndRetrievesSessions()
     {
         var manager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<ConversationSessionManager>>());
 
         var session = manager.CreateSession();
@@ -868,10 +865,11 @@ public class InputFlowIntegrationTests : TestBase
         retrieved.SessionId.ShouldBe(session.SessionId);
     }
 
-    [Fact]
-    public void ConversationSessionManager_ReturnsNullForNonexistentSession()
+    [Test]
+    public async Task ConversationSessionManager_ReturnsNullForNonexistentSession()
     {
         var manager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<ConversationSessionManager>>());
 
         var nonExistentId = Guid.NewGuid();
@@ -880,10 +878,11 @@ public class InputFlowIntegrationTests : TestBase
         retrieved.ShouldBeNull();
     }
 
-    [Fact]
-    public void ConversationSessionManager_GetOrCreateSession_ReusesExisting()
+    [Test]
+    public async Task ConversationSessionManager_GetOrCreateSession_ReusesExisting()
     {
         var manager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<ConversationSessionManager>>());
 
         var sessionId = Guid.NewGuid();
@@ -900,7 +899,7 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Edge Cases and Error Handling
 
-    [Fact]
+    [Test]
     public async Task Pipeline_HandlesCancellation()
     {
         // Create a fetcher that respects cancellation
@@ -928,7 +927,7 @@ public class InputFlowIntegrationTests : TestBase
         result.ErrorMessage!.ShouldContain("cancel", Case.Insensitive);
     }
 
-    [Fact]
+    [Test]
     public async Task Pipeline_LimitsLlmCalls()
     {
         var callCount = 0;
@@ -950,8 +949,8 @@ public class InputFlowIntegrationTests : TestBase
         callCount.ShouldBeLessThanOrEqualTo(10);
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesUnicodeUrls()
+    [Test]
+    public async Task UrlExtraction_HandlesUnicodeUrls()
     {
         var stage = new UrlExtractionStage();
         var input = "Watch https://example.com/путь/страница for updates";
@@ -962,8 +961,8 @@ public class InputFlowIntegrationTests : TestBase
         urls[0].NormalizedUrl.ShouldContain("example.com");
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesUrlsWithSpecialCharacters()
+    [Test]
+    public async Task UrlExtraction_HandlesUrlsWithSpecialCharacters()
     {
         var stage = new UrlExtractionStage();
         var input = "Watch https://example.com/path?query=test&foo=bar#section for updates";
@@ -974,7 +973,7 @@ public class InputFlowIntegrationTests : TestBase
         urls[0].NormalizedUrl.ShouldContain("query=test");
     }
 
-    [Fact]
+    [Test]
     public async Task Pipeline_HandlesEmptyHtmlContent()
     {
         var fetcher = Substitute.For<IContentFetcher>();
@@ -990,8 +989,8 @@ public class InputFlowIntegrationTests : TestBase
         result.IsSuccess.ShouldBeFalse();
     }
 
-    [Fact]
-    public void SelectorValidation_HandlesHugeHtmlContent()
+    [Test]
+    public async Task SelectorValidation_HandlesHugeHtmlContent()
     {
         var extractor = CreateRealContentExtractor();
         var logger = Substitute.For<ILogger<SelectorValidationStage>>();
@@ -1019,7 +1018,7 @@ public class InputFlowIntegrationTests : TestBase
 
     #region Content Type Specific Tests
 
-    [Fact]
+    [Test]
     public async Task Pipeline_IdentifiesEventListContent()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.EventsPage, "EventList",
@@ -1033,7 +1032,7 @@ public class InputFlowIntegrationTests : TestBase
         result.Session.ContentAnalysis.ContentType.ShouldBe(ContentType.EventList);
     }
 
-    [Fact]
+    [Test]
     public async Task Pipeline_IdentifiesProductListingContent()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.ProductListingPage, "ProductListing",
@@ -1047,7 +1046,7 @@ public class InputFlowIntegrationTests : TestBase
         result.Session.ContentAnalysis.ContentType.ShouldBe(ContentType.ProductListing);
     }
 
-    [Fact]
+    [Test]
     public async Task Pipeline_IdentifiesNewsContent()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.NewsPage, "NewsList",
@@ -1061,7 +1060,7 @@ public class InputFlowIntegrationTests : TestBase
         result.Session.ContentAnalysis.ContentType.ShouldBe(ContentType.NewsList);
     }
 
-    [Fact]
+    [Test]
     public async Task Pipeline_IdentifiesTableContent()
     {
         var pipeline = CreatePipelineWithMockedLlm(TestHtml.TableDataPage, "Table",
@@ -1078,6 +1077,38 @@ public class InputFlowIntegrationTests : TestBase
     #endregion
 
     #region Helper Methods
+
+    private static IPipelineEventService CreateMockPipelineEventService()
+    {
+        var service = Substitute.For<IPipelineEventService>();
+        
+        // Return a valid PipelineRun so the pipeline doesn't throw NullReferenceException
+        // Note: Must use ArgAt<Guid>(index) since there are multiple Guid parameters
+        service.StartRunAsync(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => new PipelineRun
+            {
+                Id = Guid.NewGuid(),
+                SessionId = callInfo.ArgAt<Guid>(0),
+                OriginalInput = callInfo.ArgAt<string>(1),
+                OwnerId = callInfo.ArgAt<Guid>(2),
+                Status = PipelineRunStatus.Started
+            });
+        
+        // Return valid PipelineEvent for all event recording methods
+        service.RecordEventAsync(
+            Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineEvent { Id = Guid.NewGuid(), PipelineRunId = Guid.Empty, Stage = "", EventType = "" });
+        
+        service.RecordLlmCallAsync(
+            Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<int>(), Arg.Any<int>(), Arg.Any<long>(),
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineEvent { Id = Guid.NewGuid(), PipelineRunId = Guid.Empty, Stage = "", EventType = "" });
+        
+        return service;
+    }
 
     private static IContentFetcher CreateMockFetcher(string htmlContent)
     {
@@ -1245,7 +1276,7 @@ public class InputFlowIntegrationTests : TestBase
         var contentAnalysis = new ContentAnalysisStage(
             llmChain, Substitute.For<ILogger<ContentAnalysisStage>>());
         var selectorGeneration = new SelectorGenerationStage(
-            llmChain, Substitute.For<ILogger<SelectorGenerationStage>>());
+            llmChain, CreatePassThroughDomCompactor(), Substitute.For<ILogger<SelectorGenerationStage>>());
         var selectorValidation = new SelectorValidationStage(
             extractor, Substitute.For<ILogger<SelectorValidationStage>>());
 
@@ -1256,6 +1287,8 @@ public class InputFlowIntegrationTests : TestBase
             selectorGeneration,
             selectorValidation,
             llmChain,
+            CreateMockPipelineEventService(),
+            Substitute.For<IUserContext>(),
             Substitute.For<ILogger<WatchSetupPipeline>>());
     }
 
@@ -1270,7 +1303,7 @@ public class InputFlowIntegrationTests : TestBase
         var contentAnalysis = new ContentAnalysisStage(
             llmChain, Substitute.For<ILogger<ContentAnalysisStage>>());
         var selectorGeneration = new SelectorGenerationStage(
-            llmChain, Substitute.For<ILogger<SelectorGenerationStage>>());
+            llmChain, CreatePassThroughDomCompactor(), Substitute.For<ILogger<SelectorGenerationStage>>());
         var selectorValidation = new SelectorValidationStage(
             extractor, Substitute.For<ILogger<SelectorValidationStage>>());
 
@@ -1281,6 +1314,8 @@ public class InputFlowIntegrationTests : TestBase
             selectorGeneration,
             selectorValidation,
             llmChain,
+            CreateMockPipelineEventService(),
+            Substitute.For<IUserContext>(),
             Substitute.For<ILogger<WatchSetupPipeline>>());
     }
 
@@ -1297,3 +1332,7 @@ public class SelectorDto
     public string? Description { get; set; }
     public string? Reasoning { get; set; }
 }
+
+
+
+

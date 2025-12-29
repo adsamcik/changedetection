@@ -4,6 +4,7 @@ using ChangeDetection.Services.Content;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -51,7 +52,7 @@ public class ObjectDiffServiceTests
         };
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_DetectsAddedItems()
     {
         // Arrange
@@ -76,7 +77,7 @@ public class ObjectDiffServiceTests
         result.HasChanges.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_DetectsRemovedItems()
     {
         // Arrange
@@ -101,7 +102,7 @@ public class ObjectDiffServiceTests
         result.HasChanges.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_DetectsModifiedItems()
     {
         // Arrange
@@ -127,7 +128,7 @@ public class ObjectDiffServiceTests
         result.HasChanges.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_WithItemsOnlyGranularity_IgnoresFieldChanges()
     {
         // Arrange
@@ -149,7 +150,7 @@ public class ObjectDiffServiceTests
         result.HasChanges.ShouldBeFalse();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_WithFieldLevelGranularity_IgnoresAddedRemoved()
     {
         // Arrange
@@ -173,7 +174,7 @@ public class ObjectDiffServiceTests
         result.HasChanges.ShouldBeFalse();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_DetectsAmbiguousIdentities()
     {
         // Arrange
@@ -196,7 +197,7 @@ public class ObjectDiffServiceTests
         result.AmbiguityDetails.ShouldNotBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_WithNoChanges_ReportsNoChanges()
     {
         // Arrange
@@ -222,7 +223,7 @@ public class ObjectDiffServiceTests
         result.ModifiedItems.ShouldBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task ComputeDiffAsync_TracksFieldChangeDetails()
     {
         // Arrange

@@ -4,6 +4,7 @@ using ChangeDetection.Services.LLM;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
@@ -27,11 +28,11 @@ public class InputProcessorAdvancedTests
 
     // URL Analysis Edge Cases
 
-    [Theory]
-    [InlineData("http://192.168.1.1")]
-    [InlineData("http://192.168.1.1:8080")]
-    [InlineData("http://192.168.1.1:8080/path")]
-    public void Analyze_IpAddressUrl_RecognizesAsUrl(string input)
+    [Test]
+    [Arguments("http://192.168.1.1")]
+    [Arguments("http://192.168.1.1:8080")]
+    [Arguments("http://192.168.1.1:8080/path")]
+    public async Task Analyze_IpAddressUrl_RecognizesAsUrl(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -39,49 +40,53 @@ public class InputProcessorAdvancedTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.IsValid.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("http://[::1]")]
-    [InlineData("http://[2001:db8::1]")]
-    public void Analyze_Ipv6Url_RecognizesAsUrl(string input)
+    [Test]
+    [Arguments("http://[::1]")]
+    [Arguments("http://[2001:db8::1]")]
+    public async Task Analyze_Ipv6Url_RecognizesAsUrl(string input)
     {
         // Act
         var result = _sut.Analyze(input);
 
         // Assert
         result.Type.ShouldBe(InputType.Url);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("https://user:pass@example.com")]
-    [InlineData("https://user@example.com")]
-    public void Analyze_UrlWithCredentials_RecognizesAsUrl(string input)
+    [Test]
+    [Arguments("https://user:pass@example.com")]
+    [Arguments("https://user@example.com")]
+    public async Task Analyze_UrlWithCredentials_RecognizesAsUrl(string input)
     {
         // Act
         var result = _sut.Analyze(input);
 
         // Assert
         result.Type.ShouldBe(InputType.Url);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("subdomain.example.com")]
-    [InlineData("deep.subdomain.example.com")]
-    [InlineData("a.b.c.d.example.com")]
-    public void Analyze_SubdomainWithoutScheme_TreatedAsNaturalLanguage(string input)
+    [Test]
+    [Arguments("subdomain.example.com")]
+    [Arguments("deep.subdomain.example.com")]
+    [Arguments("a.b.c.d.example.com")]
+    public async Task Analyze_SubdomainWithoutScheme_TreatedAsNaturalLanguage(string input)
     {
         // Act - The implementation only recognizes www prefix or standard TLDs
         var result = _sut.Analyze(input);
 
         // Assert - Complex subdomains without www are treated as natural language
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("example.co.uk")]
-    [InlineData("example.com.br")]
-    public void Analyze_CommonMultiPartTld_RecognizedAsUrl(string input)
+    [Test]
+    [Arguments("example.co.uk")]
+    [Arguments("example.com.br")]
+    public async Task Analyze_CommonMultiPartTld_RecognizedAsUrl(string input)
     {
         // Act - Common multi-part TLDs ARE recognized by the enhanced regex
         var result = _sut.Analyze(input);
@@ -89,26 +94,28 @@ public class InputProcessorAdvancedTests
         // Assert - These well-known TLDs are treated as URLs
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl.ShouldStartWith("https://");
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("example.gov.uk")]      // gov.uk not in common pattern
-    [InlineData("example.ac.uk")]       // academic TLD not in pattern
-    [InlineData("example.org.uk")]      // org.uk not in common pattern
-    public void Analyze_UncommonMultiPartTld_TreatedAsNaturalLanguage(string input)
+    [Test]
+    [Arguments("example.gov.uk")]      // gov.uk not in common pattern
+    [Arguments("example.ac.uk")]       // academic TLD not in pattern
+    [Arguments("example.org.uk")]      // org.uk not in common pattern
+    public async Task Analyze_UncommonMultiPartTld_TreatedAsNaturalLanguage(string input)
     {
         // Act - Uncommon multi-part TLDs may not be recognized
         var result = _sut.Analyze(input);
 
         // Assert - These are treated as natural language (could be improved later)
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("https://example.com/path/to/page.html")]
-    [InlineData("https://example.com/path/to/resource.json")]
-    [InlineData("https://example.com/api/v2/data")]
-    public void Analyze_UrlWithPath_PreservesPath(string input)
+    [Test]
+    [Arguments("https://example.com/path/to/page.html")]
+    [Arguments("https://example.com/path/to/resource.json")]
+    [Arguments("https://example.com/api/v2/data")]
+    public async Task Analyze_UrlWithPath_PreservesPath(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -116,10 +123,11 @@ public class InputProcessorAdvancedTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl!.ShouldContain("/");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_UrlWithEncodedCharacters_PreservesEncoding()
+    [Test]
+    public async Task Analyze_UrlWithEncodedCharacters_PreservesEncoding()
     {
         // Arrange
         var input = "https://example.com/search?q=hello%20world";
@@ -130,10 +138,11 @@ public class InputProcessorAdvancedTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl!.ShouldContain("%20");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_UrlWithUnicodeChars_IsRecognized()
+    [Test]
+    public async Task Analyze_UrlWithUnicodeChars_IsRecognized()
     {
         // Arrange
         var input = "https://example.com/日本語";
@@ -143,28 +152,30 @@ public class InputProcessorAdvancedTests
 
         // Assert
         result.Type.ShouldBe(InputType.Url);
+        await Task.CompletedTask;
     }
 
     // Natural Language Edge Cases
 
-    [Theory]
-    [InlineData("Monitor example for updates")] // "example" could be confused with domain
-    [InlineData("Check www for new content")] // "www" prefix but incomplete
-    [InlineData("Watch http changes")] // "http" as text
-    public void Analyze_AmbiguousText_TreatsAsNaturalLanguage(string input)
+    [Test]
+    [Arguments("Monitor example for updates")] // "example" could be confused with domain
+    [Arguments("Check www for new content")] // "www" prefix but incomplete
+    [Arguments("Watch http changes")] // "http" as text
+    public async Task Analyze_AmbiguousText_TreatsAsNaturalLanguage(string input)
     {
         // Act
         var result = _sut.Analyze(input);
 
         // Assert
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("   https://example.com   ")]
-    [InlineData("\thttps://example.com\t")]
-    [InlineData("\nhttps://example.com\n")]
-    public void Analyze_UrlWithWhitespace_TrimsAndRecognizes(string input)
+    [Test]
+    [Arguments("   https://example.com   ")]
+    [Arguments("\thttps://example.com\t")]
+    [Arguments("\nhttps://example.com\n")]
+    public async Task Analyze_UrlWithWhitespace_TrimsAndRecognizes(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -172,13 +183,14 @@ public class InputProcessorAdvancedTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl!.ShouldNotContain(" ");
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("a")]
-    [InlineData("ab")]
-    [InlineData("abc")]
-    public void Analyze_ShortInput_IsValid(string input)
+    [Test]
+    [Arguments("a")]
+    [Arguments("ab")]
+    [Arguments("abc")]
+    public async Task Analyze_ShortInput_IsValid(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -186,10 +198,11 @@ public class InputProcessorAdvancedTests
         // Assert
         result.IsValid.ShouldBeTrue();
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_VeryLongInput_Handles()
+    [Test]
+    public async Task Analyze_VeryLongInput_Handles()
     {
         // Arrange
         var input = new string('a', 10000);
@@ -200,11 +213,12 @@ public class InputProcessorAdvancedTests
         // Assert
         result.ShouldNotBeNull();
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
     // ProcessWithLlm Edge Cases
 
-    [Fact]
+    [Test]
     public async Task ProcessWithLlmAsync_LlmFailure_ReturnsError()
     {
         // Arrange
@@ -218,7 +232,7 @@ public class InputProcessorAdvancedTests
         result.IsSuccess.ShouldBeFalse();
     }
 
-    [Fact]
+    [Test]
     public async Task ProcessWithLlmAsync_EmptyLlmResponse_HandlesGracefully()
     {
         // Arrange
@@ -233,7 +247,7 @@ public class InputProcessorAdvancedTests
         result.ShouldNotBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task ProcessWithLlmAsync_CancellationRequested_ThrowsOrReturnsError()
     {
         // Arrange
@@ -251,7 +265,7 @@ public class InputProcessorAdvancedTests
         result.IsSuccess.ShouldBeFalse();
     }
 
-    [Fact]
+    [Test]
     public async Task ProcessWithLlmAsync_HelpIntent_ReturnsHelpResponse()
     {
         // Arrange
@@ -268,8 +282,8 @@ public class InputProcessorAdvancedTests
 
     // Input Analysis Result
 
-    [Fact]
-    public void InputAnalysis_Url_HasAllProperties()
+    [Test]
+    public async Task InputAnalysis_Url_HasAllProperties()
     {
         // Arrange
         var input = "https://example.com/page?q=test#section";
@@ -283,10 +297,11 @@ public class InputProcessorAdvancedTests
         result.DetectedUrl.ShouldNotBeNull();
         result.NormalizedUrl.ShouldNotBeNull();
         result.ValidationMessage.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void InputAnalysis_Invalid_HasValidationMessage()
+    [Test]
+    public async Task InputAnalysis_Invalid_HasValidationMessage()
     {
         // Arrange
         var input = "";
@@ -297,6 +312,7 @@ public class InputProcessorAdvancedTests
         // Assert
         result.IsValid.ShouldBeFalse();
         result.ValidationMessage.ShouldNotBeNullOrEmpty();
+        await Task.CompletedTask;
     }
 }
 
@@ -305,13 +321,14 @@ public class InputProcessorAdvancedTests
 /// </summary>
 public class InputTypeTests
 {
-    [Fact]
-    public void InputType_HasExpectedValues()
+    [Test]
+    public async Task InputType_HasExpectedValues()
     {
         // Assert
         Enum.GetValues<InputType>().ShouldContain(InputType.Unknown);
         Enum.GetValues<InputType>().ShouldContain(InputType.Url);
         Enum.GetValues<InputType>().ShouldContain(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 }
 
@@ -320,8 +337,8 @@ public class InputTypeTests
 /// </summary>
 public class IntentTypeTests
 {
-    [Fact]
-    public void IntentType_HasExpectedValues()
+    [Test]
+    public async Task IntentType_HasExpectedValues()
     {
         // Assert
         var values = Enum.GetValues<IntentType>();
@@ -330,6 +347,7 @@ public class IntentTypeTests
         values.ShouldContain(IntentType.ModifyWatch);
         values.ShouldContain(IntentType.DeleteWatch);
         values.ShouldContain(IntentType.Help);
+        await Task.CompletedTask;
     }
 }
 
@@ -338,8 +356,8 @@ public class IntentTypeTests
 /// </summary>
 public class LlmProcessResultTests
 {
-    [Fact]
-    public void LlmProcessResult_HasCorrectDefaults()
+    [Test]
+    public async Task LlmProcessResult_HasCorrectDefaults()
     {
         // Act
         var result = new LlmProcessResult();
@@ -351,10 +369,11 @@ public class LlmProcessResultTests
         result.ErrorMessage.ShouldBeNull();
         result.Suggestions.ShouldBeEmpty();
         result.ClarificationQuestions.ShouldNotBeNull(); // Defaults to empty list
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmProcessResult_CanSetAllProperties()
+    [Test]
+    public async Task LlmProcessResult_CanSetAllProperties()
     {
         // Arrange & Act
         var result = new LlmProcessResult
@@ -376,6 +395,7 @@ public class LlmProcessResultTests
         result.NeedsClarification.ShouldBeTrue();
         result.ClarificationQuestions.ShouldContain("What CSS selector?");
         result.Suggestions.Count.ShouldBe(1);
+        await Task.CompletedTask;
     }
 }
 
@@ -384,8 +404,8 @@ public class LlmProcessResultTests
 /// </summary>
 public class ParsedWatchRequestTests
 {
-    [Fact]
-    public void ParsedWatchRequest_HasNullableProperties()
+    [Test]
+    public async Task ParsedWatchRequest_HasNullableProperties()
     {
         // Act
         var request = new ParsedWatchRequest();
@@ -397,10 +417,11 @@ public class ParsedWatchRequestTests
         request.CheckInterval.ShouldBeNull();
         request.UseJavaScript.ShouldBeNull();
         request.Tags.ShouldBeNull(); // Tags is nullable list
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ParsedWatchRequest_CanSetAllProperties()
+    [Test]
+    public async Task ParsedWatchRequest_CanSetAllProperties()
     {
         // Arrange & Act
         var request = new ParsedWatchRequest
@@ -424,6 +445,7 @@ public class ParsedWatchRequestTests
         request.Tags.Count.ShouldBe(2);
         request.NotificationEmail.ShouldBe("test@example.com");
         request.Description.ShouldBe("Monitor for changes");
+        await Task.CompletedTask;
     }
 }
 
@@ -432,8 +454,8 @@ public class ParsedWatchRequestTests
 /// </summary>
 public class SuggestionChipTests
 {
-    [Fact]
-    public void SuggestionChip_HasAllProperties()
+    [Test]
+    public async Task SuggestionChip_HasAllProperties()
     {
         // Arrange & Act
         var chip = new SuggestionChip
@@ -447,6 +469,7 @@ public class SuggestionChipTests
         chip.Label.ShouldBe("Create Watch");
         chip.Value.ShouldBe("create");
         chip.Type.ShouldBe(SuggestionType.SetValue);
+        await Task.CompletedTask;
     }
 }
 
@@ -455,11 +478,12 @@ public class SuggestionChipTests
 /// </summary>
 public class SuggestionTypeTests
 {
-    [Fact]
-    public void SuggestionType_HasExpectedValues()
+    [Test]
+    public async Task SuggestionType_HasExpectedValues()
     {
         // Assert
         var values = Enum.GetValues<SuggestionType>();
         values.Length.ShouldBeGreaterThan(0);
+        await Task.CompletedTask;
     }
 }

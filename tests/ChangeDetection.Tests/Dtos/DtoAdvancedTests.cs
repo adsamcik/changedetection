@@ -1,5 +1,6 @@
 using ChangeDetection.Shared.Dtos;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Dtos;
 
@@ -10,8 +11,8 @@ public class DtoAdvancedTests
 {
     // WatchListItemDto Tests
 
-    [Fact]
-    public void WatchListItemDto_CanSetAllProperties()
+    [Test]
+    public async Task WatchListItemDto_CanSetAllProperties()
     {
         // Arrange & Act
         var lastCheck = DateTime.UtcNow;
@@ -40,22 +41,24 @@ public class DtoAdvancedTests
         dto.IsEnabled.ShouldBeFalse();
         dto.ChangeCount.ShouldBe(5);
         dto.HasRecentChanges.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchListItemDto_UrlIsRequired()
+    [Test]
+    public async Task WatchListItemDto_UrlIsRequired()
     {
         // Act
         var dto = new WatchListItemDto { Url = "" };
 
         // Assert - Empty URL is allowed by the type, but validation would catch it
         dto.Url.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
     // WatchDetailDto Tests
 
-    [Fact]
-    public void WatchDetailDto_CanSetAllProperties()
+    [Test]
+    public async Task WatchDetailDto_CanSetAllProperties()
     {
         // Arrange
         var created = DateTime.UtcNow.AddDays(-7);
@@ -90,12 +93,13 @@ public class DtoAdvancedTests
         dto.IgnorePatterns.Count.ShouldBe(2);
         dto.FetchSettings!.UseJavaScript.ShouldBeTrue();
         dto.NotificationSettings!.EmailEnabled.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     // WatchCreateDto Tests
 
-    [Fact]
-    public void WatchCreateDto_CanSetAllProperties()
+    [Test]
+    public async Task WatchCreateDto_CanSetAllProperties()
     {
         // Act
         var dto = new WatchCreateDto
@@ -139,12 +143,13 @@ public class DtoAdvancedTests
         dto.FetchSettings.CustomHeaders.Count.ShouldBe(1);
         dto.NotificationSettings.EmailRecipients.Count.ShouldBe(2);
         dto.NotificationSettings.WebhookEnabled.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     // FetchSettingsDto Tests
 
-    [Fact]
-    public void FetchSettingsDto_CanSetAllProperties()
+    [Test]
+    public async Task FetchSettingsDto_CanSetAllProperties()
     {
         // Act
         var dto = new FetchSettingsDto
@@ -168,10 +173,11 @@ public class DtoAdvancedTests
         dto.TimeoutSeconds.ShouldBe(45);
         dto.CaptureScreenshot.ShouldBeTrue();
         dto.CustomHeaders.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchSettingsDto_CustomHeaders_EmptyByDefault()
+    [Test]
+    public async Task FetchSettingsDto_CustomHeaders_EmptyByDefault()
     {
         // Act
         var dto = new FetchSettingsDto();
@@ -179,12 +185,13 @@ public class DtoAdvancedTests
         // Assert
         dto.CustomHeaders.ShouldNotBeNull();
         dto.CustomHeaders.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
     // ChangeListItemDto Tests
 
-    [Fact]
-    public void ChangeListItemDto_CanSetAllProperties()
+    [Test]
+    public async Task ChangeListItemDto_CanSetAllProperties()
     {
         // Arrange
         var detected = DateTime.UtcNow;
@@ -215,12 +222,13 @@ public class DtoAdvancedTests
         dto.LinesRemoved.ShouldBe(5);
         dto.IsViewed.ShouldBeTrue();
         dto.IsNotified.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     // ChangeDetailDto Tests
 
-    [Fact]
-    public void ChangeDetailDto_CanSetAllProperties()
+    [Test]
+    public async Task ChangeDetailDto_CanSetAllProperties()
     {
         // Arrange
         var detected = DateTime.UtcNow;
@@ -251,12 +259,13 @@ public class DtoAdvancedTests
         dto.DiffHtml.ShouldContain("diff");
         dto.PreviousSnapshot!.Content.ShouldBe("Old content");
         dto.CurrentSnapshot!.Content.ShouldBe("New content");
+        await Task.CompletedTask;
     }
 
     // SnapshotInfoDto Tests
 
-    [Fact]
-    public void SnapshotInfoDto_CanSetAllProperties()
+    [Test]
+    public async Task SnapshotInfoDto_CanSetAllProperties()
     {
         // Arrange
         var captured = DateTime.UtcNow;
@@ -275,22 +284,24 @@ public class DtoAdvancedTests
         dto.CapturedAt.ShouldBe(captured);
         dto.Content.ShouldBe("Full page content here");
         dto.ScreenshotPath.ShouldBe("/screenshots/snap1.png");
+        await Task.CompletedTask;
     }
 
     // ProcessInputRequest Tests
 
-    [Fact]
-    public void ProcessInputRequest_EmptyInput_IsAllowed()
+    [Test]
+    public async Task ProcessInputRequest_EmptyInput_IsAllowed()
     {
         // Act
         var request = new ProcessInputRequest { Input = "" };
 
         // Assert
         request.Input.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ProcessInputRequest_LongInput_IsAllowed()
+    [Test]
+    public async Task ProcessInputRequest_LongInput_IsAllowed()
     {
         // Arrange
         var longInput = new string('x', 10000);
@@ -300,12 +311,13 @@ public class DtoAdvancedTests
 
         // Assert
         request.Input.Length.ShouldBe(10000);
+        await Task.CompletedTask;
     }
 
     // ProcessInputResponse Tests
 
-    [Fact]
-    public void ProcessInputResponse_CanSetAllProperties()
+    [Test]
+    public async Task ProcessInputResponse_CanSetAllProperties()
     {
         // Act
         var response = new ProcessInputResponse
@@ -336,12 +348,13 @@ public class DtoAdvancedTests
         response.ClarificationQuestions.Count.ShouldBe(2);
         response.Suggestions.Count.ShouldBe(1);
         response.CreatedWatchId.ShouldBe("new-watch-123");
+        await Task.CompletedTask;
     }
 
     // ParsedWatchRequestDto Tests
 
-    [Fact]
-    public void ParsedWatchRequestDto_CanSetAllProperties()
+    [Test]
+    public async Task ParsedWatchRequestDto_CanSetAllProperties()
     {
         // Act
         var dto = new ParsedWatchRequestDto
@@ -365,10 +378,11 @@ public class DtoAdvancedTests
         dto.Tags.Count.ShouldBe(2);
         dto.NotificationEmail.ShouldBe("notify@example.com");
         dto.Description.ShouldBe("Monitor for price changes");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ParsedWatchRequestDto_NullablePropertiesDefaultToNull()
+    [Test]
+    public async Task ParsedWatchRequestDto_NullablePropertiesDefaultToNull()
     {
         // Act
         var dto = new ParsedWatchRequestDto();
@@ -381,12 +395,13 @@ public class DtoAdvancedTests
         dto.UseJavaScript.ShouldBeNull();
         dto.NotificationEmail.ShouldBeNull();
         dto.Description.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
     // SuggestionChipDto Tests
 
-    [Fact]
-    public void SuggestionChipDto_CanSetAllProperties()
+    [Test]
+    public async Task SuggestionChipDto_CanSetAllProperties()
     {
         // Act
         var dto = new SuggestionChipDto
@@ -400,12 +415,13 @@ public class DtoAdvancedTests
         dto.Label.ShouldBe("Default Settings");
         dto.Value.ShouldBe("default");
         dto.Type.ShouldBe("Action");
+        await Task.CompletedTask;
     }
 
     // LlmProviderDto Tests
 
-    [Fact]
-    public void LlmProviderDto_CanSetAllProperties()
+    [Test]
+    public async Task LlmProviderDto_CanSetAllProperties()
     {
         // Act
         var dto = new LlmProviderDto
@@ -431,10 +447,11 @@ public class DtoAdvancedTests
         dto.IsHealthy.ShouldBeTrue();
         dto.Priority.ShouldBe(1);
         dto.MaxTokens.ShouldBe(4096);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmProviderDto_HasCorrectDefaults()
+    [Test]
+    public async Task LlmProviderDto_HasCorrectDefaults()
     {
         // Act
         var dto = new LlmProviderDto();
@@ -445,12 +462,13 @@ public class DtoAdvancedTests
         dto.ModelId.ShouldBeNull();
         dto.IsHealthy.ShouldBeFalse();
         dto.Priority.ShouldBe(0);
+        await Task.CompletedTask;
     }
 
     // LlmProviderCreateDto Tests
 
-    [Fact]
-    public void LlmProviderCreateDto_CanSetAllProperties()
+    [Test]
+    public async Task LlmProviderCreateDto_CanSetAllProperties()
     {
         // Act
         var dto = new LlmProviderCreateDto
@@ -470,12 +488,13 @@ public class DtoAdvancedTests
         dto.Endpoint.ShouldBe("https://my-resource.openai.azure.com/");
         dto.Priority.ShouldBe(2);
         dto.MaxTokens.ShouldBe(8192);
+        await Task.CompletedTask;
     }
 
     // LlmUsageStatsDto Tests
 
-    [Fact]
-    public void LlmUsageStatsDto_CanSetAllProperties()
+    [Test]
+    public async Task LlmUsageStatsDto_CanSetAllProperties()
     {
         // Act
         var dto = new LlmUsageStatsDto
@@ -502,12 +521,13 @@ public class DtoAdvancedTests
         dto.AverageLatencyMs.ShouldBe(350.75);
         dto.SuccessCount.ShouldBe(950);
         dto.ByProvider.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
     // ProviderUsageDto Tests
 
-    [Fact]
-    public void ProviderUsageDto_CanSetAllProperties()
+    [Test]
+    public async Task ProviderUsageDto_CanSetAllProperties()
     {
         // Act
         var dto = new ProviderUsageDto
@@ -523,5 +543,6 @@ public class DtoAdvancedTests
         dto.InputTokens.ShouldBe(5000);
         dto.OutputTokens.ShouldBe(10000);
         dto.Cost.ShouldBe(1.50m);
+        await Task.CompletedTask;
     }
 }

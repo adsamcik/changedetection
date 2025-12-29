@@ -4,6 +4,7 @@ using ChangeDetection.Services.Notifications;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Notifications;
 
@@ -22,7 +23,7 @@ public class NotificationServiceTests
         _sut = new NotificationService(_settingsRepo, _httpClientFactory, _logger);
     }
 
-    [Fact]
+    [Test]
     public async Task SendNotificationAsync_NoNotificationsEnabled_DoesNotThrow()
     {
         // Arrange
@@ -42,7 +43,7 @@ public class NotificationServiceTests
         await _sut.SendNotificationAsync(watch, change);
     }
 
-    [Fact]
+    [Test]
     public async Task SendNotificationAsync_EmailEnabled_AttemptsToSend()
     {
         // Arrange
@@ -67,7 +68,7 @@ public class NotificationServiceTests
         await _settingsRepo.Received(1).GetAllAsync(Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task SendNotificationAsync_UsesProvidedSummary()
     {
         // Arrange
@@ -85,7 +86,7 @@ public class NotificationServiceTests
         // Assert - Test completes without error
     }
 
-    [Fact]
+    [Test]
     public async Task SendTestNotificationAsync_EmailEnabled_AttemptsToSendTestEmail()
     {
         // Arrange
@@ -105,7 +106,7 @@ public class NotificationServiceTests
         await _settingsRepo.Received(1).GetAllAsync(Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task SendTestNotificationAsync_NoSettingsEnabled_DoesNotThrow()
     {
         // Arrange
@@ -123,8 +124,8 @@ public class NotificationServiceTests
 
 public class NotificationSettingsTests
 {
-    [Fact]
-    public void NotificationSettings_HasCorrectDefaults()
+    [Test]
+    public async Task NotificationSettings_HasCorrectDefaults()
     {
         // Act
         var settings = new NotificationSettings();
@@ -136,10 +137,11 @@ public class NotificationSettingsTests
         settings.EmailAddress.ShouldBeNull();
         settings.WebhookUrl.ShouldBeNull();
         settings.DiscordWebhookUrl.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void NotificationSettings_CanSetAllProperties()
+    [Test]
+    public async Task NotificationSettings_CanSetAllProperties()
     {
         // Arrange & Act
         var settings = new NotificationSettings
@@ -163,5 +165,6 @@ public class NotificationSettingsTests
         settings.DiscordWebhookUrl.ShouldBe("https://discord.com/api/webhooks/123");
         settings.UseLlmSummary.ShouldBeTrue();
         settings.MinimumImportance.ShouldBe(ChangeImportance.High);
+        await Task.CompletedTask;
     }
 }

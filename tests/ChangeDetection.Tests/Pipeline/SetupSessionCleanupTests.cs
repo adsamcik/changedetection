@@ -1,10 +1,11 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Hubs;
 using ChangeDetection.Services.Pipeline;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Pipeline;
 
@@ -13,8 +14,8 @@ namespace ChangeDetection.Tests.Pipeline;
 /// </summary>
 public class SetupSessionCleanupTests
 {
-    [Fact]
-    public void CleanupExpiredSession_RemovesEntriesFromDictionaries()
+    [Test]
+    public async Task CleanupExpiredSession_RemovesEntriesFromDictionaries()
     {
         // Arrange
         var sessionId = Guid.NewGuid();
@@ -24,10 +25,11 @@ public class SetupSessionCleanupTests
         
         // Assert
         result.ShouldBeFalse(); // Nothing was removed since it didn't exist
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void DefensiveCleanup_RemovesOrphanedSessions()
+    [Test]
+    public async Task DefensiveCleanup_RemovesOrphanedSessions()
     {
         // Arrange
         var sessionManager = Substitute.For<IConversationSessionManager>();
@@ -41,10 +43,11 @@ public class SetupSessionCleanupTests
         
         // Assert - should complete without error
         cleanedUp.ShouldBeGreaterThanOrEqualTo(0);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void DiagnosticProperties_ReturnCounts()
+    [Test]
+    public async Task DiagnosticProperties_ReturnCounts()
     {
         // Arrange & Act
         var pipelineCount = SetupConversationHub.PipelineSessionCount;
@@ -53,6 +56,7 @@ public class SetupSessionCleanupTests
         // Assert - counts should be non-negative
         pipelineCount.ShouldBeGreaterThanOrEqualTo(0);
         historyCount.ShouldBeGreaterThanOrEqualTo(0);
+        await Task.CompletedTask;
     }
 }
 
@@ -61,11 +65,12 @@ public class SetupSessionCleanupTests
 /// </summary>
 public class SetupSessionCleanupServiceTests
 {
-    [Fact]
+    [Test]
     public async Task StartAsync_SubscribesToSessionExpiredEvent()
     {
         // Arrange
         var sessionManager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<ConversationSessionManager>>());
         var logger = Substitute.For<ILogger<SetupSessionCleanupService>>();
         var service = new SetupSessionCleanupService(sessionManager, logger);
@@ -81,11 +86,12 @@ public class SetupSessionCleanupServiceTests
         service.Dispose();
     }
 
-    [Fact]
+    [Test]
     public async Task StopAsync_UnsubscribesFromSessionExpiredEvent()
     {
         // Arrange
         var sessionManager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<ConversationSessionManager>>());
         var logger = Substitute.For<ILogger<SetupSessionCleanupService>>();
         var service = new SetupSessionCleanupService(sessionManager, logger);
@@ -102,8 +108,8 @@ public class SetupSessionCleanupServiceTests
         service.Dispose();
     }
 
-    [Fact]
-    public void Service_ImplementsIDisposable()
+    [Test]
+    public async Task Service_ImplementsIDisposable()
     {
         // Arrange
         var sessionManager = Substitute.For<IConversationSessionManager>();
@@ -114,6 +120,7 @@ public class SetupSessionCleanupServiceTests
         {
             // Service created successfully
         }
+        await Task.CompletedTask;
     }
 }
 
@@ -122,12 +129,13 @@ public class SetupSessionCleanupServiceTests
 /// </summary>
 public class SessionExpirationCleanupIntegrationTests
 {
-    [Fact]
-    public void SessionExpired_Event_IsRaisedWhenSessionsAreCleanedUp()
+    [Test]
+    public async Task SessionExpired_Event_IsRaisedWhenSessionsAreCleanedUp()
     {
         // Arrange
         var logger = Substitute.For<ILogger<ConversationSessionManager>>();
-        using var sessionManager = new ConversationSessionManager(logger);
+        using var sessionManager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(), logger);
         
         var expiredSessionIds = new List<Guid>();
         sessionManager.SessionExpired += (sessionId) => expiredSessionIds.Add(sessionId);
@@ -147,14 +155,16 @@ public class SessionExpirationCleanupIntegrationTests
         
         // Note: RemoveSession doesn't fire SessionExpired - that's only fired during timer cleanup
         // This test verifies the manual removal path works
+        await Task.CompletedTask;
     }
 
-    [Fact]
+    [Test]
     public async Task CleanupService_CleansUpWhenSessionExpires()
     {
         // Arrange
         var sessionManagerLogger = Substitute.For<ILogger<ConversationSessionManager>>();
-        using var sessionManager = new ConversationSessionManager(sessionManagerLogger);
+        using var sessionManager = new ConversationSessionManager(
+            Substitute.For<IServiceScopeFactory>(), sessionManagerLogger);
         
         var cleanupLogger = Substitute.For<ILogger<SetupSessionCleanupService>>();
         using var cleanupService = new SetupSessionCleanupService(sessionManager, cleanupLogger);

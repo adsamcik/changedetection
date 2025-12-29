@@ -2,44 +2,51 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
 using ChangeDetection.Services.Pipeline;
+using ChangeDetection.Tests.Llm.Cache;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
 using System.Linq.Expressions;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Pipeline;
 
 /// <summary>
-/// Integration tests using a real LLM (Ollama with ministral-3:8b) to validate
-/// the pipeline correctly interprets user intent and generates appropriate selectors.
+/// Integration tests using LLM (Ollama with ministral-3:14b) with response caching
+/// to validate the pipeline correctly interprets user intent and generates selectors.
 /// 
-/// Prerequisites:
+/// CACHING DESIGN:
+/// LLM requests are hashed by model + temperature + messages. Responses are
+/// stored in SQLite and replayed for subsequent test runs. This gives us:
+/// - Deterministic results (same hash = same response)
+/// - Fast execution (no LLM call needed when cached)
+/// - CI compatibility (no Ollama required after initial capture)
+/// 
+/// Prerequisites for initial capture:
 /// - Ollama running locally on port 11434
-/// - Model: ministral-3:8b pulled
+/// - Model: ministral-3:14b pulled
 /// 
-/// Run: ollama pull ministral-3:8b
+/// Run: ollama pull ministral-3:14b
 /// </summary>
-[Trait("Category", "Integration")]
-[Trait("Category", "RequiresOllama")]
-public class RealLlmPipelineTests : TestBase, IAsyncLifetime
+[Category("Integration")]
+[Category("LlmCached")]
+public class RealLlmPipelineTests : TestBase, IDisposable
 {
     private readonly LlmProviderChain _llmChain;
     private readonly ContentAnalysisStage _contentAnalysisStage;
     private readonly SelectorGenerationStage _selectorGenerationStage;
+    private readonly CachingHttpClientFactory _httpClientFactory;
     
     private const string OllamaEndpoint = "http://localhost:11434";
-    private const string OllamaModel = "ministral-3:8b";
+    private const string OllamaModel = "ministral-3:14b";
     
     // The exact user input to test
     private const string UserInput = "https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page";
     private const string ExtractedIntent = "I want to watch for the events on that page";
 
-    public RealLlmPipelineTests(ITestOutputHelper output)
-        : base(output)
+    public RealLlmPipelineTests()
     {
         
         // Create mock repositories
@@ -62,40 +69,26 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         var serviceProvider = Substitute.For<IServiceProvider>();
         var llmLogService = Substitute.For<ILlmLogService>();
         
-        _llmChain = new LlmProviderChain(providerRepo, usageRepo, llmLogger, serviceProvider, llmLogService);
+        // Create caching HTTP client factory for deterministic LLM responses
+        var cacheMode = CachedLlmKernelFactory.GetDefaultCacheMode();
+        _httpClientFactory = new CachingHttpClientFactory(cacheMode, Console.Out);
+        Console.WriteLine($"=== LLM Cache Mode: {cacheMode} ===");
+        
+        _llmChain = new LlmProviderChain(providerRepo, usageRepo, llmLogger, serviceProvider, llmLogService, _httpClientFactory);
         
         var analysisLogger = Substitute.For<ILogger<ContentAnalysisStage>>();
         _contentAnalysisStage = new ContentAnalysisStage(_llmChain, analysisLogger);
         
         var selectorLogger = Substitute.For<ILogger<SelectorGenerationStage>>();
-        _selectorGenerationStage = new SelectorGenerationStage(_llmChain, selectorLogger);
+        var domCompactor = CreatePassThroughDomCompactor();
+        _selectorGenerationStage = new SelectorGenerationStage(_llmChain, domCompactor, selectorLogger);
     }
 
-    public async Task InitializeAsync()
+    public void Dispose()
     {
-        // Check if Ollama is available
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        try
-        {
-            var response = await client.GetAsync($"{OllamaEndpoint}/api/tags");
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new SkipException("Ollama is not available. Skipping real LLM tests.");
-            }
-            
-            var content = await response.Content.ReadAsStringAsync();
-            if (!content.Contains(OllamaModel.Split(':')[0], StringComparison.OrdinalIgnoreCase))
-            {
-                Output.WriteLine($"Warning: Model {OllamaModel} may not be available. Test may fail.");
-            }
-        }
-        catch (HttpRequestException)
-        {
-            throw new SkipException("Ollama is not running. Start Ollama and run: ollama pull ministral-3:8b");
-        }
+        _httpClientFactory?.Dispose();
+        GC.SuppressFinalize(this);
     }
-
-    public Task DisposeAsync() => Task.CompletedTask;
 
     /// <summary>
     /// Sample HTML from the IMG CAS events page for testing.
@@ -209,15 +202,15 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
             """
     };
 
-    [Fact]
+    [Test]
     public async Task ContentAnalysis_IdentifiesEventsFromUserIntent()
     {
         // Arrange
         var content = GetSampleEventPageContent();
         
-        Output.WriteLine($"Testing with user intent: \"{ExtractedIntent}\"");
-        Output.WriteLine($"Page title: {content.Title}");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine($"Testing with user intent: \"{ExtractedIntent}\"");
+        TestContext.Current?.OutputWriter?.WriteLine($"Page title: {content.Title}");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Act
         ContentAnalysis analysis;
@@ -227,23 +220,23 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"LLM call failed: {ex.Message}");
-            Output.WriteLine("Test passed - LLM unavailability is handled gracefully");
+            TestContext.Current?.OutputWriter?.WriteLine($"LLM call failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("Test passed - LLM unavailability is handled gracefully");
             return; // Explicit LLM failure is acceptable
         }
 
         // Assert & Output
-        Output.WriteLine($"Content Type: {analysis.ContentType}");
-        Output.WriteLine($"User Intent (LLM interpreted): {analysis.UserIntent}");
-        Output.WriteLine($"Recommended Approach: {analysis.RecommendedApproach}");
-        Output.WriteLine($"Confidence: {analysis.Confidence:P0}");
-        Output.WriteLine($"Page Description: {analysis.PageDescription}");
-        Output.WriteLine("---");
-        Output.WriteLine("Identified Sections:");
+        TestContext.Current?.OutputWriter?.WriteLine($"Content Type: {analysis.ContentType}");
+        TestContext.Current?.OutputWriter?.WriteLine($"User Intent (LLM interpreted): {analysis.UserIntent}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Recommended Approach: {analysis.RecommendedApproach}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Confidence: {analysis.Confidence:P0}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Page Description: {analysis.PageDescription}");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("Identified Sections:");
         foreach (var section in analysis.IdentifiedSections)
         {
-            Output.WriteLine($"  - {section.Name}: {section.SuggestedSelector}");
-            Output.WriteLine($"    Target: {section.IsLikelyTarget}, Desc: {section.Description}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  - {section.Name}: {section.SuggestedSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Target: {section.IsLikelyTarget}, Desc: {section.Description}");
         }
 
         // Validate the LLM understood this is an events page
@@ -267,7 +260,7 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
             "At least one section should be marked as the monitoring target");
     }
 
-    [Fact]
+    [Test]
     public async Task SelectorGeneration_CreatesEventSelectors()
     {
         // Arrange
@@ -281,14 +274,14 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"Content analysis failed: {ex.Message}");
-            Output.WriteLine("Test passed - LLM unavailability is handled gracefully");
+            TestContext.Current?.OutputWriter?.WriteLine($"Content analysis failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("Test passed - LLM unavailability is handled gracefully");
             return;
         }
         
-        Output.WriteLine($"Analysis completed. Content Type: {analysis.ContentType}");
-        Output.WriteLine($"Generating selectors for intent: \"{analysis.UserIntent}\"");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine($"Analysis completed. Content Type: {analysis.ContentType}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Generating selectors for intent: \"{analysis.UserIntent}\"");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Act
         List<GeneratedSelector> selectors;
@@ -298,19 +291,19 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"Selector generation failed: {ex.Message}");
-            Output.WriteLine("Test passed - LLM unavailability is handled gracefully");
+            TestContext.Current?.OutputWriter?.WriteLine($"Selector generation failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("Test passed - LLM unavailability is handled gracefully");
             return;
         }
 
         // Assert & Output
-        Output.WriteLine($"Generated {selectors.Count} selectors:");
+        TestContext.Current?.OutputWriter?.WriteLine($"Generated {selectors.Count} selectors:");
         foreach (var selector in selectors)
         {
-            Output.WriteLine($"  [{selector.Type}] {selector.Selector}");
-            Output.WriteLine($"    Confidence: {selector.Confidence:P0}, Priority: {selector.Priority}");
-            Output.WriteLine($"    Description: {selector.Description}");
-            Output.WriteLine($"    Reasoning: {selector.Reasoning}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  [{selector.Type}] {selector.Selector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Confidence: {selector.Confidence:P0}, Priority: {selector.Priority}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Description: {selector.Description}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Reasoning: {selector.Reasoning}");
         }
 
         // Validate we got selectors
@@ -335,7 +328,7 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
             $"At least one selector should target events. Got: {string.Join(", ", selectors.Select(s => s.Selector))}");
     }
 
-    [Fact]
+    [Test]
     public async Task FullPipeline_InterpretUserIntentAndGeneratesValidSelectors()
     {
         // This test validates the complete flow:
@@ -349,28 +342,28 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         var urlStage = new UrlExtractionStage();
         var content = GetSampleEventPageContent();
 
-        Output.WriteLine("=== FULL PIPELINE TEST ===");
-        Output.WriteLine($"User Input: \"{UserInput}\"");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("=== FULL PIPELINE TEST ===");
+        TestContext.Current?.OutputWriter?.WriteLine($"User Input: \"{UserInput}\"");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Stage 1: URL Extraction
         var urls = urlStage.Extract(UserInput);
         var extractedIntent = urlStage.ExtractUserIntent(UserInput);
         
-        Output.WriteLine($"Stage 1 - URL Extraction:");
-        Output.WriteLine($"  Extracted URL: {urls[0].NormalizedUrl}");
-        Output.WriteLine($"  Extracted Intent: \"{extractedIntent}\"");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stage 1 - URL Extraction:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Extracted URL: {urls[0].NormalizedUrl}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Extracted Intent: \"{extractedIntent}\"");
         
         urls.ShouldNotBeEmpty();
         urls[0].NormalizedUrl.ShouldContain("img.cas.cz");
         extractedIntent.ShouldBe("I want to watch for the events on that page");
 
         // Stage 2: Content would be fetched (we use sample)
-        Output.WriteLine($"Stage 2 - Content Fetching: (using sample HTML)");
-        Output.WriteLine($"  Title: {content.Title}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stage 2 - Content Fetching: (using sample HTML)");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Title: {content.Title}");
 
         // Stage 3: Content Analysis
-        Output.WriteLine("Stage 3 - Content Analysis (calling LLM)...");
+        TestContext.Current?.OutputWriter?.WriteLine("Stage 3 - Content Analysis (calling LLM)...");
         ContentAnalysis analysis;
         try
         {
@@ -378,22 +371,22 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"  LLM call failed: {ex.Message}");
-            Output.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
+            TestContext.Current?.OutputWriter?.WriteLine($"  LLM call failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
             return;
         }
         
-        Output.WriteLine($"  Content Type: {analysis.ContentType}");
-        Output.WriteLine($"  LLM Interpreted Intent: \"{analysis.UserIntent}\"");
-        Output.WriteLine($"  Confidence: {analysis.Confidence:P0}");
-        Output.WriteLine($"  Sections Found: {analysis.IdentifiedSections.Count}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Content Type: {analysis.ContentType}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  LLM Interpreted Intent: \"{analysis.UserIntent}\"");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Confidence: {analysis.Confidence:P0}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Sections Found: {analysis.IdentifiedSections.Count}");
         foreach (var section in analysis.IdentifiedSections.Where(s => s.IsLikelyTarget))
         {
-            Output.WriteLine($"    -> {section.Name}: {section.SuggestedSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    -> {section.Name}: {section.SuggestedSelector}");
         }
 
         // Stage 4: Selector Generation
-        Output.WriteLine("Stage 4 - Selector Generation (calling LLM)...");
+        TestContext.Current?.OutputWriter?.WriteLine("Stage 4 - Selector Generation (calling LLM)...");
         List<GeneratedSelector> selectors;
         try
         {
@@ -401,43 +394,43 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"  LLM call failed: {ex.Message}");
-            Output.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
+            TestContext.Current?.OutputWriter?.WriteLine($"  LLM call failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
             return;
         }
         
-        Output.WriteLine($"  Generated {selectors.Count} selectors:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Generated {selectors.Count} selectors:");
         foreach (var selector in selectors.OrderByDescending(s => s.Confidence).Take(3))
         {
-            Output.WriteLine($"    [{selector.Type}] {selector.Selector}");
-            Output.WriteLine($"       Confidence: {selector.Confidence:P0}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    [{selector.Type}] {selector.Selector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"       Confidence: {selector.Confidence:P0}");
         }
 
         // Stage 5: Validate selectors work on the HTML
-        Output.WriteLine("Stage 5 - Selector Validation:");
+        TestContext.Current?.OutputWriter?.WriteLine("Stage 5 - Selector Validation:");
         var contentExtractor = Substitute.For<IContentExtractor>();
         var validationStage = new SelectorValidationStage(contentExtractor, Substitute.For<ILogger<SelectorValidationStage>>());
         var validations = validationStage.ValidateSelectors(content, selectors, analysis);
         
         var workingSelectors = validations.Where(v => v.IsValid && v.MatchCount > 0).ToList();
-        Output.WriteLine($"  Working selectors: {workingSelectors.Count}/{validations.Count}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Working selectors: {workingSelectors.Count}/{validations.Count}");
         foreach (var v in workingSelectors.Take(3))
         {
-            Output.WriteLine($"    {v.Selector.Selector}: {v.MatchCount} matches");
-            Output.WriteLine($"       Sample: {v.ExtractedSample?[..Math.Min(100, v.ExtractedSample?.Length ?? 0)]}...");
+            TestContext.Current?.OutputWriter?.WriteLine($"    {v.Selector.Selector}: {v.MatchCount} matches");
+            TestContext.Current?.OutputWriter?.WriteLine($"       Sample: {v.ExtractedSample?[..Math.Min(100, v.ExtractedSample?.Length ?? 0)]}...");
         }
 
         // Final assertions
-        Output.WriteLine("---");
-        Output.WriteLine("=== VALIDATION ===");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("=== VALIDATION ===");
         
         // The LLM should recognize this as events
         analysis.ContentType.ShouldBe(ContentType.EventList);
-        Output.WriteLine("✓ Content correctly identified as EventList");
+        TestContext.Current?.OutputWriter?.WriteLine("✓ Content correctly identified as EventList");
         
         // We should have working selectors
         workingSelectors.ShouldNotBeEmpty("Should have at least one working selector");
-        Output.WriteLine($"✓ {workingSelectors.Count} working selectors generated");
+        TestContext.Current?.OutputWriter?.WriteLine($"✓ {workingSelectors.Count} working selectors generated");
         
         // Check if we have coverage for the events:
         // - Either one selector matching multiple events (ideal)
@@ -447,12 +440,12 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         
         if (multiMatchSelector != null)
         {
-            Output.WriteLine($"✓ Selector '{multiMatchSelector.Selector.Selector}' matches {multiMatchSelector.MatchCount} events");
+            TestContext.Current?.OutputWriter?.WriteLine($"✓ Selector '{multiMatchSelector.Selector.Selector}' matches {multiMatchSelector.MatchCount} events");
         }
         else if (totalMatchedEvents >= 3)
         {
             // LLM generated individual selectors for each event - this is also valid
-            Output.WriteLine($"✓ {workingSelectors.Count} selectors match {totalMatchedEvents} events total (individual event targeting)");
+            TestContext.Current?.OutputWriter?.WriteLine($"✓ {workingSelectors.Count} selectors match {totalMatchedEvents} events total (individual event targeting)");
         }
         else
         {
@@ -460,11 +453,11 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
             Assert.Fail($"Should have a selector matching multiple events or multiple selectors covering events. Got: {workingSelectors.Count} selectors matching {totalMatchedEvents} total.");
         }
         
-        Output.WriteLine("---");
-        Output.WriteLine("=== PIPELINE SUCCESS ===");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("=== PIPELINE SUCCESS ===");
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractedEvents_ContainExpectedData()
     {
         // This test validates that the FINAL EXTRACTED DATA contains
@@ -475,9 +468,9 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         var content = GetSampleEventPageContent();
         var extractedIntent = urlStage.ExtractUserIntent(UserInput);
 
-        Output.WriteLine("=== EXTRACTED EVENTS VALIDATION TEST ===");
-        Output.WriteLine($"User Intent: \"{extractedIntent}\"");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("=== EXTRACTED EVENTS VALIDATION TEST ===");
+        TestContext.Current?.OutputWriter?.WriteLine($"User Intent: \"{extractedIntent}\"");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Get content analysis and selectors
         ContentAnalysis analysis;
@@ -487,8 +480,8 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"Content analysis failed: {ex.Message}");
-            Output.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
+            TestContext.Current?.OutputWriter?.WriteLine($"Content analysis failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
             return;
         }
         
@@ -499,8 +492,8 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         catch (Exception ex)
         {
-            Output.WriteLine($"Selector generation failed: {ex.Message}");
-            Output.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
+            TestContext.Current?.OutputWriter?.WriteLine($"Selector generation failed: {ex.Message}");
+            TestContext.Current?.OutputWriter?.WriteLine("=== TEST PASSED: LLM failure handled gracefully ===");
             return;
         }
         
@@ -514,14 +507,14 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         
         if (bestSelector == null)
         {
-            Output.WriteLine("No best selector found - LLM may have generated invalid selectors");
-            Output.WriteLine("=== TEST PASSED: Failure handled gracefully ===");
+            TestContext.Current?.OutputWriter?.WriteLine("No best selector found - LLM may have generated invalid selectors");
+            TestContext.Current?.OutputWriter?.WriteLine("=== TEST PASSED: Failure handled gracefully ===");
             return;
         }
         
-        Output.WriteLine($"Best Selector: {bestSelector.Selector}");
-        Output.WriteLine($"Selector Type: {bestSelector.Type}");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine($"Best Selector: {bestSelector.Selector}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Selector Type: {bestSelector.Type}");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Now extract the actual content using the selector
         var doc = new HtmlDocument();
@@ -541,8 +534,8 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         }
         
         var nodeList = nodes.ToList();
-        Output.WriteLine($"Matched {nodeList.Count} elements:");
-        Output.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine($"Matched {nodeList.Count} elements:");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
 
         // Extract text from each matched element
         var extractedEvents = new List<string>();
@@ -550,17 +543,17 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         {
             var text = CleanText(node.InnerText);
             extractedEvents.Add(text);
-            Output.WriteLine($"Event: {text}");
-            Output.WriteLine("---");
+            TestContext.Current?.OutputWriter?.WriteLine($"Event: {text}");
+            TestContext.Current?.OutputWriter?.WriteLine("---");
         }
 
         // === VALIDATE THE ACTUAL EXTRACTED DATA ===
-        Output.WriteLine("=== FINAL VALIDATION ===");
+        TestContext.Current?.OutputWriter?.WriteLine("=== FINAL VALIDATION ===");
 
         // We should have extracted at least 3 elements (events or event details)
         extractedEvents.Count.ShouldBeGreaterThanOrEqualTo(3, 
             "Should extract at least 3 event-related elements from the page");
-        Output.WriteLine($"✓ Extracted {extractedEvents.Count} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"✓ Extracted {extractedEvents.Count} elements");
 
         var allExtractedText = string.Join(" ", extractedEvents).ToLowerInvariant();
         
@@ -577,29 +570,29 @@ public class RealLlmPipelineTests : TestBase, IAsyncLifetime
         
         if (hasEventTitles)
         {
-            Output.WriteLine("✓ Extracted event TITLES (names)");
-            Output.WriteLine("  This enables detecting when new events appear");
+            TestContext.Current?.OutputWriter?.WriteLine("✓ Extracted event TITLES (names)");
+            TestContext.Current?.OutputWriter?.WriteLine("  This enables detecting when new events appear");
         }
         
         if (hasEventDetails)
         {
-            Output.WriteLine("✓ Extracted event DETAILS (dates, locations)");
-            Output.WriteLine("  This enables detecting when event schedules change");
+            TestContext.Current?.OutputWriter?.WriteLine("✓ Extracted event DETAILS (dates, locations)");
+            TestContext.Current?.OutputWriter?.WriteLine("  This enables detecting when event schedules change");
         }
 
-        Output.WriteLine("---");
-        Output.WriteLine("=== ALL VALIDATIONS PASSED ===");
-        Output.WriteLine("The LLM correctly understood 'watch for events' and configured");
-        Output.WriteLine("selectors that extract meaningful event data:");
+        TestContext.Current?.OutputWriter?.WriteLine("---");
+        TestContext.Current?.OutputWriter?.WriteLine("=== ALL VALIDATIONS PASSED ===");
+        TestContext.Current?.OutputWriter?.WriteLine("The LLM correctly understood 'watch for events' and configured");
+        TestContext.Current?.OutputWriter?.WriteLine("selectors that extract meaningful event data:");
         foreach (var evt in extractedEvents.Take(3))
         {
-            Output.WriteLine($"  - {evt}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  - {evt}");
         }
-        Output.WriteLine("");
-        Output.WriteLine("This enables change detection to notify when:");
-        Output.WriteLine("  - New events are added to the page");
-        Output.WriteLine("  - Event information is modified");
-        Output.WriteLine("  - Events are removed from the page");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("This enables change detection to notify when:");
+        TestContext.Current?.OutputWriter?.WriteLine("  - New events are added to the page");
+        TestContext.Current?.OutputWriter?.WriteLine("  - Event information is modified");
+        TestContext.Current?.OutputWriter?.WriteLine("  - Events are removed from the page");
     }
 
     private static string CleanText(string text)
@@ -686,12 +679,4 @@ public class InMemoryRepository<T> : IRepository<T> where T : class
         _items.RemoveAll(x => predicate.Compile()(x));
         return Task.CompletedTask;
     }
-}
-
-/// <summary>
-/// Exception to skip tests when prerequisites are not met.
-/// </summary>
-public class SkipException : Exception
-{
-    public SkipException(string message) : base(message) { }
 }

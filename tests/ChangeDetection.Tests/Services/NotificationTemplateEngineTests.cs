@@ -4,7 +4,7 @@ using ChangeDetection.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Services;
 
@@ -23,7 +23,7 @@ public class NotificationTemplateEngineTests
         _engine = new NotificationTemplateEngine(_templateRepo, _llmProvider, _logger);
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_PriceDropAlert_SubstitutesPlaceholders()
     {
         // Arrange
@@ -46,7 +46,7 @@ public class NotificationTemplateEngineTests
         result.ShouldContain("CZK");
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_WithWatchProperties_SubstitutesCorrectly()
     {
         // Arrange
@@ -64,7 +64,7 @@ public class NotificationTemplateEngineTests
         result.ShouldContain("https://example.com/widget");
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_UnknownPlaceholder_LeavesAsLiteral()
     {
         // Arrange
@@ -82,7 +82,7 @@ public class NotificationTemplateEngineTests
         result.ShouldContain("{UnknownPlaceholder}");
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_StockStatus_SubstitutesCorrectly()
     {
         // Arrange
@@ -102,7 +102,7 @@ public class NotificationTemplateEngineTests
         result.ShouldContain("In Stock");
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_ChangeMetrics_SubstitutesCorrectly()
     {
         // Arrange
@@ -122,7 +122,7 @@ public class NotificationTemplateEngineTests
         result.ShouldContain("-282");
     }
 
-    [Fact]
+    [Test]
     public async Task GetEffectiveTemplateAsync_NoCustomTemplate_ReturnsDefault()
     {
         // Arrange
@@ -141,7 +141,7 @@ public class NotificationTemplateEngineTests
         template.EmailSubjectTemplate.ShouldNotBeNullOrEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task GetEffectiveTemplateAsync_CustomTemplate_ReturnsCustom()
     {
         // Arrange
@@ -166,8 +166,8 @@ public class NotificationTemplateEngineTests
         template.EmailSubjectTemplate.ShouldBe("Custom: {Watch.Name} price changed!");
     }
 
-    [Fact]
-    public void ValidatePlaceholders_ValidTemplate_ReturnsNoWarnings()
+    [Test]
+    public async Task ValidatePlaceholders_ValidTemplate_ReturnsNoWarnings()
     {
         // Arrange
         var template = "Alert: {Watch.Name} - Price: {Price} {Currency}";
@@ -178,10 +178,11 @@ public class NotificationTemplateEngineTests
         // Assert
         result.IsValid.ShouldBeTrue();
         result.Warnings.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ValidatePlaceholders_InvalidPlaceholder_ReturnsWarning()
+    [Test]
+    public async Task ValidatePlaceholders_InvalidPlaceholder_ReturnsWarning()
     {
         // Arrange
         var template = "Alert: {InvalidPlaceholder}";
@@ -192,10 +193,11 @@ public class NotificationTemplateEngineTests
         // Assert
         result.Warnings.ShouldNotBeEmpty();
         result.Warnings.ShouldContain(w => w.Contains("InvalidPlaceholder"));
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GetAvailablePlaceholders_ReturnsExpectedPlaceholders()
+    [Test]
+    public async Task GetAvailablePlaceholders_ReturnsExpectedPlaceholders()
     {
         // Act
         var placeholders = _engine.GetAvailablePlaceholders();
@@ -210,9 +212,10 @@ public class NotificationTemplateEngineTests
         placeholders.ShouldContainKey("ChangeAbsolute");
         placeholders.ShouldContainKey("StockStatus");
         placeholders.ShouldContainKey("OldStockStatus");
+        await Task.CompletedTask;
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_WithLlmSummary_GeneratesAndSubstitutes()
     {
         // Arrange
@@ -241,7 +244,7 @@ public class NotificationTemplateEngineTests
         result.ShouldNotBeNullOrWhiteSpace();
     }
 
-    [Fact]
+    [Test]
     public async Task RenderAsync_LlmFails_FallsBackGracefully()
     {
         // Arrange

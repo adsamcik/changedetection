@@ -3,19 +3,21 @@ using System.Reflection;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using ChangeDetection.Tests.Llm.Cache;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
+using Assembly = System.Reflection.Assembly;
+
 
 namespace ChangeDetection.Tests.EndToEnd;
 
 /// <summary>
-/// End-to-end tests for the IMG Czech Academy of Sciences events page.
+/// End-to-end tests for the IMG Czech Academy of Sciences events page with LLM caching.
 /// 
 /// Tests the complete LLM pipeline for parsing user intent to watch for new events
 /// on the Institute of Molecular Genetics (IMG) events page: https://www.img.cas.cz/novinky/akce/
@@ -28,20 +30,25 @@ namespace ChangeDetection.Tests.EndToEnd;
 /// - Recurring events: Include day of week (e.g., "Středy 15:00")
 /// 
 /// The test uses an embedded HTML resource for deterministic selector validation,
-/// while the LLM pipeline tests still require Ollama and internet access.
+/// while the LLM pipeline tests use cached responses for reproducibility.
+/// 
+/// CACHING DESIGN:
+/// LLM requests are hashed by model + temperature + messages. Responses are
+/// stored in SQLite and replayed for subsequent test runs. This gives us:
+/// - Deterministic results (same hash = same response)
+/// - Fast execution (no LLM call needed when cached)
+/// - CI compatibility (LLM caching layer handles all LLM calls automatically)
 /// 
 /// Prerequisites:
-/// - Ollama running locally on port 11434
 /// - Internet access to fetch the test URL (for live pipeline tests)
 /// </summary>
-[Trait("Category", "EndToEnd")]
-[Trait("Category", "RequiresOllama")]
-[Trait("Category", "RequiresInternet")]
-public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPipelineTests.ImgCasWebApplicationFactory>, IAsyncLifetime
+[Category("EndToEnd")]
+[Category("LlmCached")]  // Uses LLM caching layer for reproducible results
+[Category("RequiresInternet")]
+public class ImgCasEventsPipelineTests : IAsyncDisposable
 {
-    private readonly HttpClient _client;
-    private readonly ImgCasWebApplicationFactory _factory;
-    private bool _ollamaAvailable;
+    private HttpClient _client = null!;
+    private ImgCasWebApplicationFactory _factory = null!;
 
     // The exact user input we're testing - IMG Czech Academy events page
     private const string UserInput = "I want to watch for new events on this page https://www.img.cas.cz/novinky/akce/";
@@ -50,52 +57,42 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
     // Embedded resource name for deterministic HTML content
     private const string EmbeddedHtmlResourceName = "ChangeDetection.Tests.EndToEnd.Resources.ImgCasEventsPage.html";
 
-    public ImgCasEventsPipelineTests(ImgCasWebApplicationFactory factory, ITestOutputHelper output)
-        : base(output)
+    [Before(Test)]
+    public async Task SetUp()
     {
-        _factory = factory;
-        _client = factory.CreateClient();
+        _factory = new ImgCasWebApplicationFactory();
+        _client = _factory.CreateClient();
         _client.Timeout = TimeSpan.FromMinutes(5);
-    }
-
-    public async Task InitializeAsync()
-    {
         await _factory.EnsureProviderSeededAsync();
-        _ollamaAvailable = await IsOllamaAvailableAsync();
+        
+        // Log cache mode for debugging
+        Console.WriteLine($"=== LLM Cache Mode: {_factory.LlmCacheMode} ===");
+        Console.WriteLine($"=== Content Cache Mode: {_factory.ContentCacheMode} ===");
         
         // Verify we're using real services, not mocks
-        _factory.VerifyNoMocks(Output);
+        _factory.VerifyNoMocks();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
-
-    private static async Task<bool> IsOllamaAvailableAsync()
+    public async ValueTask DisposeAsync()
     {
-        try
-        {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var resp = await client.GetAsync("http://localhost:11434/api/tags");
-            return resp.IsSuccessStatusCode;
-        }
-        catch
-        {
-            return false;
-        }
+        _client?.Dispose();
+        if (_factory != null)
+            await _factory.DisposeAsync();
     }
 
     /// <summary>
     /// Unit test to validate the embedded HTML resource contains expected event structure.
     /// This test runs without Ollama and validates the test data is correct.
     /// </summary>
-    [Fact]
-    [Trait("Category", "Unit")]
+    [Test]
+    [Category("Unit")]
     public void EmbeddedHtml_ContainsExpectedEventStructure()
     {
-        Output.WriteLine("▶ Validating embedded HTML resource structure");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating embedded HTML resource structure");
         
         var htmlContent = LoadEmbeddedHtml();
         htmlContent.ShouldNotBeNullOrWhiteSpace();
-        Output.WriteLine($"  Loaded {htmlContent.Length:N0} characters");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Loaded {htmlContent.Length:N0} characters");
 
         var doc = new HtmlDocument();
         doc.LoadHtml(htmlContent);
@@ -104,41 +101,41 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         var title = doc.DocumentNode.SelectSingleNode("//title")?.InnerText;
         title.ShouldNotBeNull();
         title.ShouldContain("Akce", Case.Insensitive);
-        Output.WriteLine($"  ✓ Page title: {title}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Page title: {title}");
 
         // Verify event categories exist
         var categoryLinks = doc.DocumentNode.QuerySelectorAll("a[data-key]").ToList();
         categoryLinks.Count.ShouldBeGreaterThan(0, "Should have category filter links");
-        Output.WriteLine($"  ✓ Found {categoryLinks.Count} category links");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Found {categoryLinks.Count} category links");
 
         // Verify events with Termín (date) fields exist
         var terminNodes = doc.DocumentNode.SelectNodes("//*[contains(text(), 'Termín')]");
         terminNodes.ShouldNotBeNull();
         terminNodes.Count.ShouldBeGreaterThan(0, "Should have Termín (date) fields");
-        Output.WriteLine($"  ✓ Found {terminNodes.Count} Termín fields");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Found {terminNodes.Count} Termín fields");
 
         // Verify events with Místo (location) fields exist
         var mistoNodes = doc.DocumentNode.SelectNodes("//*[contains(text(), 'Místo')]");
         mistoNodes.ShouldNotBeNull();
         mistoNodes.Count.ShouldBeGreaterThan(0, "Should have Místo (location) fields");
-        Output.WriteLine($"  ✓ Found {mistoNodes.Count} Místo fields");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Found {mistoNodes.Count} Místo fields");
 
         // Verify specific events from the page snapshot
         var pageText = doc.DocumentNode.InnerText;
         pageText.ShouldContain("Pravidelné semináře");
-        Output.WriteLine("  ✓ Contains 'Pravidelné semináře' event");
+        TestContext.Current?.OutputWriter?.WriteLine("  ✓ Contains 'Pravidelné semináře' event");
         
         pageText.ShouldContain("Seminář");
-        Output.WriteLine("  ✓ Contains 'Seminář' events");
+        TestContext.Current?.OutputWriter?.WriteLine("  ✓ Contains 'Seminář' events");
 
         // Verify date format patterns (Czech format: D. M. YYYY)
         pageText.ShouldContain("2026");
-        Output.WriteLine("  ✓ Contains year 2026 dates");
+        TestContext.Current?.OutputWriter?.WriteLine("  ✓ Contains year 2026 dates");
 
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ EMBEDDED HTML STRUCTURE VALIDATED                         ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ EMBEDDED HTML STRUCTURE VALIDATED                         ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     /// <summary>
@@ -147,32 +144,25 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
     /// Validates that the LLM correctly understands the user intent to monitor for new events
     /// on the IMG Czech Academy of Sciences page and creates an appropriate watch configuration.
     /// </summary>
-    [Fact(Timeout = 300_000)] // 5 minute timeout for LLM operations
+    [Test] // 5 minute timeout for LLM operations
     public async Task ProcessInput_ImgCasEventsPage_ShouldCreateWatchForEvents()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available at http://localhost:11434");
-            Output.WriteLine("To run this test: ollama pull ministral-3:8b && ollama serve");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  E2E TEST: IMG Czech Academy Events Page Pipeline            ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
-        Output.WriteLine($"User Input: \"{UserInput}\"");
-        Output.WriteLine($"Expected URL: {ExpectedUrl}");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  E2E TEST: IMG Czech Academy Events Page Pipeline            ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine($"User Input: \"{UserInput}\"");
+        TestContext.Current?.OutputWriter?.WriteLine($"Expected URL: {ExpectedUrl}");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 1: Load embedded HTML for deterministic validation
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("▶ STEP 1: Loading embedded HTML resource for validation");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 1: Loading embedded HTML resource for validation");
         
         var htmlContent = LoadEmbeddedHtml();
         htmlContent.ShouldNotBeNullOrWhiteSpace("Embedded HTML should be available");
-        Output.WriteLine($"  ✓ Loaded {htmlContent.Length:N0} chars of HTML from embedded resource");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Loaded {htmlContent.Length:N0} chars of HTML from embedded resource");
 
         // Verify HTML contains event-related content
         var doc = new HtmlDocument();
@@ -184,20 +174,20 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
                                   pageText.Contains("konference") ||
                                   pageText.Contains("termín");
         pageHasEventContent.ShouldBeTrue("HTML should contain event-related Czech terms");
-        Output.WriteLine("  ✓ HTML contains event-related content (Akce, Termín, etc.)");
+        TestContext.Current?.OutputWriter?.WriteLine("  ✓ HTML contains event-related content (Akce, Termín, etc.)");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 2: Send request through real HTTP endpoint
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 2: Sending request to /api/llm/process-input");
-        Output.WriteLine($"  Input: \"{UserInput}\"");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 2: Sending request to /api/llm/process-input");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Input: \"{UserInput}\"");
 
         var request = new ProcessInputRequest { Input = UserInput };
         var response = await _client.PostAsJsonAsync("/api/llm/process-input", request);
 
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");
-        Output.WriteLine($"  ✓ HTTP {(int)response.StatusCode} {response.StatusCode}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ HTTP {(int)response.StatusCode} {response.StatusCode}");
 
         var result = await response.Content.ReadFromJsonAsync<ProcessInputResponse>();
         result.ShouldNotBeNull("Response should not be null");
@@ -205,33 +195,33 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         // ═══════════════════════════════════════════════════════════════
         // STEP 3: Validate LLM understood the intent
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 3: Validating LLM understood user intent");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 3: Validating LLM understood user intent");
 
         result.Intent.ShouldBe("CreateWatch", $"Expected CreateWatch intent, got: {result.Intent}");
-        Output.WriteLine($"  ✓ Intent: CreateWatch");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Intent: CreateWatch");
 
         if (!result.IsSuccess)
         {
             // Pipeline failed - verify we got proper error handling with suggestions
-            Output.WriteLine($"  ℹ Pipeline failed (acceptable): {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ℹ Pipeline failed (acceptable): {result.ErrorMessage}");
             result.NeedsClarification.ShouldBeTrue("Pipeline failure should offer clarification options");
             result.Suggestions.ShouldNotBeEmpty("Pipeline failure should offer suggestions");
-            Output.WriteLine($"  ✓ Suggestions provided: {result.Suggestions.Count}");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline returned explicit failure with options ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Suggestions provided: {result.Suggestions.Count}");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline returned explicit failure with options ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return;
         }
 
-        Output.WriteLine($"  ✓ IsSuccess: true");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IsSuccess: true");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 4: Validate URL extraction
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 4: Validating URL extraction");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 4: Validating URL extraction");
 
         result.ParsedRequest.ShouldNotBeNull("ParsedRequest should not be null");
         result.ParsedRequest.Url.ShouldNotBeNullOrWhiteSpace("URL should be extracted");
@@ -239,77 +229,77 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         // URL should contain the IMG domain
         result.ParsedRequest.Url.ShouldContain("img.cas.cz", Case.Insensitive,
             $"URL should be from img.cas.cz, got: {result.ParsedRequest.Url}");
-        Output.WriteLine($"  ✓ URL extracted: {result.ParsedRequest.Url}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ URL extracted: {result.ParsedRequest.Url}");
 
         result.CreatedWatchId.ShouldNotBeNullOrWhiteSpace("CreatedWatchId should be returned");
         var watchId = Guid.Parse(result.CreatedWatchId!);
-        Output.WriteLine($"  ✓ Watch ID: {watchId}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch ID: {watchId}");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 5: Validate selector was generated (CSS or XPath)
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 5: Validating selector generation");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 5: Validating selector generation");
 
         var hasCssSelector = !string.IsNullOrEmpty(result.ParsedRequest.CssSelector);
         var hasXPathSelector = !string.IsNullOrEmpty(result.ParsedRequest.XPathSelector);
         var hasSelector = hasCssSelector || hasXPathSelector;
         
-        Output.WriteLine($"  CssSelector: {result.ParsedRequest.CssSelector ?? "(none)"}");
-        Output.WriteLine($"  XPathSelector: {result.ParsedRequest.XPathSelector ?? "(none)"}");
-        Output.WriteLine($"  Description: {result.ParsedRequest.Description ?? "(none)"}");
-        Output.WriteLine($"  Summary: {result.Summary ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  CssSelector: {result.ParsedRequest.CssSelector ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  XPathSelector: {result.ParsedRequest.XPathSelector ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Description: {result.ParsedRequest.Description ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Summary: {result.Summary ?? "(none)"}");
 
         if (!hasSelector)
         {
-            Output.WriteLine("");
-            Output.WriteLine("  ⚠ No selector generated - LLM response may have been malformed");
-            Output.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
-            Output.WriteLine("    The watch was created for full-page monitoring instead.");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Watch created (full-page mode, no selector)    ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No selector generated - LLM response may have been malformed");
+            TestContext.Current?.OutputWriter?.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
+            TestContext.Current?.OutputWriter?.WriteLine("    The watch was created for full-page monitoring instead.");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Watch created (full-page mode, no selector)    ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return;
         }
 
         var selectorType = hasCssSelector ? "CSS" : "XPath";
         var selectorValue = hasCssSelector ? result.ParsedRequest.CssSelector : result.ParsedRequest.XPathSelector;
-        Output.WriteLine($"  ✓ {selectorType} selector generated: {selectorValue}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ {selectorType} selector generated: {selectorValue}");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 6: Verify watch was persisted to database
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 6: Verifying watch persisted to database");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 6: Verifying watch persisted to database");
 
         using var scope = _factory.Services.CreateScope();
         var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
         var persistedWatch = await watchService.GetByIdAsync(watchId);
 
         persistedWatch.ShouldNotBeNull($"Watch {watchId} should exist in database");
-        Output.WriteLine($"  ✓ Watch found in database");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch found in database");
 
         persistedWatch.Url.ShouldBe(result.ParsedRequest.Url);
-        Output.WriteLine($"  ✓ URL matches: {persistedWatch.Url}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ URL matches: {persistedWatch.Url}");
 
         // Verify the selector was persisted (either CSS or XPath)
         if (hasCssSelector)
         {
             persistedWatch.CssSelector.ShouldBe(result.ParsedRequest.CssSelector);
-            Output.WriteLine($"  ✓ CssSelector persisted: {persistedWatch.CssSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ CssSelector persisted: {persistedWatch.CssSelector}");
         }
         else if (hasXPathSelector)
         {
             persistedWatch.XPathSelector.ShouldBe(result.ParsedRequest.XPathSelector);
-            Output.WriteLine($"  ✓ XPathSelector persisted: {persistedWatch.XPathSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ XPathSelector persisted: {persistedWatch.XPathSelector}");
         }
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 7: Validate selector works on actual HTML
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 7: Validating selector against live HTML");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 7: Validating selector against live HTML");
 
         var selector = selectorValue!;
 
@@ -326,25 +316,25 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         
         var nodeList = matchedNodes.ToList();
         nodeList.Count.ShouldBeGreaterThan(0, $"Selector '{selector}' should match at least one element");
-        Output.WriteLine($"  ✓ Selector matches {nodeList.Count} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Selector matches {nodeList.Count} elements");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 8: Validate extracted content looks like events
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 8: Validating extracted content contains event data");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 8: Validating extracted content contains event data");
 
         var extractedTexts = nodeList.Select(n => CleanText(n.InnerText)).ToList();
         var combinedText = string.Join(" ", extractedTexts).ToLowerInvariant();
 
-        Output.WriteLine($"  Extracted {extractedTexts.Count} text blocks:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Extracted {extractedTexts.Count} text blocks:");
         foreach (var text in extractedTexts.Take(5))
         {
             var preview = text.Length > 100 ? text[..100] + "..." : text;
-            Output.WriteLine($"    • {preview}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    • {preview}");
         }
         if (extractedTexts.Count > 5)
-            Output.WriteLine($"    ... and {extractedTexts.Count - 5} more");
+            TestContext.Current?.OutputWriter?.WriteLine($"    ... and {extractedTexts.Count - 5} more");
 
         // Check for event-related content (Czech terms from IMG page)
         // Expected terms: akce, seminář, konference, kurz, termín, místo, etc.
@@ -363,20 +353,20 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
             $"Looking for any of: {string.Join(", ", eventIndicators)}\n" +
             $"Got: {combinedText[..Math.Min(300, combinedText.Length)]}...");
 
-        Output.WriteLine($"  ✓ Content contains event-related terms");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Content contains event-related terms");
 
         // ═══════════════════════════════════════════════════════════════
         // SUCCESS
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ ALL VALIDATIONS PASSED                                    ║");
-        Output.WriteLine("╠══════════════════════════════════════════════════════════════╣");
-        Output.WriteLine($"║  Watch ID: {watchId,-44} ║");
-        Output.WriteLine($"║  URL: {persistedWatch.Url,-49} ║");
-        Output.WriteLine($"║  Selector: {selector[..Math.Min(40, selector.Length)],-44} ║");
-        Output.WriteLine($"║  Matches: {nodeList.Count} elements{new string(' ', 42 - nodeList.Count.ToString().Length)} ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ ALL VALIDATIONS PASSED                                    ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╠══════════════════════════════════════════════════════════════╣");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Watch ID: {watchId,-44} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  URL: {persistedWatch.Url,-49} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Selector: {selector[..Math.Min(40, selector.Length)],-44} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Matches: {nodeList.Count} elements{new string(' ', 42 - nodeList.Count.ToString().Length)} ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     /// <summary>
@@ -384,24 +374,18 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
     /// Validates that the LLM correctly identifies the page as an event listing
     /// and understands the user's intent to monitor for new events.
     /// </summary>
-    [Fact(Timeout = 300_000)]
+    [Test]
     public async Task RunPipeline_ImgCasEventsPage_ShouldAnalyzePageCorrectly()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  PIPELINE TEST: IMG CAS Events Content Analysis              ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  PIPELINE TEST: IMG CAS Events Content Analysis              ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // ═══════════════════════════════════════════════════════════════
         // Run the pipeline
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("▶ Running pipeline...");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Running pipeline...");
         
         var request = new RunPipelineRequest { Input = UserInput };
         var response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
@@ -411,17 +395,17 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         var result = await response.Content.ReadFromJsonAsync<RunPipelineResponse>();
         result.ShouldNotBeNull();
 
-        Output.WriteLine($"  Stage: {result.Stage}");
-        Output.WriteLine($"  Iterations: {result.IterationCount}");
-        Output.WriteLine($"  Success: {result.IsSuccess}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Stage: {result.Stage}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Iterations: {result.IterationCount}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Success: {result.IsSuccess}");
         if (!string.IsNullOrEmpty(result.ErrorMessage))
-            Output.WriteLine($"  Error: {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Error: {result.ErrorMessage}");
 
         // ═══════════════════════════════════════════════════════════════
         // Validate URL extraction
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating URL extraction");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating URL extraction");
 
         result.ExtractedUrls.ShouldNotBeNull();
         result.ExtractedUrls.ShouldNotBeEmpty("Should extract at least one URL");
@@ -430,31 +414,31 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         var hasExpectedUrl = result.ExtractedUrls.Any(u => 
             u.Contains("img.cas.cz", StringComparison.OrdinalIgnoreCase));
         hasExpectedUrl.ShouldBeTrue($"Should extract IMG CAS URL. Got: {string.Join(", ", result.ExtractedUrls)}");
-        Output.WriteLine($"  ✓ Extracted URLs: {string.Join(", ", result.ExtractedUrls)}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Extracted URLs: {string.Join(", ", result.ExtractedUrls)}");
 
         if (!result.IsSuccess)
         {
-            Output.WriteLine("");
-            Output.WriteLine("  ℹ Pipeline failed - validating partial results...");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline extracted URL before failure          ║");
-            Output.WriteLine($"║  Stage: {result.Stage,-49} ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("  ℹ Pipeline failed - validating partial results...");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline extracted URL before failure          ║");
+            TestContext.Current?.OutputWriter?.WriteLine($"║  Stage: {result.Stage,-49} ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return;
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Validate content analysis
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating content analysis (LLM output)");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating content analysis (LLM output)");
 
         result.ContentAnalysis.ShouldNotBeNull("LLM should analyze page content");
         
-        Output.WriteLine($"  Page Type: {result.ContentAnalysis.PageType ?? "(null)"}");
-        Output.WriteLine($"  User Intent: {result.ContentAnalysis.UserIntent ?? "(null)"}");
-        Output.WriteLine($"  Recommended Approach: {result.ContentAnalysis.RecommendedApproach ?? "(null)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Page Type: {result.ContentAnalysis.PageType ?? "(null)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  User Intent: {result.ContentAnalysis.UserIntent ?? "(null)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Recommended Approach: {result.ContentAnalysis.RecommendedApproach ?? "(null)"}");
 
         // Page type should be event-related
         var pageType = result.ContentAnalysis.PageType?.ToLowerInvariant() ?? "";
@@ -467,12 +451,12 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
 
         if (isEventRelated)
         {
-            Output.WriteLine($"  ✓ Correctly classified as event-related content");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Correctly classified as event-related content");
         }
         else
         {
-            Output.WriteLine($"  ⚠ LLM classified as: {result.ContentAnalysis.PageType} (expected event-related)");
-            Output.WriteLine($"    Note: LLM output can vary; continuing with pipeline validation");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ⚠ LLM classified as: {result.ContentAnalysis.PageType} (expected event-related)");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Note: LLM output can vary; continuing with pipeline validation");
         }
 
         // User intent should be understood
@@ -488,98 +472,92 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         
         if (understandsWatching)
         {
-            Output.WriteLine($"  ✓ User intent interpreted correctly: monitoring for changes");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ User intent interpreted correctly: monitoring for changes");
         }
         else
         {
-            Output.WriteLine($"  ⚠ User intent may not fully capture monitoring goal");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ⚠ User intent may not fully capture monitoring goal");
         }
 
         // Content sections should be identified
         if (result.ContentAnalysis.ContentSections.Count > 0)
         {
-            Output.WriteLine($"  Content sections identified: {result.ContentAnalysis.ContentSections.Count}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Content sections identified: {result.ContentAnalysis.ContentSections.Count}");
             foreach (var section in result.ContentAnalysis.ContentSections.Take(3))
             {
-                Output.WriteLine($"    • {section.Name}: {section.Description ?? "(no description)"}");
+                TestContext.Current?.OutputWriter?.WriteLine($"    • {section.Name}: {section.Description ?? "(no description)"}");
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Validate selector generation
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating selector generation");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating selector generation");
 
         if (result.BestSelector != null)
         {
-            Output.WriteLine($"  Best selector type: {result.BestSelector.Type}");
-            Output.WriteLine($"  Expression: {result.BestSelector.Expression}");
-            Output.WriteLine($"  Confidence: {result.BestSelector.Confidence:P0}");
-            Output.WriteLine($"  Match count: {result.BestSelector.MatchCount}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Best selector type: {result.BestSelector.Type}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Expression: {result.BestSelector.Expression}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Confidence: {result.BestSelector.Confidence:P0}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Match count: {result.BestSelector.MatchCount}");
             if (!string.IsNullOrEmpty(result.BestSelector.SampleText))
             {
                 var sample = result.BestSelector.SampleText.Length > 100 
                     ? result.BestSelector.SampleText[..100] + "..." 
                     : result.BestSelector.SampleText;
-                Output.WriteLine($"  Sample: {sample}");
+                TestContext.Current?.OutputWriter?.WriteLine($"  Sample: {sample}");
             }
         }
         else
         {
-            Output.WriteLine("  ⚠ No selector generated");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No selector generated");
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Validate watch config
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating watch configuration");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating watch configuration");
 
         if (result.WatchConfig != null)
         {
-            Output.WriteLine($"  URL: {result.WatchConfig.Url}");
-            Output.WriteLine($"  Title: {result.WatchConfig.Title ?? "(auto-generated)"}");
-            Output.WriteLine($"  Description: {result.WatchConfig.Description ?? "(none)"}");
-            Output.WriteLine($"  CSS Selector: {result.WatchConfig.CssSelector ?? "(none)"}");
-            Output.WriteLine($"  XPath Selector: {result.WatchConfig.XPathSelector ?? "(none)"}");
-            Output.WriteLine($"  Check Interval: {result.WatchConfig.CheckIntervalMinutes ?? 0} minutes");
-            Output.WriteLine($"  Use JavaScript: {result.WatchConfig.UseJavaScript ?? false}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  URL: {result.WatchConfig.Url}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Title: {result.WatchConfig.Title ?? "(auto-generated)"}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Description: {result.WatchConfig.Description ?? "(none)"}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  CSS Selector: {result.WatchConfig.CssSelector ?? "(none)"}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  XPath Selector: {result.WatchConfig.XPathSelector ?? "(none)"}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Check Interval: {result.WatchConfig.CheckIntervalMinutes ?? 0} minutes");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Use JavaScript: {result.WatchConfig.UseJavaScript ?? false}");
             
             result.WatchConfig.Url.ShouldNotBeNullOrWhiteSpace();
             result.WatchConfig.Url.ShouldContain("img.cas.cz", Case.Insensitive);
         }
         else
         {
-            Output.WriteLine("  ⚠ No watch config generated (may require follow-up)");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No watch config generated (may require follow-up)");
         }
 
         // ═══════════════════════════════════════════════════════════════
         // SUCCESS
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ PIPELINE ANALYSIS COMPLETED                               ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ PIPELINE ANALYSIS COMPLETED                               ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     /// <summary>
     /// Test that the generated selector actually extracts meaningful event data
     /// from the embedded IMG CAS events page HTML (deterministic test data).
     /// </summary>
-    [Fact(Timeout = 300_000)]
+    [Test]
     public async Task RunPipeline_ImgCasEventsPage_SelectorExtractsMeaningfulContent()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  SELECTOR VALIDATION: IMG CAS Events Content Extraction      ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  SELECTOR VALIDATION: IMG CAS Events Content Extraction      ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // Run pipeline to get selector
         var request = new RunPipelineRequest { Input = UserInput };
@@ -591,8 +569,8 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
 
         if (!result.IsSuccess)
         {
-            Output.WriteLine($"Pipeline failed: {result.ErrorMessage}");
-            Output.WriteLine("Test cannot validate selector without successful pipeline.");
+            TestContext.Current?.OutputWriter?.WriteLine($"Pipeline failed: {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine("Test cannot validate selector without successful pipeline.");
             return;
         }
 
@@ -603,17 +581,17 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
 
         if (string.IsNullOrEmpty(selector))
         {
-            Output.WriteLine("No selector generated by pipeline.");
-            Output.WriteLine("Test passes - full-page monitoring mode.");
+            TestContext.Current?.OutputWriter?.WriteLine("No selector generated by pipeline.");
+            TestContext.Current?.OutputWriter?.WriteLine("Test passes - full-page monitoring mode.");
             return;
         }
 
-        Output.WriteLine($"▶ Testing selector: {selector}");
+        TestContext.Current?.OutputWriter?.WriteLine($"▶ Testing selector: {selector}");
 
         // Load embedded HTML for deterministic validation
         var htmlContent = LoadEmbeddedHtml();
         htmlContent.ShouldNotBeNullOrWhiteSpace();
-        Output.WriteLine($"  Loaded HTML: {htmlContent.Length:N0} characters from embedded resource");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Loaded HTML: {htmlContent.Length:N0} characters from embedded resource");
 
         // Apply selector
         var doc = new HtmlDocument();
@@ -634,11 +612,11 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         
         var nodeList = nodes.ToList();
         nodeList.Count.ShouldBeGreaterThan(0, $"Selector should match elements");
-        Output.WriteLine($"  Matched {nodeList.Count} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Matched {nodeList.Count} elements");
 
         // Extract and validate content
-        Output.WriteLine("");
-        Output.WriteLine("▶ Extracted event content:");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Extracted event content:");
 
         var extractedItems = new List<string>();
         foreach (var node in nodeList.Take(10))
@@ -648,7 +626,7 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
             {
                 extractedItems.Add(text);
                 var preview = text.Length > 100 ? text[..100] + "..." : text;
-                Output.WriteLine($"  • {preview}");
+                TestContext.Current?.OutputWriter?.WriteLine($"  • {preview}");
             }
         }
 
@@ -679,21 +657,21 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         var hasDateTerms = dateTerms.Any(t => allText.Contains(t));
         var hasLocationTerms = locationTerms.Any(t => allText.Contains(t));
 
-        Output.WriteLine("");
-        Output.WriteLine($"▶ Content validation:");
-        Output.WriteLine($"  Contains event terms: {hasEventTerms}");
-        Output.WriteLine($"  Contains date terms: {hasDateTerms}");
-        Output.WriteLine($"  Contains location terms: {hasLocationTerms}");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine($"▶ Content validation:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Contains event terms: {hasEventTerms}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Contains date terms: {hasDateTerms}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Contains location terms: {hasLocationTerms}");
 
         // At least one category of terms should be present
         (hasEventTerms || hasDateTerms || hasLocationTerms).ShouldBeTrue(
             "Extracted content should contain event-related, date-related, or location terms.\n" +
             $"Content preview: {allText[..Math.Min(400, allText.Length)]}...");
 
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ SELECTOR EXTRACTS MEANINGFUL EVENT CONTENT                ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ SELECTOR EXTRACTS MEANINGFUL EVENT CONTENT                ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     #region Helper Methods
@@ -738,14 +716,17 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
     #endregion
 
     /// <summary>
-    /// Custom WebApplicationFactory that uses the REAL application with NO MOCKS.
+    /// Custom WebApplicationFactory that uses the REAL application with LLM response caching.
+    /// Inherits from CachingWebApplicationFactory to enable request/response caching.
     /// </summary>
-    public class ImgCasWebApplicationFactory : WebApplicationFactory<Program>
+    public class ImgCasWebApplicationFactory : CachingWebApplicationFactory
     {
         private bool _providerSeeded;
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            base.ConfigureWebHost(builder);  // Important: call base to set up caching
+            
             // Use development environment - this uses real services
             builder.UseEnvironment("Development");
             
@@ -755,11 +736,11 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         /// <summary>
         /// Verifies that critical services are NOT mocks.
         /// </summary>
-        public void VerifyNoMocks(ITestOutputHelper output)
+        public void VerifyNoMocks()
         {
             using var scope = Services.CreateScope();
             
-            output.WriteLine("▶ Verifying real services (no mocks):");
+            TestContext.Current?.OutputWriter?.WriteLine("▶ Verifying real services (no mocks):");
 
             // Check IWatchService is real
             var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
@@ -767,35 +748,35 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
             watchServiceName.ShouldNotContain("Mock", Case.Insensitive);
             watchServiceName.ShouldNotContain("Substitute", Case.Insensitive);
             watchServiceName.ShouldNotContain("Fake", Case.Insensitive);
-            output.WriteLine($"  ✓ IWatchService: {watchService.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IWatchService: {watchService.GetType().Name}");
 
             // Check ILlmProviderChain is real
             var llmChain = scope.ServiceProvider.GetRequiredService<ILlmProviderChain>();
             var llmChainName = llmChain.GetType().FullName ?? llmChain.GetType().Name;
             llmChainName.ShouldNotContain("Mock", Case.Insensitive);
             llmChainName.ShouldNotContain("Substitute", Case.Insensitive);
-            output.WriteLine($"  ✓ ILlmProviderChain: {llmChain.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ ILlmProviderChain: {llmChain.GetType().Name}");
 
             // Check IWatchSetupPipeline is real
             var pipeline = scope.ServiceProvider.GetRequiredService<IWatchSetupPipeline>();
             var pipelineName = pipeline.GetType().FullName ?? pipeline.GetType().Name;
             pipelineName.ShouldNotContain("Mock", Case.Insensitive);
             pipelineName.ShouldNotContain("Substitute", Case.Insensitive);
-            output.WriteLine($"  ✓ IWatchSetupPipeline: {pipeline.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IWatchSetupPipeline: {pipeline.GetType().Name}");
 
             // Check IContentFetcher is real
             var fetcher = scope.ServiceProvider.GetRequiredService<IContentFetcher>();
             var fetcherName = fetcher.GetType().FullName ?? fetcher.GetType().Name;
             fetcherName.ShouldNotContain("Mock", Case.Insensitive);
-            output.WriteLine($"  ✓ IContentFetcher: {fetcher.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IContentFetcher: {fetcher.GetType().Name}");
 
             // Check repository is real (LiteDB)
             var watchRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
             var watchRepoName = watchRepo.GetType().FullName ?? watchRepo.GetType().Name;
             watchRepoName.ShouldNotContain("Mock", Case.Insensitive);
-            output.WriteLine($"  ✓ IRepository<WatchedSite>: {watchRepo.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IRepository<WatchedSite>: {watchRepo.GetType().Name}");
 
-            output.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("");
         }
 
         public async Task EnsureProviderSeededAsync()
@@ -818,7 +799,7 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
                 Name = "Ollama Local",
                 ProviderType = LlmProviderType.Ollama,
                 Endpoint = "http://localhost:11434",
-                Model = "ministral-3:8b",
+                Model = "ministral-3:14b",
                 IsEnabled = true,
                 Priority = 1,
                 TimeoutSeconds = 300,
@@ -830,3 +811,7 @@ public class ImgCasEventsPipelineTests : TestBase, IClassFixture<ImgCasEventsPip
         }
     }
 }
+
+
+
+

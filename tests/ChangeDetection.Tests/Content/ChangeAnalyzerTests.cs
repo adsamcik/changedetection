@@ -1,30 +1,30 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Content;
-using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
 /// <summary>
-/// Tests for ChangeAnalyzer LLM-powered change analysis service.
+/// Unit tests for ChangeAnalyzer LLM-powered change analysis service.
+/// Uses NSubstitute mocking - no real LLM calls are made.
 /// </summary>
-public class ChangeAnalyzerTests
+[Category("Unit")]
+public class ChangeAnalyzerTests : TestBase
 {
     private readonly ILlmProviderChain _llmChain;
-    private readonly ILogger<ChangeAnalyzer> _logger;
     private readonly ChangeAnalyzer _sut;
 
     public ChangeAnalyzerTests()
     {
         _llmChain = Substitute.For<ILlmProviderChain>();
-        _logger = Substitute.For<ILogger<ChangeAnalyzer>>();
-        _sut = new ChangeAnalyzer(_llmChain, _logger);
+        _sut = new ChangeAnalyzer(_llmChain, CreateLogger<ChangeAnalyzer>());
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task AnalyzeChangeAsync_WithValidDiff_ReturnsSemanticSummary()
     {
         // Arrange
@@ -131,7 +131,8 @@ public class ChangeAnalyzerTests
         result.ExtractedEntities.ShouldNotBeEmpty();
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task AnalyzeChangeAsync_WithoutUserIntent_SkipsRelevanceScoring()
     {
         // Arrange
@@ -165,7 +166,8 @@ public class ChangeAnalyzerTests
         result.RelevanceScore.ShouldBe(0.5f); // Default when no intent
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task AnalyzeChangeAsync_WhenLlmFails_ReturnsFailureResult()
     {
         // Arrange
@@ -192,7 +194,8 @@ public class ChangeAnalyzerTests
         result.ShouldNotBeNull();
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task DetectAnomaliesAsync_WithInsufficientHistory_ReturnsNoAnomalies()
     {
         // Arrange
@@ -219,7 +222,8 @@ public class ChangeAnalyzerTests
         result.Explanation.ShouldContain("Insufficient");
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task DetectAnomaliesAsync_WithEnoughHistory_AnalyzesPatterns()
     {
         // Arrange
@@ -272,7 +276,8 @@ public class ChangeAnalyzerTests
         result.Anomalies[0].Type.ShouldBe("UnusualSize");
     }
 
-    [Fact]
+    [Test]
+    [Category("Unit")]
     public async Task AnalyzeChangeStreamingAsync_YieldsProgressUpdates()
     {
         // Arrange

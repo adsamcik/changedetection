@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Content;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -11,8 +12,8 @@ public class DiffServiceAdvancedTests
 {
     private readonly DiffService _sut = new();
 
-    [Fact]
-    public void Compare_NullOldContent_TreatsAsEmpty()
+    [Test]
+    public async Task Compare_NullOldContent_TreatsAsEmpty()
     {
         // Arrange
         var newContent = "Some content";
@@ -23,10 +24,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.LinesAdded.ShouldBeGreaterThan(0);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_NullNewContent_TreatsAsEmpty()
+    [Test]
+    public async Task Compare_NullNewContent_TreatsAsEmpty()
     {
         // Arrange
         var oldContent = "Some content";
@@ -37,10 +39,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.LinesRemoved.ShouldBeGreaterThan(0);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_BothEmpty_NoChanges()
+    [Test]
+    public async Task Compare_BothEmpty_NoChanges()
     {
         // Act
         var result = _sut.Compare(string.Empty, string.Empty);
@@ -49,10 +52,11 @@ public class DiffServiceAdvancedTests
         result.HasChanges.ShouldBeFalse();
         result.LinesAdded.ShouldBe(0);
         result.LinesRemoved.ShouldBe(0);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_MultipleConsecutiveInsertions_CountsCorrectly()
+    [Test]
+    public async Task Compare_MultipleConsecutiveInsertions_CountsCorrectly()
     {
         // Arrange
         var oldContent = "Line 1\nLine 5";
@@ -64,10 +68,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.LinesAdded.ShouldBe(3);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_MultipleConsecutiveDeletions_CountsCorrectly()
+    [Test]
+    public async Task Compare_MultipleConsecutiveDeletions_CountsCorrectly()
     {
         // Arrange
         var oldContent = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
@@ -79,10 +84,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.LinesRemoved.ShouldBe(3);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_MixedChanges_TracksAllTypes()
+    [Test]
+    public async Task Compare_MixedChanges_TracksAllTypes()
     {
         // Arrange
         var oldContent = "Line A\nLine B\nLine C";
@@ -94,10 +100,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.Lines.ShouldNotBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_WhitespaceOnlyDifference_MayNotDetectTrailingSpace()
+    [Test]
+    public async Task Compare_WhitespaceOnlyDifference_MayNotDetectTrailingSpace()
     {
         // Arrange - DiffPlex may not detect trailing whitespace as a change
         var oldContent = "Line 1";
@@ -108,10 +115,11 @@ public class DiffServiceAdvancedTests
 
         // Assert - Trailing whitespace detection depends on DiffPlex implementation
         result.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_CaseOnlyDifference_DetectsChanges()
+    [Test]
+    public async Task Compare_CaseOnlyDifference_DetectsChanges()
     {
         // Arrange
         var oldContent = "Hello World";
@@ -122,10 +130,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         result.HasChanges.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_ReorderedLines_DetectsChanges()
+    [Test]
+    public async Task Compare_ReorderedLines_DetectsChanges()
     {
         // Arrange
         var oldContent = "First\nSecond\nThird";
@@ -136,10 +145,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         result.HasChanges.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_SpecialCharacters_HandlesCorrectly()
+    [Test]
+    public async Task Compare_SpecialCharacters_HandlesCorrectly()
     {
         // Arrange
         var oldContent = "Regular text";
@@ -151,10 +161,11 @@ public class DiffServiceAdvancedTests
         // Assert
         result.HasChanges.ShouldBeTrue();
         result.Lines.ShouldNotBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_UnicodeContent_HandlesCorrectly()
+    [Test]
+    public async Task Compare_UnicodeContent_HandlesCorrectly()
     {
         // Arrange
         var oldContent = "Hello 你好";
@@ -165,10 +176,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         result.HasChanges.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Compare_DifferentLineEndings_DetectsChanges()
+    [Test]
+    public async Task Compare_DifferentLineEndings_DetectsChanges()
     {
         // Arrange
         var oldContent = "Line1\r\nLine2";
@@ -179,10 +191,11 @@ public class DiffServiceAdvancedTests
 
         // Assert - Different line endings are still different content
         result.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateDiffHtml_WithInsertedLine_IncludesPlusPrefix()
+    [Test]
+    public async Task GenerateDiffHtml_WithInsertedLine_IncludesPlusPrefix()
     {
         // Arrange
         var diff = _sut.Compare("Old", "Old\nNew");
@@ -193,10 +206,11 @@ public class DiffServiceAdvancedTests
         // Assert
         html.ShouldContain("diff-added");
         html.ShouldContain("+");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateDiffHtml_WithDeletedLine_IncludesMinusPrefix()
+    [Test]
+    public async Task GenerateDiffHtml_WithDeletedLine_IncludesMinusPrefix()
     {
         // Arrange
         var diff = _sut.Compare("Old\nToRemove", "Old");
@@ -207,10 +221,11 @@ public class DiffServiceAdvancedTests
         // Assert
         html.ShouldContain("diff-removed");
         html.ShouldContain("-");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateDiffHtml_EscapesHtmlCharacters()
+    [Test]
+    public async Task GenerateDiffHtml_EscapesHtmlCharacters()
     {
         // Arrange
         var diff = _sut.Compare("", "<script>alert('xss')</script>");
@@ -221,10 +236,11 @@ public class DiffServiceAdvancedTests
         // Assert
         html.ShouldNotContain("<script>");
         html.ShouldContain("&lt;script&gt;");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateDiffHtml_IncludesLineNumbers()
+    [Test]
+    public async Task GenerateDiffHtml_IncludesLineNumbers()
     {
         // Arrange
         var diff = _sut.Compare("Line1\nLine2", "Line1\nLine2\nLine3");
@@ -234,10 +250,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         html.ShouldContain("line-numbers");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateDiffHtml_NoChanges_StillProducesOutput()
+    [Test]
+    public async Task GenerateDiffHtml_NoChanges_StillProducesOutput()
     {
         // Arrange
         var diff = _sut.Compare("Same", "Same");
@@ -248,10 +265,11 @@ public class DiffServiceAdvancedTests
         // Assert
         html.ShouldNotBeNullOrEmpty();
         html.ShouldContain("diff-container");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_NoChanges_ReturnsNoChangesMessage()
+    [Test]
+    public async Task GenerateSummary_NoChanges_ReturnsNoChangesMessage()
     {
         // Arrange
         var diff = _sut.Compare("Same content", "Same content");
@@ -261,10 +279,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         summary.ShouldBe("No changes detected.");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_OnlyAdditions_MentionsAddedLines()
+    [Test]
+    public async Task GenerateSummary_OnlyAdditions_MentionsAddedLines()
     {
         // Arrange
         var diff = _sut.Compare("Original", "Original\nNew line");
@@ -274,10 +293,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         summary.ShouldContain("added");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_OnlyDeletions_MentionsRemovedLines()
+    [Test]
+    public async Task GenerateSummary_OnlyDeletions_MentionsRemovedLines()
     {
         // Arrange
         var diff = _sut.Compare("Line 1\nLine 2", "Line 1");
@@ -287,10 +307,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         summary.ShouldContain("removed");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_SingleLineAdded_UsesSingularForm()
+    [Test]
+    public async Task GenerateSummary_SingleLineAdded_UsesSingularForm()
     {
         // Arrange
         var diff = _sut.Compare("", "One line");
@@ -300,10 +321,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         summary.ShouldContain("1 line added");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_MultipleLinesAdded_UsesPluralForm()
+    [Test]
+    public async Task GenerateSummary_MultipleLinesAdded_UsesPluralForm()
     {
         // Arrange
         var diff = _sut.Compare("", "Line 1\nLine 2\nLine 3");
@@ -313,10 +335,11 @@ public class DiffServiceAdvancedTests
 
         // Assert
         summary.ShouldContain("lines added");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GenerateSummary_MixedChanges_IncludesBoth()
+    [Test]
+    public async Task GenerateSummary_MixedChanges_IncludesBoth()
     {
         // Arrange
         var oldContent = "Old line";
@@ -330,10 +353,11 @@ public class DiffServiceAdvancedTests
         // Should mention both added and removed (a replacement counts as both)
         summary.ShouldNotBeNullOrEmpty();
         summary.ShouldEndWith(".");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void DiffResult_Lines_PreservesOrder()
+    [Test]
+    public async Task DiffResult_Lines_PreservesOrder()
     {
         // Arrange
         var oldContent = "A\nB\nC";
@@ -347,10 +371,11 @@ public class DiffServiceAdvancedTests
         // First non-changed line should be A
         var firstLine = result.Lines.First(l => l.Type == DiffLineType.Unchanged);
         firstLine.Text.ShouldBe("A");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void DiffResult_TracksUnchangedLines()
+    [Test]
+    public async Task DiffResult_TracksUnchangedLines()
     {
         // Arrange
         var oldContent = "Unchanged\nModified\nUnchanged";
@@ -361,5 +386,6 @@ public class DiffServiceAdvancedTests
 
         // Assert
         result.LinesUnchanged.ShouldBeGreaterThan(0);
+        await Task.CompletedTask;
     }
 }

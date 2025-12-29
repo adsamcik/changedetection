@@ -1,5 +1,6 @@
 using ChangeDetection.Services.Content;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -7,8 +8,8 @@ public class ContentExtractorTests
 {
     private readonly ContentExtractor _sut = new();
 
-    [Fact]
-    public void ExtractText_WithSimpleHtml_ReturnsTextContent()
+    [Test]
+    public async Task ExtractText_WithSimpleHtml_ReturnsTextContent()
     {
         // Arrange
         var html = "<html><body><p>Hello World</p></body></html>";
@@ -18,10 +19,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBe("Hello World");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithScriptTags_RemovesScriptContent()
+    [Test]
+    public async Task ExtractText_WithScriptTags_RemovesScriptContent()
     {
         // Arrange
         var html = """
@@ -40,10 +42,11 @@ public class ContentExtractorTests
         result.ShouldContain("Visible Text");
         result.ShouldNotContain("hidden");
         result.ShouldNotContain("script");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithStyleTags_RemovesStyleContent()
+    [Test]
+    public async Task ExtractText_WithStyleTags_RemovesStyleContent()
     {
         // Arrange
         var html = """
@@ -62,10 +65,11 @@ public class ContentExtractorTests
         result.ShouldContain("Visible Text");
         result.ShouldNotContain("display");
         result.ShouldNotContain("none");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithCssSelector_ExtractsTargetedContent()
+    [Test]
+    public async Task ExtractText_WithCssSelector_ExtractsTargetedContent()
     {
         // Arrange
         var html = """
@@ -83,10 +87,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBe("Main Content");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithXPathSelector_ExtractsTargetedContent()
+    [Test]
+    public async Task ExtractText_WithXPathSelector_ExtractsTargetedContent()
     {
         // Arrange
         var html = """
@@ -104,10 +109,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBe("Target Text");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithInvalidSelector_ReturnsEmptyString()
+    [Test]
+    public async Task ExtractText_WithInvalidSelector_ReturnsEmptyString()
     {
         // Arrange
         var html = "<html><body><p>Hello</p></body></html>";
@@ -117,10 +123,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_NormalizesWhitespace()
+    [Test]
+    public async Task ExtractText_NormalizesWhitespace()
     {
         // Arrange
         var html = "<html><body><p>Hello    \n\n   World</p></body></html>";
@@ -130,10 +137,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBe("Hello World");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ComputeHash_SameContent_ReturnsSameHash()
+    [Test]
+    public async Task ComputeHash_SameContent_ReturnsSameHash()
     {
         // Arrange
         var content = "Test content for hashing";
@@ -144,10 +152,11 @@ public class ContentExtractorTests
 
         // Assert
         hash1.ShouldBe(hash2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ComputeHash_DifferentContent_ReturnsDifferentHash()
+    [Test]
+    public async Task ComputeHash_DifferentContent_ReturnsDifferentHash()
     {
         // Arrange
         var content1 = "Content version 1";
@@ -159,10 +168,11 @@ public class ContentExtractorTests
 
         // Assert
         hash1.ShouldNotBe(hash2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractTitle_WithTitleTag_ReturnsTitle()
+    [Test]
+    public async Task ExtractTitle_WithTitleTag_ReturnsTitle()
     {
         // Arrange
         var html = "<html><head><title>Page Title</title></head><body></body></html>";
@@ -172,10 +182,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBe("Page Title");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractTitle_WithoutTitleTag_ReturnsNull()
+    [Test]
+    public async Task ExtractTitle_WithoutTitleTag_ReturnsNull()
     {
         // Arrange
         var html = "<html><head></head><body></body></html>";
@@ -185,10 +196,11 @@ public class ContentExtractorTests
 
         // Assert
         result.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractHtml_WithCssSelector_ReturnsHtmlFragment()
+    [Test]
+    public async Task ExtractHtml_WithCssSelector_ReturnsHtmlFragment()
     {
         // Arrange
         var html = """
@@ -206,10 +218,11 @@ public class ContentExtractorTests
         result.ShouldNotBeNull();
         result.ShouldContain("<span>");
         result.ShouldContain("Inner");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void CleanHtml_RemovesScriptsAndStyles()
+    [Test]
+    public async Task CleanHtml_RemovesScriptsAndStyles()
     {
         // Arrange
         var html = """
@@ -229,5 +242,6 @@ public class ContentExtractorTests
         result.ShouldContain("<p>Keep this</p>");
         result.ShouldNotContain("<script>");
         result.ShouldNotContain("<style>");
+        await Task.CompletedTask;
     }
 }

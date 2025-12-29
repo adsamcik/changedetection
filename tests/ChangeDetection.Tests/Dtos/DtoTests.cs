@@ -1,12 +1,13 @@
 using ChangeDetection.Shared.Dtos;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Dtos;
 
 public class WatchDtoTests
 {
-    [Fact]
-    public void WatchListItemDto_HasDefaultValues()
+    [Test]
+    public async Task WatchListItemDto_HasDefaultValues()
     {
         // Act
         var dto = new WatchListItemDto { Url = "https://example.com" };
@@ -17,10 +18,11 @@ public class WatchDtoTests
         dto.IsEnabled.ShouldBeTrue();
         dto.ChangeCount.ShouldBe(0);
         dto.HasRecentChanges.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchDetailDto_HasDefaultValues()
+    [Test]
+    public async Task WatchDetailDto_HasDefaultValues()
     {
         // Act
         var dto = new WatchDetailDto { Url = "https://example.com" };
@@ -30,10 +32,11 @@ public class WatchDtoTests
         dto.Status.ShouldBe("Idle");
         dto.IsEnabled.ShouldBeTrue();
         dto.IgnorePatterns.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void WatchCreateDto_HasDefaultValues()
+    [Test]
+    public async Task WatchCreateDto_HasDefaultValues()
     {
         // Act
         var dto = new WatchCreateDto { Url = "https://example.com" };
@@ -44,10 +47,11 @@ public class WatchDtoTests
         dto.IgnorePatterns.ShouldBeEmpty();
         dto.FetchSettings.ShouldNotBeNull();
         dto.NotificationSettings.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchSettingsDto_HasDefaultValues()
+    [Test]
+    public async Task FetchSettingsDto_HasDefaultValues()
     {
         // Act
         var dto = new FetchSettingsDto();
@@ -57,10 +61,11 @@ public class WatchDtoTests
         dto.TimeoutSeconds.ShouldBe(30);
         dto.CustomHeaders.ShouldBeEmpty();
         dto.CaptureScreenshot.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void NotificationSettingsDto_HasDefaultValues()
+    [Test]
+    public async Task NotificationSettingsDto_HasDefaultValues()
     {
         // Act
         var dto = new NotificationSettingsDto();
@@ -70,13 +75,14 @@ public class WatchDtoTests
         dto.EmailRecipients.ShouldBeEmpty();
         dto.WebhookEnabled.ShouldBeFalse();
         dto.MinimumImportanceToNotify.ShouldBe("Medium");
+        await Task.CompletedTask;
     }
 }
 
 public class ChangeDtoTests
 {
-    [Fact]
-    public void ChangeListItemDto_HasDefaultValues()
+    [Test]
+    public async Task ChangeListItemDto_HasDefaultValues()
     {
         // Act
         var dto = new ChangeListItemDto();
@@ -88,10 +94,11 @@ public class ChangeDtoTests
         dto.Importance.ShouldBe("Low");
         dto.IsViewed.ShouldBeFalse();
         dto.IsNotified.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ChangeDetailDto_HasDefaultValues()
+    [Test]
+    public async Task ChangeDetailDto_HasDefaultValues()
     {
         // Act
         var dto = new ChangeDetailDto();
@@ -102,10 +109,11 @@ public class ChangeDtoTests
         dto.Summary.ShouldBe("");
         dto.Importance.ShouldBe("Low");
         dto.IsViewed.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void SnapshotInfoDto_HasDefaultValues()
+    [Test]
+    public async Task SnapshotInfoDto_HasDefaultValues()
     {
         // Act
         var dto = new SnapshotInfoDto();
@@ -113,13 +121,14 @@ public class ChangeDtoTests
         // Assert
         dto.Id.ShouldBe("");
         dto.Content.ShouldBe("");
+        await Task.CompletedTask;
     }
 }
 
 public class LlmDtoTests
 {
-    [Fact]
-    public void ProcessInputRequest_CanSetInput()
+    [Test]
+    public async Task ProcessInputRequest_CanSetInput()
     {
         // Arrange & Act
         var request = new ProcessInputRequest
@@ -129,10 +138,11 @@ public class LlmDtoTests
 
         // Assert
         request.Input.ShouldBe("Watch example.com");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ProcessInputResponse_HasDefaultValues()
+    [Test]
+    public async Task ProcessInputResponse_HasDefaultValues()
     {
         // Act
         var response = new ProcessInputResponse();
@@ -143,10 +153,11 @@ public class LlmDtoTests
         response.NeedsClarification.ShouldBeFalse();
         response.ClarificationQuestions.ShouldBeEmpty();
         response.Suggestions.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ParsedWatchRequestDto_HasDefaultValues()
+    [Test]
+    public async Task ParsedWatchRequestDto_HasDefaultValues()
     {
         // Act
         var dto = new ParsedWatchRequestDto();
@@ -155,10 +166,11 @@ public class LlmDtoTests
         dto.Url.ShouldBeNull();
         dto.UseJavaScript.ShouldBeNull();
         dto.Tags.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void SuggestionChipDto_CanSetProperties()
+    [Test]
+    public async Task SuggestionChipDto_CanSetProperties()
     {
         // Arrange & Act
         var chip = new SuggestionChipDto
@@ -172,13 +184,14 @@ public class LlmDtoTests
         chip.Label.ShouldBe("Add selector");
         chip.Value.ShouldBe(".content");
         chip.Type.ShouldBe("SetValue");
+        await Task.CompletedTask;
     }
 }
 
 public class LlmProviderDtoTests
 {
-    [Fact]
-    public void LlmProviderDto_HasDefaultValues()
+    [Test]
+    public async Task LlmProviderDto_HasDefaultValues()
     {
         // Act
         var dto = new LlmProviderDto();
@@ -188,10 +201,11 @@ public class LlmProviderDtoTests
         dto.ProviderType.ShouldBe("OpenAI");
         dto.IsEnabled.ShouldBeFalse();
         dto.IsHealthy.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmProviderCreateDto_HasDefaultValues()
+    [Test]
+    public async Task LlmProviderCreateDto_HasDefaultValues()
     {
         // Act
         var dto = new LlmProviderCreateDto();
@@ -201,10 +215,11 @@ public class LlmProviderDtoTests
         dto.Priority.ShouldBe(1);
         dto.MaxTokens.ShouldBe(4096);
         dto.IsEnabled.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void LlmUsageStatsDto_HasDefaultValues()
+    [Test]
+    public async Task LlmUsageStatsDto_HasDefaultValues()
     {
         // Act
         var dto = new LlmUsageStatsDto();
@@ -215,10 +230,11 @@ public class LlmProviderDtoTests
         dto.FailureCount.ShouldBe(0);
         dto.TotalCost.ShouldBe(0);
         dto.ByProvider.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ProviderUsageDto_HasDefaultValues()
+    [Test]
+    public async Task ProviderUsageDto_HasDefaultValues()
     {
         // Act
         var dto = new ProviderUsageDto();
@@ -228,5 +244,6 @@ public class LlmProviderDtoTests
         dto.InputTokens.ShouldBe(0);
         dto.OutputTokens.ShouldBe(0);
         dto.Cost.ShouldBe(0);
+        await Task.CompletedTask;
     }
 }

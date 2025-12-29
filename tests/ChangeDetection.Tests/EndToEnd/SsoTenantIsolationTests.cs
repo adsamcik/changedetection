@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
+using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Services;
 using ChangeDetection.Services.Authentication;
+using ChangeDetection.Services.Persistence;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,24 +15,31 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.EndToEnd;
 
-[Trait("Category", "EndToEnd")]
-public class SsoTenantIsolationTests : IClassFixture<SsoTenantIsolationTests.SsoFixture>
+public class SsoTenantIsolationTests : IAsyncDisposable
 {
-    private readonly SsoFixture _fixture;
+    private SsoFixture _fixture = null!;
 
-    public SsoTenantIsolationTests(SsoFixture fixture)
+    [Before(Test)]
+    public Task SetUp()
     {
-        _fixture = fixture;
+        _fixture = new SsoFixture();
+        return Task.CompletedTask;
     }
 
-    [Fact]
+    public ValueTask DisposeAsync()
+    {
+        _fixture?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    [Test]
     public async Task WatchesList_OutputCache_DoesNotLeakAcrossUsers()
     {
-        var url = "https://example.com/cache-isolation";
+        var url = "https://example.com/cache-isolation-" + Guid.NewGuid().ToString("N")[..8];
         _fixture.Fetcher.SetHtml(url, "<html><body><div>v1</div></body></html>");
 
         using var clientA = _fixture.CreateClientForUser("alice");
@@ -42,7 +52,8 @@ public class SsoTenantIsolationTests : IClassFixture<SsoTenantIsolationTests.Sso
             Title = "Alice watch",
             CheckInterval = TimeSpan.FromMinutes(60)
         });
-        createResponse.IsSuccessStatusCode.ShouldBeTrue(await createResponse.Content.ReadAsStringAsync());
+        var createContent = await createResponse.Content.ReadAsStringAsync();
+        createResponse.IsSuccessStatusCode.ShouldBeTrue(createContent);
 
         // Prime cache for /api/watches
         var aliceWatches = await clientA.GetFromJsonAsync<List<WatchListItemDto>>("/api/watches");
@@ -55,7 +66,7 @@ public class SsoTenantIsolationTests : IClassFixture<SsoTenantIsolationTests.Sso
         bobWatches.ShouldNotContain(w => w.Url == url);
     }
 
-    [Fact]
+    [Test]
     public async Task BackgroundScope_CheckPersistsEventsVisibleToWatchOwner()
     {
         var url = "https://example.com/background-ownership";
@@ -123,7 +134,20 @@ public class SsoTenantIsolationTests : IClassFixture<SsoTenantIsolationTests.Sso
 
                     builder.ConfigureTestServices(services =>
                     {
+                        // Override IUserContext and IUserService to use SSO mode - the configuration override
+                        // happens after Program.cs has already registered SingleUserContext and SingleUserModeUserService
+                        services.RemoveAll<IUserContext>();
+                        services.AddScoped<IUserContext, SsoUserContext>();
+                        
+                        services.RemoveAll<IUserService>();
+                        services.AddScoped<IUserService, UserService>();
+                        
+                        // Register user repository for SSO user management
+                        services.AddScoped<IRepository<User>>(sp =>
+                            new LiteDbRepository<User>(sp.GetRequiredService<LiteDbContext>(), "users"));
+                        
                         // Remove hosted services to keep tests deterministic (no background checks, no seeders).
+                        services.RemoveAll<IHostedService>();
                         services.RemoveAll<IHostedService>();
 
                         // Override fetcher with a deterministic, mutable in-memory implementation.
@@ -220,3 +244,7 @@ public class SsoTenantIsolationTests : IClassFixture<SsoTenantIsolationTests.Sso
         }
     }
 }
+
+
+
+

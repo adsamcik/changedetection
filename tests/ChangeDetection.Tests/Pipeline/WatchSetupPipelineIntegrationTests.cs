@@ -4,7 +4,7 @@ using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Pipeline;
 
@@ -70,8 +70,8 @@ public class WatchSetupPipelineIntegrationTests
 
     #region Stage 1: URL Extraction Tests
 
-    [Fact]
-    public void UrlExtractionStage_ExtractsUrlFromNaturalLanguageInput()
+    [Test]
+    public async Task UrlExtractionStage_ExtractsUrlFromNaturalLanguageInput()
     {
         // Arrange
         var stage = new UrlExtractionStage();
@@ -84,14 +84,15 @@ public class WatchSetupPipelineIntegrationTests
         urls.Count.ShouldBe(1);
         urls[0].Url.ShouldBe(TestUrl);
         urls[0].IsValid.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("https://www.img.cas.cz/novinky/akce/")]
-    [InlineData("https://www.img.cas.cz/novinky/akce/ monitor for new events")]
-    [InlineData("I want to watch https://www.img.cas.cz/novinky/akce/ for upcoming seminars")]
-    [InlineData("Please track the events at https://www.img.cas.cz/novinky/akce/ daily")]
-    public void UrlExtractionStage_ExtractsUrl_FromVariousInputFormats(string input)
+    [Test]
+    [Arguments("https://www.img.cas.cz/novinky/akce/")]
+    [Arguments("https://www.img.cas.cz/novinky/akce/ monitor for new events")]
+    [Arguments("I want to watch https://www.img.cas.cz/novinky/akce/ for upcoming seminars")]
+    [Arguments("Please track the events at https://www.img.cas.cz/novinky/akce/ daily")]
+    public async Task UrlExtractionStage_ExtractsUrl_FromVariousInputFormats(string input)
     {
         // Arrange
         var stage = new UrlExtractionStage();
@@ -102,10 +103,11 @@ public class WatchSetupPipelineIntegrationTests
         // Assert
         urls.ShouldNotBeEmpty();
         urls.Any(u => u.Url.Contains("img.cas.cz")).ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void UrlExtractionStage_PreservesUserContext()
+    [Test]
+    public async Task UrlExtractionStage_PreservesUserContext()
     {
         // Arrange
         var stage = new UrlExtractionStage();
@@ -119,20 +121,21 @@ public class WatchSetupPipelineIntegrationTests
         var context = urls[0].Context;
         context.ShouldNotBeNullOrWhiteSpace();
         context.ShouldContain("watch");
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page", 
+    [Test]
+    [Arguments("https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page", 
                 "I want to watch for the events on that page")]
-    [InlineData("Check https://example.com/products for price changes daily", 
+    [Arguments("Check https://example.com/products for price changes daily", 
                 "Check for price changes daily")]
-    [InlineData("Monitor www.news.com for breaking news updates", 
+    [Arguments("Monitor www.news.com for breaking news updates", 
                 "Monitor for breaking news updates")]
-    [InlineData("https://example.com", 
+    [Arguments("https://example.com", 
                 "")] // URL only, no intent
-    [InlineData("I want to track events at https://www.img.cas.cz/novinky/akce/ please notify me", 
+    [Arguments("I want to track events at https://www.img.cas.cz/novinky/akce/ please notify me", 
                 "I want to track events at please notify me")]
-    public void UrlExtractionStage_ExtractsUserIntent_SeparateFromUrl(string input, string expectedIntent)
+    public async Task UrlExtractionStage_ExtractsUserIntent_SeparateFromUrl(string input, string expectedIntent)
     {
         // Arrange
         var stage = new UrlExtractionStage();
@@ -142,13 +145,14 @@ public class WatchSetupPipelineIntegrationTests
 
         // Assert
         intent.ShouldBe(expectedIntent);
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region Stage 2: Content Fetching Tests
 
-    [Fact]
+    [Test]
     public async Task ContentFetchingStage_CreatesProperFetchedContent_FromMockedFetcher()
     {
         // Arrange
@@ -182,12 +186,12 @@ public class WatchSetupPipelineIntegrationTests
 
     #region Selector Validation Tests (Using HtmlAgilityPack directly)
 
-    [Theory]
-    [InlineData("//div[contains(@class, 'mb-6')]//h3", 4)] // Event titles
-    [InlineData("//a[contains(@class, 'group')]", 4)] // Event links
-    [InlineData("//li[contains(., 'Termín')]", 4)] // Date fields
-    [InlineData("//li[contains(., 'Místo')]", 4)] // Location fields
-    public void XPathSelectors_MatchExpectedEventElements(string xpath, int expectedMatches)
+    [Test]
+    [Arguments("//div[contains(@class, 'mb-6')]//h3", 4)] // Event titles
+    [Arguments("//a[contains(@class, 'group')]", 4)] // Event links
+    [Arguments("//li[contains(., 'Termín')]", 4)] // Date fields
+    [Arguments("//li[contains(., 'Místo')]", 4)] // Location fields
+    public async Task XPathSelectors_MatchExpectedEventElements(string xpath, int expectedMatches)
     {
         // Arrange
         var doc = new HtmlDocument();
@@ -199,10 +203,11 @@ public class WatchSetupPipelineIntegrationTests
         // Assert
         nodes.ShouldNotBeNull($"XPath '{xpath}' should match nodes");
         nodes.Count.ShouldBe(expectedMatches, $"XPath '{xpath}' should match {expectedMatches} nodes");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void EventTitlesSelector_ExtractsExpectedContent()
+    [Test]
+    public async Task EventTitlesSelector_ExtractsExpectedContent()
     {
         // Arrange
         var doc = new HtmlDocument();
@@ -219,10 +224,11 @@ public class WatchSetupPipelineIntegrationTests
         titles.ShouldContain(t => t.Contains("Seminář"));
         titles.ShouldContain(t => t.Contains("Pravidelné"));
         titles.ShouldContain(t => t.Contains("Processing"));
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void EventCardContainerSelector_SelectsEntireListing()
+    [Test]
+    public async Task EventCardContainerSelector_SelectsEntireListing()
     {
         // Arrange
         var doc = new HtmlDocument();
@@ -238,10 +244,11 @@ public class WatchSetupPipelineIntegrationTests
         container.ShouldNotBeNull();
         container.InnerText.ShouldContain("Seminář");
         container.InnerText.ShouldContain("Pravidelné");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void EventDatesSelector_ExtractsDateInformation()
+    [Test]
+    public async Task EventDatesSelector_ExtractsDateInformation()
     {
         // Arrange
         var doc = new HtmlDocument();
@@ -258,14 +265,15 @@ public class WatchSetupPipelineIntegrationTests
         var dateTexts = nodes.Select(n => n.InnerText).ToList();
         dateTexts.ShouldContain(t => t.Contains("2025"));
         dateTexts.ShouldContain(t => t.Contains("2026"));
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region End-to-End Selector Expectations
 
-    [Fact]
-    public void ExpectedSelectors_ForImgCasEvents_ShouldAllWork()
+    [Test]
+    public async Task ExpectedSelectors_ForImgCasEvents_ShouldAllWork()
     {
         // This test documents what we expect the LLM to generate
         // and verifies these selectors work correctly
@@ -287,10 +295,11 @@ public class WatchSetupPipelineIntegrationTests
         // 3. Get the full listing container (simplest change detection)
         var container = doc.DocumentNode.SelectSingleNode("//div[contains(@class, 'lg:flex-wrap')]");
         container.ShouldNotBeNull("Container selector should work");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExpectedWatchConfiguration_ForImgCasEvents()
+    [Test]
+    public async Task ExpectedWatchConfiguration_ForImgCasEvents()
     {
         // Document what we expect the pipeline to produce
         var expectedSelectors = new[]
@@ -310,14 +319,15 @@ public class WatchSetupPipelineIntegrationTests
             nodes.ShouldNotBeNull($"Selector '{selector}' should work");
             nodes.Count.ShouldBeGreaterThan(0, $"Selector '{selector}' should match elements");
         }
+        await Task.CompletedTask;
     }
 
     #endregion
 
     #region SelectorValidationStage Tests
 
-    [Fact]
-    public void SelectorValidationStage_ValidatesSelectorsCorrectly()
+    [Test]
+    public async Task SelectorValidationStage_ValidatesSelectorsCorrectly()
     {
         // Arrange
         var extractor = Substitute.For<IContentExtractor>();
@@ -369,10 +379,11 @@ public class WatchSetupPipelineIntegrationTests
         
         // Should have extracted samples
         validations.ShouldAllBe(v => !string.IsNullOrEmpty(v.ExtractedSample));
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void SelectorValidationStage_SelectsBestSelector()
+    [Test]
+    public async Task SelectorValidationStage_SelectsBestSelector()
     {
         // Arrange
         var extractor = Substitute.For<IContentExtractor>();
@@ -411,6 +422,7 @@ public class WatchSetupPipelineIntegrationTests
         // Assert
         best.ShouldNotBeNull();
         best.Selector.ShouldBe("//div[contains(@class, 'lg:flex-wrap')]");
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -421,8 +433,8 @@ public class WatchSetupPipelineIntegrationTests
 /// </summary>
 public class InputProcessorPipelineIntegrationTests
 {
-    [Fact]
-    public void InputProcessor_CorrectlyIdentifies_UrlWithNaturalLanguage()
+    [Test]
+    public async Task InputProcessor_CorrectlyIdentifies_UrlWithNaturalLanguage()
     {
         // Verify the URL + natural language pattern is correctly parsed
         var input = "https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page";
@@ -443,10 +455,11 @@ public class InputProcessorPipelineIntegrationTests
         // Natural language part should be the remainder
         var naturalLanguagePart = input[(urlMatch.Index + urlMatch.Length)..].Trim();
         naturalLanguagePart.ShouldBe("I want to watch for the events on that page");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void UrlExtractionStage_CapturesContextFromNaturalLanguage()
+    [Test]
+    public async Task UrlExtractionStage_CapturesContextFromNaturalLanguage()
     {
         // Arrange
         var stage = new UrlExtractionStage();
@@ -462,5 +475,6 @@ public class InputProcessorPipelineIntegrationTests
         context.ShouldNotBeNull();
         context.ShouldContain("watch");
         context.ShouldContain("events");
+        await Task.CompletedTask;
     }
 }

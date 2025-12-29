@@ -3,6 +3,7 @@ using ChangeDetection.Services.LLM;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
@@ -21,14 +22,14 @@ public class InputProcessorTests
         _sut = new InputProcessor(_llmChain, _watchService, _logger);
     }
 
-    [Theory]
-    [InlineData("https://example.com")]
-    [InlineData("http://example.com")]
-    [InlineData("https://www.example.com/page")]
-    [InlineData("http://localhost:8080")]
-    [InlineData("https://example.com/path?query=value")]
-    [InlineData("https://www.img.cas.cz/novinky/akce/")]
-    public void Analyze_ValidUrl_ReturnsUrlType(string input)
+    [Test]
+    [Arguments("https://example.com")]
+    [Arguments("http://example.com")]
+    [Arguments("https://www.example.com/page")]
+    [Arguments("http://localhost:8080")]
+    [Arguments("https://example.com/path?query=value")]
+    [Arguments("https://www.img.cas.cz/novinky/akce/")]
+    public async Task Analyze_ValidUrl_ReturnsUrlType(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -37,14 +38,15 @@ public class InputProcessorTests
         result.Type.ShouldBe(InputType.Url);
         result.IsValid.ShouldBeTrue();
         result.NormalizedUrl.ShouldNotBeNullOrEmpty();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page", "https://www.img.cas.cz/novinky/akce/")]
-    [InlineData("https://example.com watch for changes every hour", "https://example.com")]
-    [InlineData("http://news.ycombinator.com/ monitor for new stories", "http://news.ycombinator.com/")]
-    [InlineData("https://shop.com/product check price changes daily", "https://shop.com/product")]
-    public void Analyze_UrlFollowedByNaturalLanguage_ReturnsNaturalLanguageWithExtractedUrl(string input, string expectedUrl)
+    [Test]
+    [Arguments("https://www.img.cas.cz/novinky/akce/ I want to watch for the events on that page", "https://www.img.cas.cz/novinky/akce/")]
+    [Arguments("https://example.com watch for changes every hour", "https://example.com")]
+    [Arguments("http://news.ycombinator.com/ monitor for new stories", "http://news.ycombinator.com/")]
+    [Arguments("https://shop.com/product check price changes daily", "https://shop.com/product")]
+    public async Task Analyze_UrlFollowedByNaturalLanguage_ReturnsNaturalLanguageWithExtractedUrl(string input, string expectedUrl)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -54,13 +56,14 @@ public class InputProcessorTests
         result.IsValid.ShouldBeTrue();
         result.DetectedUrl.ShouldBe(expectedUrl);
         result.NormalizedUrl.ShouldBe(expectedUrl);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("example.com")]
-    [InlineData("www.example.com")]
-    [InlineData("example.com/page")]
-    public void Analyze_UrlWithoutScheme_NormalizesWithHttps(string input)
+    [Test]
+    [Arguments("example.com")]
+    [Arguments("www.example.com")]
+    [Arguments("example.com/page")]
+    public async Task Analyze_UrlWithoutScheme_NormalizesWithHttps(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -68,13 +71,14 @@ public class InputProcessorTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl.ShouldStartWith("https://");
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("Watch news.ycombinator.com for new stories")]
-    [InlineData("Monitor the homepage of example.com")]
-    [InlineData("Check prices on amazon.com/dp/B123")]
-    public void Analyze_NaturalLanguageWithUrl_ReturnsNaturalLanguageType(string input)
+    [Test]
+    [Arguments("Watch news.ycombinator.com for new stories")]
+    [Arguments("Monitor the homepage of example.com")]
+    [Arguments("Check prices on amazon.com/dp/B123")]
+    public async Task Analyze_NaturalLanguageWithUrl_ReturnsNaturalLanguageType(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -82,13 +86,14 @@ public class InputProcessorTests
         // Assert - Natural language detection doesn't extract URLs (that's LLM's job)
         result.Type.ShouldBe(InputType.NaturalLanguage);
         result.IsValid.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("Tell me about website monitoring")]
-    [InlineData("How does change detection work?")]
-    [InlineData("Help me set up notifications")]
-    public void Analyze_PureNaturalLanguage_ReturnsNaturalLanguageType(string input)
+    [Test]
+    [Arguments("Tell me about website monitoring")]
+    [Arguments("How does change detection work?")]
+    [Arguments("Help me set up notifications")]
+    public async Task Analyze_PureNaturalLanguage_ReturnsNaturalLanguageType(string input)
     {
         // Act
         var result = _sut.Analyze(input);
@@ -96,23 +101,25 @@ public class InputProcessorTests
         // Assert
         result.Type.ShouldBe(InputType.NaturalLanguage);
         result.DetectedUrl.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData(null)]
-    public void Analyze_EmptyOrWhitespace_ReturnsInvalid(string? input)
+    [Test]
+    [Arguments("")]
+    [Arguments("   ")]
+    [Arguments(null)]
+    public async Task Analyze_EmptyOrWhitespace_ReturnsInvalid(string? input)
     {
         // Act
         var result = _sut.Analyze(input ?? "");
 
         // Assert
         result.IsValid.ShouldBeFalse();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_UrlWithPort_ExtractsCorrectly()
+    [Test]
+    public async Task Analyze_UrlWithPort_ExtractsCorrectly()
     {
         // Arrange
         var input = "http://localhost:3000/api/data";
@@ -123,10 +130,11 @@ public class InputProcessorTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl.ShouldBe("http://localhost:3000/api/data");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_UrlWithQueryString_PreservesQuery()
+    [Test]
+    public async Task Analyze_UrlWithQueryString_PreservesQuery()
     {
         // Arrange
         var input = "https://example.com/search?q=test&page=1";
@@ -138,10 +146,11 @@ public class InputProcessorTests
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl!.ShouldContain("q=test");
         result.NormalizedUrl!.ShouldContain("page=1");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_UrlWithFragment_PreservesFragment()
+    [Test]
+    public async Task Analyze_UrlWithFragment_PreservesFragment()
     {
         // Arrange
         var input = "https://example.com/page#section";
@@ -152,22 +161,24 @@ public class InputProcessorTests
         // Assert
         result.Type.ShouldBe(InputType.Url);
         result.NormalizedUrl!.ShouldContain("#section");
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("ftp://example.com")]
-    [InlineData("file:///path/to/file")]
-    public void Analyze_NonHttpUrl_TreatedAsNaturalLanguage(string input)
+    [Test]
+    [Arguments("ftp://example.com")]
+    [Arguments("file:///path/to/file")]
+    public async Task Analyze_NonHttpUrl_TreatedAsNaturalLanguage(string input)
     {
         // Act
         var result = _sut.Analyze(input);
 
         // Assert - Non-HTTP schemes are treated as natural language (not valid URLs for monitoring)
         result.Type.ShouldBe(InputType.NaturalLanguage);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Analyze_MixedCaseUrl_NormalizesHost()
+    [Test]
+    public async Task Analyze_MixedCaseUrl_NormalizesHost()
     {
         // Arrange
         var input = "HTTPS://EXAMPLE.COM/Page";
@@ -180,5 +191,6 @@ public class InputProcessorTests
         result.NormalizedUrl.ShouldNotBeNull();
         // Host should be lowercased, path case preserved
         result.NormalizedUrl!.ToLower().ShouldContain("example.com");
+        await Task.CompletedTask;
     }
 }

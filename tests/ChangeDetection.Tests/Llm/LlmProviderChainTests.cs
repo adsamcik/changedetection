@@ -4,9 +4,16 @@ using ChangeDetection.Services.LLM;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using System.Net;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
+/// <summary>
+/// Unit tests for LlmProviderChain.
+/// Uses MockLlmHttpHandler to avoid real network calls.
+/// </summary>
+[Category("Unit")]
 public class LlmProviderChainTests
 {
     private readonly IRepository<LlmProviderConfig> _providerRepo;
@@ -14,7 +21,6 @@ public class LlmProviderChainTests
     private readonly ILogger<LlmProviderChain> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILlmLogService _llmLogService;
-    private readonly LlmProviderChain _sut;
 
     public LlmProviderChainTests()
     {
@@ -23,68 +29,77 @@ public class LlmProviderChainTests
         _logger = Substitute.For<ILogger<LlmProviderChain>>();
         _serviceProvider = Substitute.For<IServiceProvider>();
         _llmLogService = Substitute.For<ILlmLogService>();
-        _sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService);
     }
 
-    /// <summary>
-    /// Tests that when no providers are configured, the system either:
-    /// 1. Auto-detects Ollama if running (success)
-    /// 2. Returns failure if no LLM is available
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_NoConfiguredProviders_AutoDetectsOrFails()
+    [Test]
+    public async Task ExecuteAsync_NoConfiguredProviders_ReturnsFailure()
     {
-        // Arrange - no configured providers
+        // Arrange - no configured providers, use mock handler to avoid real network calls
+        var mockHandler = new MockLlmHttpHandler();
+        mockHandler.QueueError(HttpStatusCode.NotFound, "Not found");
+        
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns(new List<LlmProviderConfig>());
 
-        // Act
-        var result = await _sut.ExecuteAsync("Say hello");
+        var httpClientFactory = new MockHttpClientFactory(mockHandler);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
 
-        // Assert - The behavior depends on whether Ollama is available
-        // This test documents the auto-detection feature
-        if (result.IsSuccess)
-        {
-            // Ollama was auto-detected and used
-            result.Content.ShouldNotBeNullOrEmpty();
-        }
-        else
-        {
-            // No providers available (including no Ollama)
-            result.ErrorMessage.ShouldBe("No LLM providers available");
-        }
+        // Act
+        var result = await sut.ExecuteAsync("Say hello");
+
+        // Assert - No providers available
+        result.IsSuccess.ShouldBeFalse();
+        // Error message depends on whether auto-detection is attempted
+        result.ErrorMessage.ShouldNotBeNullOrEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task ExecuteAsync_SpecificProvider_FiltersToMatchingProvider()
     {
-        // Arrange
+        // Arrange - Use mock handler
+        var mockHandler = new MockLlmHttpHandler();
+        mockHandler.WithDefaultResponse("Test response from Provider2");
+        
         var providers = new List<LlmProviderConfig>
         {
-            new() { Name = "Provider1", IsEnabled = true, IsHealthy = true, Priority = 1, ApiKey = "key1", Model = "model1" },
-            new() { Name = "Provider2", IsEnabled = true, IsHealthy = true, Priority = 2, ApiKey = "key2", Model = "model2" }
+            new() { Id = Guid.NewGuid(), Name = "Provider1", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "model1" },
+            new() { Id = Guid.NewGuid(), Name = "Provider2", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 2, Model = "model2" }
         };
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns(providers);
 
+        var httpClientFactory = new MockHttpClientFactory(mockHandler);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+
         var options = new LlmRequestOptions { ProviderName = "Provider2" };
 
-        // Act - will fail because we can't mock the Semantic Kernel
-        var result = await _sut.ExecuteAsync("Test prompt", options);
+        // Act
+        var result = await sut.ExecuteAsync("Test prompt", options);
 
-        // Assert - Verifies the provider filtering logic runs
+        // Assert - Request should succeed
         result.ShouldNotBeNull();
+        result.IsSuccess.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task ExecuteAsync_RecordsDuration()
     {
-        // Arrange
+        // Arrange - Use mock handler
+        var mockHandler = new MockLlmHttpHandler();
+        mockHandler.WithDefaultResponse("Test response");
+        
+        var providers = new List<LlmProviderConfig>
+        {
+            new() { Id = Guid.NewGuid(), Name = "TestProvider", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "model" }
+        };
         _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
-            .Returns(new List<LlmProviderConfig>());
+            .Returns(providers);
+
+        var httpClientFactory = new MockHttpClientFactory(mockHandler);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
 
         // Act
-        var result = await _sut.ExecuteAsync("Test prompt");
+        var result = await sut.ExecuteAsync("Test prompt");
 
         // Assert
         result.DurationMs.ShouldBeGreaterThanOrEqualTo(0);
@@ -93,8 +108,8 @@ public class LlmProviderChainTests
 
 public class LlmRequestOptionsTests
 {
-    [Fact]
-    public void LlmRequestOptions_HasCorrectDefaults()
+    [Test]
+    public async Task LlmRequestOptions_HasCorrectDefaults()
     {
         // Act
         var options = new LlmRequestOptions();
@@ -105,8 +120,8 @@ public class LlmRequestOptionsTests
         options.ProviderName.ShouldBeNull();
     }
 
-    [Fact]
-    public void LlmRequestOptions_CanSetAllProperties()
+    [Test]
+    public async Task LlmRequestOptions_CanSetAllProperties()
     {
         // Arrange & Act
         var options = new LlmRequestOptions
@@ -125,8 +140,8 @@ public class LlmRequestOptionsTests
 
 public class LlmResponseTests
 {
-    [Fact]
-    public void LlmResponse_HasCorrectDefaults()
+    [Test]
+    public async Task LlmResponse_HasCorrectDefaults()
     {
         // Act
         var response = new LlmResponse();
@@ -140,8 +155,8 @@ public class LlmResponseTests
         response.DurationMs.ShouldBe(0);
     }
 
-    [Fact]
-    public void LlmResponse_CanSetAllProperties()
+    [Test]
+    public async Task LlmResponse_CanSetAllProperties()
     {
         // Arrange & Act
         var response = new LlmResponse

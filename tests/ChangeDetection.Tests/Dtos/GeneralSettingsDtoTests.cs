@@ -1,12 +1,13 @@
 using ChangeDetection.Shared.Dtos;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Dtos;
 
 public class GeneralSettingsDtoTests
 {
-    [Fact]
-    public void GeneralSettingsDto_HasDefaultValues()
+    [Test]
+    public async Task GeneralSettingsDto_HasDefaultValues()
     {
         // Act
         var dto = new GeneralSettingsDto();
@@ -23,10 +24,11 @@ public class GeneralSettingsDtoTests
         dto.EnableLlmDebugLogging.ShouldBeFalse();
         dto.MaxRetryAttempts.ShouldBe(3);
         dto.RetryDelaySeconds.ShouldBe(60);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GeneralSettingsDto_CanSetAllProperties()
+    [Test]
+    public async Task GeneralSettingsDto_CanSetAllProperties()
     {
         // Act
         var dto = new GeneralSettingsDto
@@ -56,13 +58,14 @@ public class GeneralSettingsDtoTests
         dto.EnableLlmDebugLogging.ShouldBeTrue();
         dto.MaxRetryAttempts.ShouldBe(5);
         dto.RetryDelaySeconds.ShouldBe(120);
+        await Task.CompletedTask;
     }
 }
 
 public class GeneralSettingsUpdateDtoTests
 {
-    [Fact]
-    public void GeneralSettingsUpdateDto_AllPropertiesNullByDefault()
+    [Test]
+    public async Task GeneralSettingsUpdateDto_AllPropertiesNullByDefault()
     {
         // Act
         var dto = new GeneralSettingsUpdateDto();
@@ -79,10 +82,11 @@ public class GeneralSettingsUpdateDtoTests
         dto.EnableLlmDebugLogging.ShouldBeNull();
         dto.MaxRetryAttempts.ShouldBeNull();
         dto.RetryDelaySeconds.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GeneralSettingsUpdateDto_CanSetPartialUpdate()
+    [Test]
+    public async Task GeneralSettingsUpdateDto_CanSetPartialUpdate()
     {
         // Act - Only set a few properties to simulate partial update
         var dto = new GeneralSettingsUpdateDto
@@ -96,10 +100,11 @@ public class GeneralSettingsUpdateDtoTests
         dto.MaxConcurrentChecks.ShouldBe(15);
         dto.SnapshotRetentionDays.ShouldBeNull();
         dto.UseLlmForSummaries.ShouldBe(false);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GeneralSettingsUpdateDto_CanSetAllProperties()
+    [Test]
+    public async Task GeneralSettingsUpdateDto_CanSetAllProperties()
     {
         // Act
         var dto = new GeneralSettingsUpdateDto
@@ -129,14 +134,15 @@ public class GeneralSettingsUpdateDtoTests
         dto.EnableLlmDebugLogging.ShouldBe(true);
         dto.MaxRetryAttempts.ShouldBe(1);
         dto.RetryDelaySeconds.ShouldBe(30);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(10)]
-    [InlineData(100)]
-    public void GeneralSettingsUpdateDto_AcceptsVariousRetryAttemptValues(int retryAttempts)
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(10)]
+    [Arguments(100)]
+    public async Task GeneralSettingsUpdateDto_AcceptsVariousRetryAttemptValues(int retryAttempts)
     {
         // Act
         var dto = new GeneralSettingsUpdateDto
@@ -146,13 +152,14 @@ public class GeneralSettingsUpdateDtoTests
 
         // Assert
         dto.MaxRetryAttempts.ShouldBe(retryAttempts);
+        await Task.CompletedTask;
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")]
-    [InlineData("CustomBot/1.0 (+https://example.com/bot)")]
-    public void GeneralSettingsUpdateDto_AcceptsVariousUserAgentValues(string userAgent)
+    [Test]
+    [Arguments("")]
+    [Arguments("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")]
+    [Arguments("CustomBot/1.0 (+https://example.com/bot)")]
+    public async Task GeneralSettingsUpdateDto_AcceptsVariousUserAgentValues(string userAgent)
     {
         // Act
         var dto = new GeneralSettingsUpdateDto
@@ -162,5 +169,6 @@ public class GeneralSettingsUpdateDtoTests
 
         // Assert
         dto.DefaultUserAgent.ShouldBe(userAgent);
+        await Task.CompletedTask;
     }
 }

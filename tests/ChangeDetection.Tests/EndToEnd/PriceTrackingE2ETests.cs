@@ -1,11 +1,14 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services;
+using ChangeDetection.Services.LLM;
+using ChangeDetection.Tests.Llm.Cache;
+using ChangeDetection.Tests.Llm.TestHelpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
+
 
 namespace ChangeDetection.Tests.EndToEnd;
 
@@ -14,15 +17,10 @@ namespace ChangeDetection.Tests.EndToEnd;
 /// Tests LLM extraction → threshold evaluation → notification flow.
 /// 
 /// Unit tests (mocked LLM) run on every PR.
-/// E2E tests (real LLM) run nightly with [Trait("Category", "RequiresOllama")].
+/// E2E tests (real LLM) use [Category("LlmCached")] for cached LLM responses.
 /// </summary>
-public class PriceTrackingE2ETests : TestBase
+public class PriceTrackingE2ETests
 {
-    public PriceTrackingE2ETests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Test HTML Fixtures
 
     /// <summary>
@@ -175,11 +173,287 @@ public class PriceTrackingE2ETests : TestBase
         </html>
         """;
 
+    /// <summary>
+    /// UK retailer with large price using thousands separator.
+    /// Price: £1,299.99, Status: Limited Stock (Only 2 left)
+    /// </summary>
+    private const string UkRetailerLargePriceHtml = """
+        <!DOCTYPE html>
+        <html lang="en-GB">
+        <head>
+            <meta charset="UTF-8">
+            <title>Premium Laptop - UK Electronics</title>
+        </head>
+        <body>
+            <div class="product-page">
+                <h1 class="product-title">Premium Laptop Pro 15</h1>
+                
+                <div class="price-block">
+                    <span class="price">£1,299.99</span>
+                    <span class="vat-info">inc. VAT</span>
+                </div>
+                
+                <div class="stock-info">
+                    <span class="low-stock-warning">Only 2 left in stock</span>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// EU retailer with large price in European format.
+    /// Price: €1.299,00 (1299.00), Status: In Stock
+    /// </summary>
+    private const string EuLargePriceHtml = """
+        <!DOCTYPE html>
+        <html lang="de">
+        <head>
+            <meta charset="UTF-8">
+            <title>Waschmaschine - MediaMarkt</title>
+        </head>
+        <body>
+            <div class="product-detail">
+                <h1>Samsung Waschmaschine WW90T</h1>
+                
+                <div class="price-container">
+                    <span class="current-price">1.299,00 €</span>
+                    <span class="shipping">Kostenloser Versand</span>
+                </div>
+                
+                <div class="availability">
+                    <span class="in-stock">Sofort lieferbar</span>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Price without decimal places (whole number).
+    /// Price: $50, Status: Pre-order
+    /// </summary>
+    private const string WholeNumberPriceHtml = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Upcoming Game - GameStore</title>
+        </head>
+        <body>
+            <div class="product">
+                <h1>Awesome Game 2025</h1>
+                
+                <div class="price-area">
+                    <span class="price">$50</span>
+                </div>
+                
+                <div class="availability">
+                    <span class="preorder-badge">Pre-order Now</span>
+                    <span class="release-date">Releases March 15, 2025</span>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Swiss retailer with apostrophe as thousands separator.
+    /// Price: CHF 1'499.00 (1499.00), Status: In Stock
+    /// </summary>
+    private const string SwissPriceHtml = """
+        <!DOCTYPE html>
+        <html lang="de-CH">
+        <head>
+            <meta charset="UTF-8">
+            <title>iPhone - Digitec</title>
+        </head>
+        <body>
+            <div class="product-page">
+                <h1>iPhone 15 Pro 256GB</h1>
+                
+                <div class="pricing">
+                    <span class="price">CHF 1'499.00</span>
+                </div>
+                
+                <div class="stock">
+                    <span class="available">Verfügbar</span>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Product with Yen currency (typically no decimals, comma is thousands separator).
+    /// Price: ¥12,800 (12800), Status: In Stock
+    /// </summary>
+    private const string JapaneseYenHtml = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Nintendo Switch Game - Amazon.co.jp</title>
+        </head>
+        <body>
+            <div class="product-page" data-product-id="B0C123456">
+                <h1 class="product-name">Legend of Zelda: Tears of the Kingdom - Nintendo Switch</h1>
+                
+                <div class="price-box">
+                    <span class="price-label">Price:</span>
+                    <span class="price-current" data-price="12800">¥12,800</span>
+                    <span class="tax-note">(tax included)</span>
+                </div>
+                
+                <div class="availability">
+                    <span class="stock-status in-stock">
+                        <i class="icon-check"></i>
+                        In Stock
+                    </span>
+                    <span class="delivery-info">Ships within 24 hours</span>
+                </div>
+                
+                <div class="product-info">
+                    <table>
+                        <tr><td>Platform:</td><td>Nintendo Switch</td></tr>
+                        <tr><td>Publisher:</td><td>Nintendo</td></tr>
+                        <tr><td>Release Date:</td><td>May 12, 2023</td></tr>
+                    </table>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Subscription-based pricing (monthly).
+    /// Price: $9.99/month, Status: Available
+    /// </summary>
+    private const string SubscriptionPriceHtml = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Premium Plan - StreamingService</title>
+        </head>
+        <body>
+            <div class="plan-details" data-plan-id="premium-monthly">
+                <h1>Premium Plan</h1>
+                
+                <div class="pricing-box">
+                    <span class="price-label">Price:</span>
+                    <span class="price-current" data-price="9.99">$9.99</span>
+                    <span class="period">/month</span>
+                </div>
+                
+                <div class="plan-availability">
+                    <span class="status available in-stock">
+                        <i class="icon-check"></i>
+                        Available
+                    </span>
+                    <button class="subscribe-btn">Subscribe Now</button>
+                </div>
+                
+                <div class="plan-info">
+                    <ul class="features">
+                        <li>4K Ultra HD streaming</li>
+                        <li>Ad-free experience</li>
+                        <li>Download for offline viewing</li>
+                    </ul>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Price range (min-max pricing).
+    /// Price: $29.99 - $49.99, Status: In Stock
+    /// </summary>
+    private const string PriceRangeHtml = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>T-Shirt - Fashion Store</title>
+        </head>
+        <body>
+            <div class="product" data-product-id="TSHIRT-001">
+                <h1 class="product-name">Classic Cotton T-Shirt</h1>
+                
+                <div class="price-section">
+                    <span class="price-label">Price:</span>
+                    <span class="price-range">
+                        <span class="from-price" data-price="29.99">$29.99</span>
+                        <span class="separator"> - </span>
+                        <span class="to-price" data-price="49.99">$49.99</span>
+                    </span>
+                    <span class="variants-note">Price varies by size and color</span>
+                </div>
+                
+                <div class="availability">
+                    <span class="stock-status in-stock">
+                        <i class="icon-check"></i>
+                        In Stock
+                    </span>
+                    <span class="delivery">Free shipping on orders over $50</span>
+                </div>
+                
+                <div class="product-info">
+                    <table>
+                        <tr><td>Material:</td><td>100% Cotton</td></tr>
+                        <tr><td>Sizes:</td><td>XS, S, M, L, XL</td></tr>
+                    </table>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
+    /// <summary>
+    /// Backorder status with expected date.
+    /// Price: $299.00, Status: Backorder
+    /// </summary>
+    private const string BackorderHtml = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Popular Gadget - TechStore</title>
+        </head>
+        <body>
+            <div class="product-page" data-product-id="GADGET-X100">
+                <h1 class="product-name">Super Popular Gadget X</h1>
+                
+                <div class="price-box">
+                    <span class="price-label">Price:</span>
+                    <span class="price-current" data-price="299.00">$299.00</span>
+                </div>
+                
+                <div class="availability">
+                    <span class="stock-status backorder">
+                        <i class="icon-clock"></i>
+                        Backordered
+                    </span>
+                    <span class="expected-date">Expected to ship in 2-3 weeks</span>
+                </div>
+                
+                <div class="product-info">
+                    <table>
+                        <tr><td>Brand:</td><td>TechCorp</td></tr>
+                        <tr><td>Model:</td><td>X-100</td></tr>
+                    </table>
+                </div>
+            </div>
+        </body>
+        </html>
+        """;
+
     #endregion
 
     #region Unit Tests (Mocked LLM - Run on every PR)
 
-    [Fact]
+    [Test]
     public async Task ExtractPrice_WithMockedLlm_ParsesJsonResponse()
     {
         // Arrange
@@ -215,7 +489,7 @@ public class PriceTrackingE2ETests : TestBase
         result.Confidence.Value.ShouldBeGreaterThan(0.9f);
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractPrice_WithMockedLlm_HandlesEuroFormat()
     {
         // Arrange
@@ -246,7 +520,7 @@ public class PriceTrackingE2ETests : TestBase
         result.Stock!.Status.ShouldBe(StockStatus.InStock);
     }
 
-    [Fact]
+    [Test]
     public async Task ProcessPriceCheck_WithPriceDropAlert_SendsNotification()
     {
         // Arrange
@@ -349,7 +623,7 @@ public class PriceTrackingE2ETests : TestBase
             Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task ClassifyStockStatus_WithMockedLlm_ClassifiesCzechText()
     {
         // Arrange
@@ -370,7 +644,7 @@ public class PriceTrackingE2ETests : TestBase
         status.ShouldBe(StockStatus.Discontinued);
     }
 
-    [Fact]
+    [Test]
     public async Task ClassifyStockStatus_WithMockedLlm_ClassifiesGermanText()
     {
         // Arrange
@@ -391,7 +665,7 @@ public class PriceTrackingE2ETests : TestBase
         status.ShouldBe(StockStatus.InStock);
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractPrice_LlmReturnsEmpty_ReturnsNull()
     {
         // Arrange
@@ -412,7 +686,7 @@ public class PriceTrackingE2ETests : TestBase
         result.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task ParsePriceAsync_WithMockedLlm_ParsesLocaleFormat()
     {
         // Arrange
@@ -439,18 +713,11 @@ public class PriceTrackingE2ETests : TestBase
 
     #region E2E Tests (Real LLM - Nightly runs only)
 
-    [Fact]
-    [Trait("Category", "RequiresOllama")]
+    [Test]
+    [Category("LlmCached")]
     public async Task ExtractPrice_FyftCz_RealLlm_ExtractsCzechPrice()
     {
-        // This test requires a running Ollama instance
-        // Skip if Ollama is not available
-        var llmProvider = await CreateRealLlmProviderOrSkip();
-        if (llmProvider == null)
-        {
-            Output.WriteLine("Skipping: Ollama not available");
-            return;
-        }
+        var llmProvider = await CreateRealLlmProvider();
 
         var service = CreateServiceWithMocks(llmProvider);
 
@@ -458,10 +725,10 @@ public class PriceTrackingE2ETests : TestBase
         var result = await service.ExtractPriceAsync(FyftCzProductHtml);
 
         // Assert
-        Output.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
-        Output.WriteLine($"Extracted stock: {result?.Stock?.Status} ({result?.Stock?.RawText})");
-        Output.WriteLine($"Product name: {result?.ProductName}");
-        Output.WriteLine($"Confidence: {result?.Confidence}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted stock: {result?.Stock?.Status} ({result?.Stock?.RawText})");
+        TestContext.Current?.OutputWriter?.WriteLine($"Product name: {result?.ProductName}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Confidence: {result?.Confidence}");
 
         result.ShouldNotBeNull();
         result.Price.ShouldNotBeNull();
@@ -470,16 +737,11 @@ public class PriceTrackingE2ETests : TestBase
         result.Stock?.Status.ShouldBe(StockStatus.Discontinued);
     }
 
-    [Fact]
-    [Trait("Category", "RequiresOllama")]
+    [Test]
+    [Category("LlmCached")]
     public async Task ExtractPrice_AlzaCz_RealLlm_ExtractsSalePrice()
     {
-        var llmProvider = await CreateRealLlmProviderOrSkip();
-        if (llmProvider == null)
-        {
-            Output.WriteLine("Skipping: Ollama not available");
-            return;
-        }
+        var llmProvider = await CreateRealLlmProvider();
 
         var service = CreateServiceWithMocks(llmProvider);
 
@@ -487,8 +749,8 @@ public class PriceTrackingE2ETests : TestBase
         var result = await service.ExtractPriceAsync(AlzaCzProductHtml);
 
         // Assert
-        Output.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
-        Output.WriteLine($"Stock status: {result?.Stock?.Status}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
 
         result.ShouldNotBeNull();
         result.Price.ShouldNotBeNull();
@@ -498,16 +760,11 @@ public class PriceTrackingE2ETests : TestBase
         result.Stock?.Status.ShouldBe(StockStatus.InStock);
     }
 
-    [Fact]
-    [Trait("Category", "RequiresOllama")]
+    [Test]
+    [Category("LlmCached")]
     public async Task ExtractPrice_AmazonDe_RealLlm_ExtractsEuroPrice()
     {
-        var llmProvider = await CreateRealLlmProviderOrSkip();
-        if (llmProvider == null)
-        {
-            Output.WriteLine("Skipping: Ollama not available");
-            return;
-        }
+        var llmProvider = await CreateRealLlmProvider();
 
         var service = CreateServiceWithMocks(llmProvider);
 
@@ -515,8 +772,8 @@ public class PriceTrackingE2ETests : TestBase
         var result = await service.ExtractPriceAsync(AmazonDeProductHtml);
 
         // Assert
-        Output.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
-        Output.WriteLine($"Stock status: {result?.Stock?.Status}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
 
         result.ShouldNotBeNull();
         result.Price.ShouldNotBeNull();
@@ -525,16 +782,11 @@ public class PriceTrackingE2ETests : TestBase
         result.Stock?.Status.ShouldBe(StockStatus.InStock);
     }
 
-    [Fact]
-    [Trait("Category", "RequiresOllama")]
+    [Test]
+    [Category("LlmCached")]
     public async Task ExtractPrice_OutOfStock_RealLlm_DetectsUnavailable()
     {
-        var llmProvider = await CreateRealLlmProviderOrSkip();
-        if (llmProvider == null)
-        {
-            Output.WriteLine("Skipping: Ollama not available");
-            return;
-        }
+        var llmProvider = await CreateRealLlmProvider();
 
         var service = CreateServiceWithMocks(llmProvider);
 
@@ -542,14 +794,200 @@ public class PriceTrackingE2ETests : TestBase
         var result = await service.ExtractPriceAsync(OutOfStockProductHtml);
 
         // Assert
-        Output.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
-        Output.WriteLine($"Stock status: {result?.Stock?.Status}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
 
         result.ShouldNotBeNull();
         result.Price.ShouldNotBeNull();
         result.Price.Value.ShouldNotBeNull();
         Math.Abs(result.Price.Value.Value - 199.99m).ShouldBeLessThan(1m);
         result.Stock?.Status.ShouldBe(StockStatus.OutOfStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_UkLargePrice_RealLlm_ParsesThousandsSeparator()
+    {
+        // Tests: £1,299.99 with comma as thousands separator, period as decimal
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(UkRetailerLargePriceHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 1299.99m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("GBP");
+        result.Stock?.Status.ShouldBe(StockStatus.LimitedStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_EuLargePrice_RealLlm_ParsesEuropeanFormat()
+    {
+        // Tests: 1.299,00 € with period as thousands separator, comma as decimal
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(EuLargePriceHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 1299.00m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("EUR");
+        result.Stock?.Status.ShouldBe(StockStatus.InStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_WholeNumber_RealLlm_ParsesWithoutDecimals()
+    {
+        // Tests: $50 without any decimal separator
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(WholeNumberPriceHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 50m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("USD");
+        result.Stock?.Status.ShouldBe(StockStatus.PreOrder);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_SwissFranc_RealLlm_ParsesApostropheSeparator()
+    {
+        // Tests: CHF 1'499.00 with apostrophe as thousands separator
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(SwissPriceHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 1499.00m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("CHF");
+        result.Stock?.Status.ShouldBe(StockStatus.InStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_JapaneseYen_RealLlm_ParsesNoDecimalCurrency()
+    {
+        // Tests: ¥12,800 - Yen typically has no decimal places
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(JapaneseYenHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 12800m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("JPY");
+        result.Stock?.Status.ShouldBe(StockStatus.InStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_Subscription_RealLlm_ParsesMonthlyPrice()
+    {
+        // Tests: $9.99/month - subscription pricing
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(SubscriptionPriceHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 9.99m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("USD");
+        result.Stock?.Status.ShouldBe(StockStatus.InStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_PriceRange_RealLlm_ParsesMinPrice()
+    {
+        // Tests: $29.99 - $49.99 - should extract the lower price
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(PriceRangeHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        // Accept either the min or max price as valid
+        var price = result.Price.Value.Value;
+        (price == 29.99m || price == 49.99m).ShouldBeTrue($"Expected 29.99 or 49.99, got {price}");
+        result.Price.Currency.ShouldBe("USD");
+        result.Stock?.Status.ShouldBe(StockStatus.InStock);
+    }
+
+    [Test]
+    [Category("LlmCached")]
+    public async Task ExtractPrice_Backorder_RealLlm_DetectsBackorderStatus()
+    {
+        // Tests: Backorder status detection
+        var llmProvider = await CreateRealLlmProvider();
+        var service = CreateServiceWithMocks(llmProvider);
+
+        // Act
+        var result = await service.ExtractPriceAsync(BackorderHtml);
+
+        // Assert
+        TestContext.Current?.OutputWriter?.WriteLine($"Extracted price: {result?.Price?.Value} {result?.Price?.Currency}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stock status: {result?.Stock?.Status}");
+
+        result.ShouldNotBeNull();
+        result.Price.ShouldNotBeNull();
+        result.Price.Value.ShouldNotBeNull();
+        Math.Abs(result.Price.Value.Value - 299.00m).ShouldBeLessThan(1m);
+        result.Price.Currency.ShouldBe("USD");
+        result.Stock?.Status.ShouldBe(StockStatus.Backorder);
     }
 
     #endregion
@@ -571,28 +1009,41 @@ public class PriceTrackingE2ETests : TestBase
             logger);
     }
 
-    private async Task<ILlmProviderChain?> CreateRealLlmProviderOrSkip()
-    {
-        // Check if Ollama is available
-        try
-        {
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await httpClient.GetAsync("http://localhost:11434/api/version");
-            if (!response.IsSuccessStatusCode)
-                return null;
+    // Store the factory at class level so it can be disposed
+    private CachingHttpClientFactory? _httpClientFactory;
 
-            // Create a real LLM provider chain configured for Ollama
-            // This would need to be wired up properly in a real scenario
-            Output.WriteLine("Ollama is available, running real LLM test");
-            
-            // For now, return null to skip - in real implementation,
-            // we'd create an actual LlmProviderChain instance
-            return null;
-        }
-        catch
+    private async Task<ILlmProviderChain> CreateRealLlmProvider()
+    {
+        // Create a real LLM provider chain configured for Ollama with caching
+        // The caching layer handles cache mode automatically:
+        // - CacheOnly mode (CI) will throw meaningful errors on cache miss
+        // - CacheAndNetwork mode (dev) will call Ollama and cache responses
+        var providerRepo = new InMemoryRepository<LlmProviderConfig>();
+        var usageRepo = new InMemoryRepository<LlmUsageRecord>();
+        
+        await providerRepo.InsertAsync(new LlmProviderConfig
         {
-            return null;
-        }
+            Id = Guid.NewGuid(),
+            Name = "Ollama-Test",
+            ProviderType = LlmProviderType.Ollama,
+            Model = "ministral-3:3b",
+            Endpoint = "http://localhost:11434",
+            Priority = 1,
+            IsEnabled = true,
+            IsHealthy = true,
+            TimeoutSeconds = 60
+        });
+        
+        var logger = Substitute.For<ILogger<LlmProviderChain>>();
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        var llmLogService = Substitute.For<ILlmLogService>();
+        
+        // Create caching HTTP client factory for deterministic LLM responses
+        var cacheMode = CachedLlmKernelFactory.GetDefaultCacheMode();
+        _httpClientFactory = new CachingHttpClientFactory(cacheMode, Console.Out);
+        TestContext.Current?.OutputWriter?.WriteLine($"=== LLM Cache Mode: {cacheMode} ===");
+        
+        return new LlmProviderChain(providerRepo, usageRepo, logger, serviceProvider, llmLogService, _httpClientFactory);
     }
 
     #endregion

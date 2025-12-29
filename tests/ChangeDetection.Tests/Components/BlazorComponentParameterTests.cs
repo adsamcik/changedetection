@@ -5,17 +5,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Logging;
 using Shouldly;
+using TUnit.Core;
+using Assembly = System.Reflection.Assembly;
 
 namespace ChangeDetection.Tests.Components;
-
-/// <summary>
-/// Exception to skip tests when prerequisites are not met.
-/// Uses the xUnit dynamic skip token pattern for compatibility with xUnit v3 runner.
-/// </summary>
-public class SkipException : Exception
-{
-    public SkipException(string message) : base($"$XunitDynamicSkip${message}") { }
-}
 
 /// <summary>
 /// End-to-end tests for Blazor component rendering and parameter configuration.
@@ -34,23 +27,33 @@ public class SkipException : Exception
 /// 1. Actually rendering pages via HTTP and checking for 500 errors
 /// 2. Scanning component metadata for invalid attribute combinations
 /// </summary>
-public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRenderingTests.BlazorWebApplicationFactory>
+public class BlazorComponentRenderingTests
 {
-    private readonly HttpClient _client;
+    private HttpClient _client = null!;
+    private BlazorWebApplicationFactory _factory = null!;
 
-    public BlazorComponentRenderingTests(BlazorWebApplicationFactory factory)
+    [Before(Test)]
+    public void SetUp()
     {
-        _client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        _factory = new BlazorWebApplicationFactory();
+        _client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
+    }
+
+    [After(Test)]
+    public void TearDown()
+    {
+        _client?.Dispose();
+        _factory?.Dispose();
     }
 
     /// <summary>
     /// Renders the setup page with a query parameter to verify the component hierarchy works.
     /// This would have caught the [SupplyParameterFromQuery] bug immediately.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task SetupPage_WithQueryParameter_ShouldRenderWithoutError()
     {
         EnsureClientAssemblyAvailable();
@@ -78,11 +81,11 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
     /// Note: Some pages may fail due to runtime dependencies (e.g., HttpClient calls during pre-render).
     /// This test focuses on catching component misconfiguration errors like invalid parameter attributes.
     /// </summary>
-    [Theory]
-    [InlineData("/")]
-    [InlineData("/setup")]
-    [InlineData("/setup?input=test")]
-    [InlineData("/setup?input=https://example.com/page")]
+    [Test]
+    [Arguments("/")]
+    [Arguments("/setup")]
+    [Arguments("/setup?input=test")]
+    [Arguments("/setup?input=https://example.com/page")]
     public async Task AllPages_ShouldRenderWithoutServerError(string path)
     {
         EnsureClientAssemblyAvailable();
@@ -121,11 +124,12 @@ public class BlazorComponentRenderingTests : IClassFixture<BlazorComponentRender
         }
         catch (Exception ex)
         {
-            throw new SkipException(
+            Skip.Test(
                 "Skipping Blazor client rendering tests because the ChangeDetection.Client assembly is not available. " +
                 "If you're running tests without the Blazor WebAssembly workload, run with /p:SkipClientProjectReference=true (these tests will be skipped), " +
                 "or install the 'wasm-tools' workload to enable full client build.\n\n" +
                 $"Load failure: {ex.GetType().Name}: {ex.Message}");
+            return; // Skip.Test throws, but compiler doesn't know that
         }
     }
 }
@@ -144,10 +148,11 @@ public class BlazorComponentParameterTests
         }
         catch (Exception ex)
         {
-            throw new SkipException(
+            Skip.Test(
                 "Skipping Blazor client component metadata tests because the ChangeDetection.Client assembly is not available. " +
                 "Install the 'wasm-tools' workload (or build the Client project) to enable these checks.\n\n" +
                 $"Load failure: {ex.GetType().Name}: {ex.Message}");
+            throw; // Skip.Test throws, but compiler doesn't know - this is unreachable but satisfies return type
         }
     }
 
@@ -156,8 +161,8 @@ public class BlazorComponentParameterTests
     /// use [SupplyParameterFromQuery] for properties that are passed from parent components.
     /// Such properties should use [Parameter] instead.
     /// </summary>
-    [Fact]
-    public void SetupFlow_SessionId_ShouldBeRegularParameter()
+    [Test]
+    public async Task SetupFlow_SessionId_ShouldBeRegularParameter()
     {
         // Arrange
         var clientAssembly = LoadClientAssemblyOrSkip();
@@ -190,14 +195,15 @@ public class BlazorComponentParameterTests
         
         hasCascadingParameter.ShouldBeFalse(
             "SessionId should NOT have [CascadingParameter] - it's passed as an explicit parameter from parent");
+        await Task.CompletedTask;
     }
 
     /// <summary>
     /// Verifies that child components used within routed pages don't have conflicting
     /// query parameter bindings that would cause runtime errors.
     /// </summary>
-    [Fact]
-    public void ChildComponents_ShouldNotUseSupplyParameterFromQuery_ForExplicitlyPassedProperties()
+    [Test]
+    public async Task ChildComponents_ShouldNotUseSupplyParameterFromQuery_ForExplicitlyPassedProperties()
     {
         // This test scans all components in the Client assembly to detect potential issues
         var clientAssembly = LoadClientAssemblyOrSkip();
@@ -236,13 +242,14 @@ public class BlazorComponentParameterTests
         issues.ShouldBeEmpty(
             "Non-routable components should not use [SupplyParameterFromQuery]. " +
             $"Found issues:\n{string.Join("\n", issues)}");
+        await Task.CompletedTask;
     }
 
     /// <summary>
     /// Scans both Client and Server assemblies for common Blazor component misconfigurations.
     /// </summary>
-    [Fact]
-    public void AllComponents_ShouldHaveValidParameterConfiguration()
+    [Test]
+    public async Task AllComponents_ShouldHaveValidParameterConfiguration()
     {
         var assemblies = new[]
         {
@@ -318,5 +325,6 @@ public class BlazorComponentParameterTests
 
         issues.ShouldBeEmpty(
             $"Found Blazor component parameter configuration issues:\n{string.Join("\n", issues)}");
+        await Task.CompletedTask;
     }
 }

@@ -6,6 +6,7 @@ using LiteDB;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Services;
 
@@ -24,6 +25,7 @@ public class ServerWatchServiceTests
     private readonly IErrorResolutionService _errorResolutionService;
     private readonly IChangeAnalyzer _changeAnalyzer;
     private readonly IContentEnricher _contentEnricher;
+    private readonly IDeduplicationService _deduplicationService;
     private readonly IPriceTrackingService _priceTrackingService;
     private readonly ILogger<ServerWatchService> _logger;
     private readonly ServerWatchService _sut;
@@ -44,6 +46,7 @@ public class ServerWatchServiceTests
         _errorResolutionService = Substitute.For<IErrorResolutionService>();
         _changeAnalyzer = Substitute.For<IChangeAnalyzer>();
         _contentEnricher = Substitute.For<IContentEnricher>();
+        _deduplicationService = Substitute.For<IDeduplicationService>();
         _priceTrackingService = Substitute.For<IPriceTrackingService>();
         _logger = Substitute.For<ILogger<ServerWatchService>>();
 
@@ -60,11 +63,12 @@ public class ServerWatchServiceTests
             _errorResolutionService,
             _changeAnalyzer,
             _contentEnricher,
+            _deduplicationService,
             _priceTrackingService,
             _logger);
     }
 
-    [Fact]
+    [Test]
     public async Task GetByIdAsync_ExistingWatch_ReturnsWatch()
     {
         // Arrange
@@ -80,7 +84,7 @@ public class ServerWatchServiceTests
         result.Id.ShouldBe(watchId);
     }
 
-    [Fact]
+    [Test]
     public async Task GetByIdAsync_NonExistingWatch_ReturnsNull()
     {
         // Arrange
@@ -94,7 +98,7 @@ public class ServerWatchServiceTests
         result.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task GetAllAsync_ReturnsAllWatches()
     {
         // Arrange
@@ -112,7 +116,7 @@ public class ServerWatchServiceTests
         result.Count().ShouldBe(2);
     }
 
-    [Fact]
+    [Test]
     public async Task CreateWatchAsync_ValidRequest_CreatesWatch()
     {
         // Arrange
@@ -133,7 +137,7 @@ public class ServerWatchServiceTests
         await _watchRepo.Received(1).InsertAsync(Arg.Any<WatchedSite>(), Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task CreateWatchAsync_WithFetchSettings_AppliesSettings()
     {
         // Arrange
@@ -155,7 +159,7 @@ public class ServerWatchServiceTests
         result.FetchSettings.UseJavaScript.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task UpdateWatchAsync_ExistingWatch_UpdatesValues()
     {
         // Arrange
@@ -168,7 +172,7 @@ public class ServerWatchServiceTests
         await _watchRepo.Received(1).UpdateAsync(watch, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task DeleteWatchAsync_ExistingWatch_DeletesWatch()
     {
         // Arrange
@@ -181,7 +185,7 @@ public class ServerWatchServiceTests
         await _watchRepo.Received(1).DeleteAsync(watchId, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task EnableWatchAsync_DisabledWatch_EnablesWatch()
     {
         // Arrange
@@ -197,7 +201,7 @@ public class ServerWatchServiceTests
         await _watchRepo.Received(1).UpdateAsync(watch, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task DisableWatchAsync_EnabledWatch_DisablesWatch()
     {
         // Arrange
@@ -213,7 +217,7 @@ public class ServerWatchServiceTests
         await _watchRepo.Received(1).UpdateAsync(watch, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task CheckForChangesAsync_FirstCheck_CreatesSnapshot()
     {
         // Arrange
@@ -226,6 +230,10 @@ public class ServerWatchServiceTests
         _contentExtractor.ComputeHash(Arg.Any<string>()).Returns("hash123");
         _snapshotRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>())
             .Returns(Enumerable.Empty<ChangeSnapshot>());
+        
+        // Setup deduplication to return not duplicate
+        _deduplicationService.CheckForDuplicateAsync(Arg.Any<DeduplicationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(DeduplicationResult.NotDuplicate());
 
         // Act
         var result = await _sut.CheckForChangesAsync(watchId);
@@ -235,7 +243,7 @@ public class ServerWatchServiceTests
         result.ShouldBeNull(); // First check, no previous snapshot to compare
     }
 
-    [Fact]
+    [Test]
     public async Task CheckForChangesAsync_ContentChanged_CreatesChangeEvent()
     {
         // Arrange
@@ -255,6 +263,11 @@ public class ServerWatchServiceTests
             .Returns(new FetchResult { IsSuccess = true, Html = "new content" });
         _contentExtractor.ExtractText(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns("new extracted");
         _contentExtractor.ComputeHash("new extracted").Returns("newhash");
+        
+        // Setup deduplication to return not duplicate
+        _deduplicationService.CheckForDuplicateAsync(Arg.Any<DeduplicationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(DeduplicationResult.NotDuplicate());
+        
         _snapshotRepo.FirstOrDefaultOrderedDescAsync(
             Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(),
             Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, DateTime>>>(),
@@ -275,7 +288,7 @@ public class ServerWatchServiceTests
         result.ShouldNotBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task CheckForChangesAsync_NoChanges_ReturnsNull()
     {
         // Arrange
@@ -297,6 +310,10 @@ public class ServerWatchServiceTests
         _contentExtractor.ComputeHash("same content").Returns("samehash");
         _snapshotRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>())
             .Returns(new[] { previousSnapshot });
+        
+        // Setup deduplication to detect exact hash match (content unchanged)
+        _deduplicationService.CheckForDuplicateAsync(Arg.Any<DeduplicationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(DeduplicationResult.ExactHashMatch());
 
         // Act
         var result = await _sut.CheckForChangesAsync(watchId);
@@ -306,7 +323,7 @@ public class ServerWatchServiceTests
         await _eventRepo.DidNotReceive().InsertAsync(Arg.Any<ChangeEvent>(), Arg.Any<CancellationToken>());
     }
 
-    [Fact]
+    [Test]
     public async Task GetWatchesDueForCheckAsync_ReturnsOnlyDueWatches()
     {
         // Arrange - implementation uses GetAllAsync and filters in-memory

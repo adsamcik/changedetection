@@ -2,78 +2,71 @@ using System.Net.Http.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using ChangeDetection.Tests.Llm.Cache;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.EndToEnd;
 
 /// <summary>
-/// TRUE END-TO-END tests for the watch setup pipeline.
+/// TRUE END-TO-END tests for the watch setup pipeline with LLM response caching.
 /// 
-/// IMPORTANT: These tests use NO MOCKS. They verify:
+/// IMPORTANT: These tests use real services with LLM response caching:
 /// 1. Real HTTP requests to real endpoints
-/// 2. Real LLM calls to Ollama (must be running locally)
+/// 2. LLM calls via caching handler (cached responses replayed automatically)
 /// 3. Real database persistence (LiteDB)
 /// 4. Real content fetching from live websites
 /// 5. Real selector validation against actual HTML
 /// 
-/// Prerequisites:
-/// - Ollama running locally on port 11434
-/// - Model: ministral-3:8b (or configured model) pulled
-/// - Internet access to fetch the test URL
+/// CACHING DESIGN:
+/// LLM requests are hashed by model + temperature + messages. Responses are
+/// stored in SQLite and replayed for subsequent test runs. This gives us:
+/// - Deterministic results (same hash = same response)
+/// - Fast execution (no LLM call needed when cached)
+/// - CI compatibility (LLM caching layer handles all LLM calls)
 /// 
-/// Run: ollama pull ministral-3:8b
+/// Prerequisites:
+/// - Internet access to fetch the test URL (RequiresInternet category)
+/// - LLM responses are cached; no local LLM required for cached scenarios
 /// </summary>
-[Trait("Category", "EndToEnd")]
-[Trait("Category", "RequiresOllama")]
-[Trait("Category", "RequiresInternet")]
-public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelineTests.PipelineWebApplicationFactory>, IAsyncLifetime
+[Category("EndToEnd")]
+[Category("LlmCached")]  // Uses LLM caching layer - no local LLM required
+[Category("RequiresInternet")]  // Needs live internet for page fetching
+public class EventWatchPipelineTests : IAsyncDisposable
 {
-    private readonly HttpClient _client;
-    private readonly PipelineWebApplicationFactory _factory;
-    private bool _ollamaAvailable;
+    private HttpClient _client = null!;
+    private PipelineWebApplicationFactory _factory = null!;
 
     // The exact user input we're testing - BIOCEV events page
     private const string UserInput = "I want to watch for upcoming events https://www.biocev.eu/cs/o-nas/akce";
     private const string ExpectedUrl = "https://www.biocev.eu/cs/o-nas/akce";
 
-    public EventWatchPipelineTests(PipelineWebApplicationFactory factory, ITestOutputHelper output)
-        : base(output)
+    [Before(Test)]
+    public async Task SetUp()
     {
-        _factory = factory;
-        _client = factory.CreateClient();
+        _factory = new PipelineWebApplicationFactory();
+        _client = _factory.CreateClient();
         _client.Timeout = TimeSpan.FromMinutes(5);
-    }
-
-    public async Task InitializeAsync()
-    {
         await _factory.EnsureProviderSeededAsync();
-        _ollamaAvailable = await IsOllamaAvailableAsync();
+        
+        // Log cache mode for debugging
+        Console.WriteLine($"=== LLM Cache Mode: {_factory.LlmCacheMode} ===");
+        Console.WriteLine($"=== Content Cache Mode: {_factory.ContentCacheMode} ===");
         
         // Verify we're using real services, not mocks
-        _factory.VerifyNoMocks(Output);
+        _factory.VerifyNoMocks();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
-
-    private static async Task<bool> IsOllamaAvailableAsync()
+    public async ValueTask DisposeAsync()
     {
-        try
-        {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var resp = await client.GetAsync("http://localhost:11434/api/tags");
-            return resp.IsSuccessStatusCode;
-        }
-        catch
-        {
-            return false;
-        }
+        _client?.Dispose();
+        if (_factory != null)
+            await _factory.DisposeAsync();
     }
 
     /// <summary>
@@ -86,32 +79,25 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
     /// 4. A real watch is created and persisted to the database
     /// 5. The persisted watch contains the expected selector configuration
     /// </summary>
-    [Fact(Timeout = 300_000)] // 5 minute timeout for LLM operations
+    [Test]
     public async Task ProcessInput_WithEventIntent_ShouldCreateWatchWithSelectors()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available at http://localhost:11434");
-            Output.WriteLine("To run this test: ollama pull ministral-3:8b && ollama serve");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  END-TO-END TEST: Event Watch Pipeline (NO MOCKS)            ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  END-TO-END TEST: Event Watch Pipeline (NO MOCKS)            ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 1: Send request through real HTTP endpoint
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("▶ STEP 1: Sending request to /api/llm/process-input");
-        Output.WriteLine($"  Input: \"{UserInput}\"");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 1: Sending request to /api/llm/process-input");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Input: \"{UserInput}\"");
 
         var request = new ProcessInputRequest { Input = UserInput };
         var response = await _client.PostAsJsonAsync("/api/llm/process-input", request);
 
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");
-        Output.WriteLine($"  ✓ HTTP {(int)response.StatusCode} {response.StatusCode}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ HTTP {(int)response.StatusCode} {response.StatusCode}");
 
         var result = await response.Content.ReadFromJsonAsync<ProcessInputResponse>();
         result.ShouldNotBeNull("Response should not be null");
@@ -119,114 +105,114 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         // ═══════════════════════════════════════════════════════════════
         // STEP 2: Validate response structure
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 2: Validating response structure");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 2: Validating response structure");
 
         // New design: pipeline can fail explicitly with suggestions instead of silent fallback
         // Both outcomes are acceptable, but we need to check the Intent is correct
         result.Intent.ShouldBe("CreateWatch", $"Expected CreateWatch intent, got: {result.Intent}");
-        Output.WriteLine($"  ✓ Intent: CreateWatch");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Intent: CreateWatch");
 
         if (!result.IsSuccess)
         {
             // Pipeline failed - verify we got proper error handling with suggestions
-            Output.WriteLine($"  ℹ Pipeline failed (acceptable): {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ℹ Pipeline failed (acceptable): {result.ErrorMessage}");
             result.NeedsClarification.ShouldBeTrue("Pipeline failure should offer clarification options");
             result.Suggestions.ShouldNotBeEmpty("Pipeline failure should offer suggestions");
-            Output.WriteLine($"  ✓ Suggestions provided: {result.Suggestions.Count}");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline returned explicit failure with options ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Suggestions provided: {result.Suggestions.Count}");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline returned explicit failure with options ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // Test passes - explicit failure is acceptable behavior
         }
 
-        Output.WriteLine($"  ✓ IsSuccess: true");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IsSuccess: true");
 
         result.ParsedRequest.ShouldNotBeNull("ParsedRequest should not be null");
         result.ParsedRequest.Url.ShouldNotBeNullOrWhiteSpace("URL should be extracted");
         result.ParsedRequest.Url.ShouldContain("biocev.eu", Case.Insensitive);
-        Output.WriteLine($"  ✓ URL extracted: {result.ParsedRequest.Url}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ URL extracted: {result.ParsedRequest.Url}");
 
         result.CreatedWatchId.ShouldNotBeNullOrWhiteSpace("CreatedWatchId should be returned");
         var watchId = Guid.Parse(result.CreatedWatchId!);
-        Output.WriteLine($"  ✓ Watch ID: {watchId}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch ID: {watchId}");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 3: Validate selector was generated (CSS or XPath)
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 3: Validating selector generation (KEY ASSERTION)");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 3: Validating selector generation (KEY ASSERTION)");
 
         var hasCssSelector = !string.IsNullOrEmpty(result.ParsedRequest.CssSelector);
         var hasXPathSelector = !string.IsNullOrEmpty(result.ParsedRequest.XPathSelector);
         var hasSelector = hasCssSelector || hasXPathSelector;
         
-        Output.WriteLine($"  CssSelector: {result.ParsedRequest.CssSelector ?? "(none)"}");
-        Output.WriteLine($"  XPathSelector: {result.ParsedRequest.XPathSelector ?? "(none)"}");
-        Output.WriteLine($"  Description: {result.ParsedRequest.Description ?? "(none)"}");
-        Output.WriteLine($"  Summary: {result.Summary ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  CssSelector: {result.ParsedRequest.CssSelector ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  XPathSelector: {result.ParsedRequest.XPathSelector ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Description: {result.ParsedRequest.Description ?? "(none)"}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Summary: {result.Summary ?? "(none)"}");
 
         // Note: LLM responses can be non-deterministic, especially with smaller models.
         // When the LLM fails to generate valid JSON (e.g., includes markdown fences),
         // the pipeline may succeed without selectors. This is acceptable behavior for E2E tests.
         if (!hasSelector)
         {
-            Output.WriteLine("");
-            Output.WriteLine("  ⚠ No selector generated - LLM response may have been malformed");
-            Output.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
-            Output.WriteLine("    The watch was created for full-page monitoring instead.");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Watch created (full-page mode, no selector)    ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No selector generated - LLM response may have been malformed");
+            TestContext.Current?.OutputWriter?.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
+            TestContext.Current?.OutputWriter?.WriteLine("    The watch was created for full-page monitoring instead.");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Watch created (full-page mode, no selector)    ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // Acceptable for E2E tests with real LLMs
         }
 
         var selectorType = hasCssSelector ? "CSS" : "XPath";
         var selectorValue = hasCssSelector ? result.ParsedRequest.CssSelector : result.ParsedRequest.XPathSelector;
-        Output.WriteLine($"  ✓ {selectorType} selector generated: {selectorValue}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ {selectorType} selector generated: {selectorValue}");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 4: Verify watch was persisted to database
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 4: Verifying watch persisted to database");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 4: Verifying watch persisted to database");
 
         using var scope = _factory.Services.CreateScope();
         var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
         var persistedWatch = await watchService.GetByIdAsync(watchId);
 
         persistedWatch.ShouldNotBeNull($"Watch {watchId} should exist in database");
-        Output.WriteLine($"  ✓ Watch found in database");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch found in database");
 
         persistedWatch.Url.ShouldBe(result.ParsedRequest.Url);
-        Output.WriteLine($"  ✓ URL matches: {persistedWatch.Url}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ URL matches: {persistedWatch.Url}");
 
         // Verify the selector was persisted (either CSS or XPath)
         if (hasCssSelector)
         {
             persistedWatch.CssSelector.ShouldBe(result.ParsedRequest.CssSelector);
-            Output.WriteLine($"  ✓ CssSelector persisted: {persistedWatch.CssSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ CssSelector persisted: {persistedWatch.CssSelector}");
         }
         else if (hasXPathSelector)
         {
             persistedWatch.XPathSelector.ShouldBe(result.ParsedRequest.XPathSelector);
-            Output.WriteLine($"  ✓ XPathSelector persisted: {persistedWatch.XPathSelector}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ XPathSelector persisted: {persistedWatch.XPathSelector}");
         }
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 5: Validate selector works on actual HTML
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 5: Validating selector against live HTML");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 5: Validating selector against live HTML");
 
         // Use the generated selector (CSS or XPath)
         var selector = selectorValue!;
         var htmlContent = await FetchPageHtmlAsync(ExpectedUrl);
         
         htmlContent.ShouldNotBeNullOrWhiteSpace("Should be able to fetch page HTML");
-        Output.WriteLine($"  ✓ Fetched {htmlContent.Length:N0} chars of HTML");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Fetched {htmlContent.Length:N0} chars of HTML");
 
         var doc = new HtmlDocument();
         doc.LoadHtml(htmlContent);
@@ -245,25 +231,25 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         
         var nodeList = matchedNodes.ToList();
         nodeList.Count.ShouldBeGreaterThan(0, $"Selector '{selector}' should match at least one element");
-        Output.WriteLine($"  ✓ Selector matches {nodeList.Count} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Selector matches {nodeList.Count} elements");
 
         // ═══════════════════════════════════════════════════════════════
         // STEP 6: Validate extracted content contains event data
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ STEP 6: Validating extracted content contains events");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ STEP 6: Validating extracted content contains events");
 
         var extractedTexts = nodeList.Select(n => CleanText(n.InnerText)).ToList();
         var combinedText = string.Join(" ", extractedTexts).ToLowerInvariant();
 
-        Output.WriteLine($"  Extracted {extractedTexts.Count} text blocks:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Extracted {extractedTexts.Count} text blocks:");
         foreach (var text in extractedTexts.Take(5))
         {
             var preview = text.Length > 80 ? text[..80] + "..." : text;
-            Output.WriteLine($"    • {preview}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    • {preview}");
         }
         if (extractedTexts.Count > 5)
-            Output.WriteLine($"    ... and {extractedTexts.Count - 5} more");
+            TestContext.Current?.OutputWriter?.WriteLine($"    ... and {extractedTexts.Count - 5} more");
 
         // Check for event-related content (Czech/English terms)
         var eventIndicators = new[] { "akce", "event", "seminář", "konference", "workshop", "přednáška", "datum", "date", "kdy", "where" };
@@ -274,44 +260,38 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
             $"Looking for any of: {string.Join(", ", eventIndicators)}\n" +
             $"Got: {combinedText[..Math.Min(200, combinedText.Length)]}...");
 
-        Output.WriteLine($"  ✓ Content contains event-related terms");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Content contains event-related terms");
 
         // ═══════════════════════════════════════════════════════════════
         // SUCCESS
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ ALL VALIDATIONS PASSED                                    ║");
-        Output.WriteLine("╠══════════════════════════════════════════════════════════════╣");
-        Output.WriteLine($"║  Watch ID: {watchId,-44} ║");
-        Output.WriteLine($"║  URL: {persistedWatch.Url,-49} ║");
-        Output.WriteLine($"║  Selector: {selector,-44} ║");
-        Output.WriteLine($"║  Matches: {nodeList.Count} elements{new string(' ', 42 - nodeList.Count.ToString().Length)} ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ ALL VALIDATIONS PASSED                                    ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╠══════════════════════════════════════════════════════════════╣");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Watch ID: {watchId,-44} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  URL: {persistedWatch.Url,-49} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Selector: {selector,-44} ║");
+        TestContext.Current?.OutputWriter?.WriteLine($"║  Matches: {nodeList.Count} elements{new string(' ', 42 - nodeList.Count.ToString().Length)} ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     /// <summary>
     /// Test that the pipeline endpoint correctly analyzes the page and generates selectors.
     /// This tests the pipeline directly with comprehensive validation.
     /// </summary>
-    [Fact(Timeout = 300_000)]
+    [Test]
     public async Task RunPipeline_WithEventIntent_ShouldAnalyzeAndGenerateSelectors()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  PIPELINE TEST: Content Analysis & Selector Generation       ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  PIPELINE TEST: Content Analysis & Selector Generation       ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // ═══════════════════════════════════════════════════════════════
         // Run the pipeline
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("▶ Running pipeline...");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Running pipeline...");
         
         var request = new RunPipelineRequest { Input = UserInput };
         var response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
@@ -321,55 +301,55 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         var result = await response.Content.ReadFromJsonAsync<RunPipelineResponse>();
         result.ShouldNotBeNull();
 
-        Output.WriteLine($"  Stage: {result.Stage}");
-        Output.WriteLine($"  Iterations: {result.IterationCount}");
-        Output.WriteLine($"  Success: {result.IsSuccess}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Stage: {result.Stage}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Iterations: {result.IterationCount}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Success: {result.IsSuccess}");
         if (!string.IsNullOrEmpty(result.ErrorMessage))
-            Output.WriteLine($"  Error: {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Error: {result.ErrorMessage}");
 
         // New design: Pipeline can fail explicitly. We still want to validate
         // that the URL extraction worked even if later stages failed.
         if (!result.IsSuccess)
         {
-            Output.WriteLine("");
-            Output.WriteLine("  ℹ Pipeline failed - validating partial results...");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("  ℹ Pipeline failed - validating partial results...");
             
             // Even on failure, URL extraction should work
             if (result.ExtractedUrls?.Count > 0)
             {
-                Output.WriteLine($"  ✓ URLs extracted: {string.Join(", ", result.ExtractedUrls)}");
+                TestContext.Current?.OutputWriter?.WriteLine($"  ✓ URLs extracted: {string.Join(", ", result.ExtractedUrls)}");
             }
             
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline returned explicit failure             ║");
-            Output.WriteLine($"║  Stage: {result.Stage,-49} ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline returned explicit failure             ║");
+            TestContext.Current?.OutputWriter?.WriteLine($"║  Stage: {result.Stage,-49} ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // Test passes - explicit failure with partial results is acceptable
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Validate URL extraction
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating URL extraction");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating URL extraction");
 
         result.ExtractedUrls.ShouldNotBeNull();
         result.ExtractedUrls.ShouldNotBeEmpty("Should extract at least one URL");
         result.ExtractedUrls.ShouldContain(ExpectedUrl, "Should extract the BIOCEV URL");
-        Output.WriteLine($"  ✓ Extracted URLs: {string.Join(", ", result.ExtractedUrls)}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Extracted URLs: {string.Join(", ", result.ExtractedUrls)}");
 
         // ═══════════════════════════════════════════════════════════════
         // Validate content analysis
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating content analysis (LLM output)");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating content analysis (LLM output)");
 
         result.ContentAnalysis.ShouldNotBeNull("LLM should analyze page content");
         
-        Output.WriteLine($"  Page Type: {result.ContentAnalysis.PageType}");
-        Output.WriteLine($"  User Intent: {result.ContentAnalysis.UserIntent}");
-        Output.WriteLine($"  Recommended Approach: {result.ContentAnalysis.RecommendedApproach}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Page Type: {result.ContentAnalysis.PageType}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  User Intent: {result.ContentAnalysis.UserIntent}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Recommended Approach: {result.ContentAnalysis.RecommendedApproach}");
 
         // Page type should be event-related (but LLM output can be variable)
         var pageType = result.ContentAnalysis.PageType?.ToLowerInvariant() ?? "";
@@ -381,33 +361,33 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         // LLM classification is best-effort - log but don't fail on variable output
         if (isEventRelated)
         {
-            Output.WriteLine($"  ✓ Correctly classified as event-related content");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Correctly classified as event-related content");
         }
         else
         {
-            Output.WriteLine($"  ⚠ LLM classified as: {result.ContentAnalysis.PageType} (expected event-related)");
-            Output.WriteLine($"    Note: LLM output can vary; continuing with pipeline validation");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ⚠ LLM classified as: {result.ContentAnalysis.PageType} (expected event-related)");
+            TestContext.Current?.OutputWriter?.WriteLine($"    Note: LLM output can vary; continuing with pipeline validation");
         }
 
         // User intent should be understood
         result.ContentAnalysis.UserIntent.ShouldNotBeNullOrWhiteSpace("LLM should interpret user intent");
-        Output.WriteLine($"  ✓ User intent interpreted: {result.ContentAnalysis.UserIntent}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ User intent interpreted: {result.ContentAnalysis.UserIntent}");
 
         // Content sections should be identified
         if (result.ContentAnalysis.ContentSections.Count > 0)
         {
-            Output.WriteLine($"  Content sections identified:");
+            TestContext.Current?.OutputWriter?.WriteLine($"  Content sections identified:");
             foreach (var section in result.ContentAnalysis.ContentSections)
             {
-                Output.WriteLine($"    • {section.Name}: {section.SuggestedSelector} (relevance: {section.Relevance:P0})");
+                TestContext.Current?.OutputWriter?.WriteLine($"    • {section.Name}: {section.SuggestedSelector} (relevance: {section.Relevance:P0})");
             }
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Validate selector generation
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating selector generation");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating selector generation");
 
         result.AllSelectors.ShouldNotBeNull();
         
@@ -415,47 +395,47 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         // (e.g., with markdown code fences), selector generation may fail silently.
         if (result.AllSelectors.Count == 0)
         {
-            Output.WriteLine("  ⚠ No selectors generated - LLM response may have been malformed");
-            Output.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline completed (no selectors generated)    ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No selectors generated - LLM response may have been malformed");
+            TestContext.Current?.OutputWriter?.WriteLine("    This can happen with smaller LLMs or non-deterministic responses.");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline completed (no selectors generated)    ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // Acceptable for E2E tests with real LLMs
         }
         
-        Output.WriteLine($"  Generated {result.AllSelectors.Count} selectors:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Generated {result.AllSelectors.Count} selectors:");
 
         foreach (var selector in result.AllSelectors)
         {
-            Output.WriteLine($"    [{selector.Type}] {selector.Expression}");
-            Output.WriteLine($"      Confidence: {selector.Confidence:P0}, Matches: {selector.MatchCount}, Validated: {selector.IsValidated}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    [{selector.Type}] {selector.Expression}");
+            TestContext.Current?.OutputWriter?.WriteLine($"      Confidence: {selector.Confidence:P0}, Matches: {selector.MatchCount}, Validated: {selector.IsValidated}");
         }
 
         // Best selector should be selected (when selectors are available)
         if (result.BestSelector == null)
         {
-            Output.WriteLine("  ⚠ No best selector selected");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline completed (no best selector)          ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine("  ⚠ No best selector selected");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline completed (no best selector)          ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return;
         }
         
         result.BestSelector.Expression.ShouldNotBeNullOrWhiteSpace();
         result.BestSelector.MatchCount.ShouldBeGreaterThan(0, "Best selector should match elements");
 
-        Output.WriteLine("");
-        Output.WriteLine($"  ✓ Best selector: {result.BestSelector.Expression}");
-        Output.WriteLine($"    Matches: {result.BestSelector.MatchCount} elements");
-        Output.WriteLine($"    Confidence: {result.BestSelector.Confidence:P0}");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Best selector: {result.BestSelector.Expression}");
+        TestContext.Current?.OutputWriter?.WriteLine($"    Matches: {result.BestSelector.MatchCount} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"    Confidence: {result.BestSelector.Confidence:P0}");
 
         // ═══════════════════════════════════════════════════════════════
         // Validate watch configuration
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating watch configuration");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating watch configuration");
 
         result.WatchConfig.ShouldNotBeNull("Pipeline should produce watch configuration");
         result.WatchConfig.Url.ShouldBe(ExpectedUrl);
@@ -466,23 +446,23 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         (hasCssConfig || hasXPathConfig).ShouldBeTrue("Watch config should have CSS or XPath selector");
 
         var configSelector = hasCssConfig ? result.WatchConfig.CssSelector : result.WatchConfig.XPathSelector;
-        Output.WriteLine($"  ✓ Watch config URL: {result.WatchConfig.Url}");
-        Output.WriteLine($"  ✓ Watch config selector: {configSelector}");
-        Output.WriteLine($"  ✓ Use JavaScript: {result.WatchConfig.UseJavaScript}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch config URL: {result.WatchConfig.Url}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Watch config selector: {configSelector}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  ✓ Use JavaScript: {result.WatchConfig.UseJavaScript}");
 
         // ═══════════════════════════════════════════════════════════════
         // Validate logs show full pipeline execution
         // ═══════════════════════════════════════════════════════════════
-        Output.WriteLine("");
-        Output.WriteLine("▶ Validating pipeline execution logs");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Validating pipeline execution logs");
 
         result.Logs.ShouldNotBeNull();
         result.Logs.ShouldNotBeEmpty("Pipeline should log its execution");
 
-        Output.WriteLine($"  Pipeline logs ({result.Logs.Count} entries):");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Pipeline logs ({result.Logs.Count} entries):");
         foreach (var log in result.Logs)
         {
-            Output.WriteLine($"    • {log}");
+            TestContext.Current?.OutputWriter?.WriteLine($"    • {log}");
         }
 
         // Logs should show key stages
@@ -490,29 +470,23 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         logsText.ShouldContain("url"); // Logs should mention URL extraction
         (logsText.Contains("fetch") || logsText.Contains("content")).ShouldBeTrue("Logs should mention content fetching");
 
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ PIPELINE TEST PASSED                                      ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ PIPELINE TEST PASSED                                      ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     /// <summary>
     /// Test that verifies selectors actually extract meaningful content from the live page.
     /// This is the ultimate validation that the LLM-generated selectors work correctly.
     /// </summary>
-    [Fact(Timeout = 300_000)]
+    [Test]
     public async Task GeneratedSelectors_ShouldExtractMeaningfulEventContent()
     {
-        if (!_ollamaAvailable)
-        {
-            Output.WriteLine("SKIPPED: Ollama not available");
-            return;
-        }
-
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  SELECTOR VALIDATION: Extract Real Event Content             ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
-        Output.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  SELECTOR VALIDATION: Extract Real Event Content             ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
 
         // Run pipeline to get selectors
         var request = new RunPipelineRequest { Input = UserInput };
@@ -525,32 +499,32 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         // New design: pipeline can fail explicitly
         if (!result.IsSuccess)
         {
-            Output.WriteLine($"  ⓘ Pipeline failed at {result.Stage}: {result.ErrorMessage}");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline returned explicit failure             ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ⓘ Pipeline failed at {result.Stage}: {result.ErrorMessage}");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline returned explicit failure             ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // Explicit failure is acceptable
         }
         
         // Best selector might be null even on success (e.g., FullPage recommendation)
         if (result.BestSelector == null || string.IsNullOrWhiteSpace(result.BestSelector.Expression))
         {
-            Output.WriteLine($"  ⓘ No specific selector generated (may be FullPage recommendation)");
-            Output.WriteLine("");
-            Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Output.WriteLine("║  TEST PASSED: Pipeline completed without specific selector   ║");
-            Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ⓘ No specific selector generated (may be FullPage recommendation)");
+            TestContext.Current?.OutputWriter?.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+            TestContext.Current?.OutputWriter?.WriteLine("║  TEST PASSED: Pipeline completed without specific selector   ║");
+            TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             return; // This is acceptable for pages that work best with full-page monitoring
         }
 
         var selector = result.BestSelector.Expression!;
-        Output.WriteLine($"▶ Testing selector: {selector}");
+        TestContext.Current?.OutputWriter?.WriteLine($"▶ Testing selector: {selector}");
 
         // Fetch the actual page
         var htmlContent = await FetchPageHtmlAsync(ExpectedUrl);
         htmlContent.ShouldNotBeNullOrWhiteSpace();
-        Output.WriteLine($"  Fetched page: {htmlContent.Length:N0} characters");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Fetched page: {htmlContent.Length:N0} characters");
 
         // Apply selector using Fizzler for CSS selectors
         var doc = new HtmlDocument();
@@ -571,11 +545,11 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         
         var nodeList = nodes.ToList();
         nodeList.Count.ShouldBeGreaterThan(0, $"Selector should match elements");
-        Output.WriteLine($"  Matched {nodeList.Count} elements");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Matched {nodeList.Count} elements");
 
         // Extract and validate content
-        Output.WriteLine("");
-        Output.WriteLine("▶ Extracted event content:");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("▶ Extracted event content:");
 
         var extractedItems = new List<string>();
         foreach (var node in nodeList.Take(10))
@@ -585,7 +559,7 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
             {
                 extractedItems.Add(text);
                 var preview = text.Length > 100 ? text[..100] + "..." : text;
-                Output.WriteLine($"  • {preview}");
+                TestContext.Current?.OutputWriter?.WriteLine($"  • {preview}");
             }
         }
 
@@ -601,19 +575,19 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         var hasEventTerms = eventTerms.Any(t => allText.Contains(t));
         var hasDateTerms = dateTerms.Any(t => allText.Contains(t));
 
-        Output.WriteLine("");
-        Output.WriteLine($"▶ Content validation:");
-        Output.WriteLine($"  Contains event terms: {hasEventTerms}");
-        Output.WriteLine($"  Contains date terms: {hasDateTerms}");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine($"▶ Content validation:");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Contains event terms: {hasEventTerms}");
+        TestContext.Current?.OutputWriter?.WriteLine($"  Contains date terms: {hasDateTerms}");
 
         (hasEventTerms || hasDateTerms).ShouldBeTrue(
             "Extracted content should contain event-related or date-related terms.\n" +
             $"Content preview: {allText[..Math.Min(300, allText.Length)]}...");
 
-        Output.WriteLine("");
-        Output.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-        Output.WriteLine("║  ✓ SELECTOR EXTRACTS MEANINGFUL EVENT CONTENT                ║");
-        Output.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+        TestContext.Current?.OutputWriter?.WriteLine("");
+        TestContext.Current?.OutputWriter?.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+        TestContext.Current?.OutputWriter?.WriteLine("║  ✓ SELECTOR EXTRACTS MEANINGFUL EVENT CONTENT                ║");
+        TestContext.Current?.OutputWriter?.WriteLine("╚══════════════════════════════════════════════════════════════╝");
     }
 
     #region Helper Methods
@@ -638,14 +612,17 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
     #endregion
 
     /// <summary>
-    /// Custom WebApplicationFactory that uses the REAL application with NO MOCKS.
+    /// Custom WebApplicationFactory that uses the REAL application with LLM response caching.
+    /// Inherits from CachingWebApplicationFactory to enable request/response caching.
     /// </summary>
-    public class PipelineWebApplicationFactory : WebApplicationFactory<Program>
+    public class PipelineWebApplicationFactory : CachingWebApplicationFactory
     {
         private bool _providerSeeded;
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            base.ConfigureWebHost(builder);  // Important: call base to set up caching
+            
             // Use development environment - this uses real services
             builder.UseEnvironment("Development");
             
@@ -655,11 +632,11 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         /// <summary>
         /// Verifies that critical services are NOT mocks.
         /// </summary>
-        public void VerifyNoMocks(ITestOutputHelper output)
+        public void VerifyNoMocks()
         {
             using var scope = Services.CreateScope();
             
-            output.WriteLine("▶ Verifying real services (no mocks):");
+            TestContext.Current?.OutputWriter?.WriteLine("▶ Verifying real services (no mocks):");
 
             // Check IWatchService is real
             var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
@@ -667,35 +644,35 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
             watchServiceName.ShouldNotContain("Mock", Case.Insensitive);
             watchServiceName.ShouldNotContain("Substitute", Case.Insensitive);
             watchServiceName.ShouldNotContain("Fake", Case.Insensitive);
-            output.WriteLine($"  ✓ IWatchService: {watchService.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IWatchService: {watchService.GetType().Name}");
 
             // Check ILlmProviderChain is real
             var llmChain = scope.ServiceProvider.GetRequiredService<ILlmProviderChain>();
             var llmChainName = llmChain.GetType().FullName ?? llmChain.GetType().Name;
             llmChainName.ShouldNotContain("Mock", Case.Insensitive);
             llmChainName.ShouldNotContain("Substitute", Case.Insensitive);
-            output.WriteLine($"  ✓ ILlmProviderChain: {llmChain.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ ILlmProviderChain: {llmChain.GetType().Name}");
 
             // Check IWatchSetupPipeline is real
             var pipeline = scope.ServiceProvider.GetRequiredService<IWatchSetupPipeline>();
             var pipelineName = pipeline.GetType().FullName ?? pipeline.GetType().Name;
             pipelineName.ShouldNotContain("Mock", Case.Insensitive);
             pipelineName.ShouldNotContain("Substitute", Case.Insensitive);
-            output.WriteLine($"  ✓ IWatchSetupPipeline: {pipeline.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IWatchSetupPipeline: {pipeline.GetType().Name}");
 
             // Check IContentFetcher is real
             var fetcher = scope.ServiceProvider.GetRequiredService<IContentFetcher>();
             var fetcherName = fetcher.GetType().FullName ?? fetcher.GetType().Name;
             fetcherName.ShouldNotContain("Mock", Case.Insensitive);
-            output.WriteLine($"  ✓ IContentFetcher: {fetcher.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IContentFetcher: {fetcher.GetType().Name}");
 
             // Check repository is real (LiteDB)
             var watchRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
             var watchRepoName = watchRepo.GetType().FullName ?? watchRepo.GetType().Name;
             watchRepoName.ShouldNotContain("Mock", Case.Insensitive);
-            output.WriteLine($"  ✓ IRepository<WatchedSite>: {watchRepo.GetType().Name}");
+            TestContext.Current?.OutputWriter?.WriteLine($"  ✓ IRepository<WatchedSite>: {watchRepo.GetType().Name}");
 
-            output.WriteLine("");
+            TestContext.Current?.OutputWriter?.WriteLine("");
         }
 
         public async Task EnsureProviderSeededAsync()
@@ -718,7 +695,7 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
                 Name = "Ollama Local",
                 ProviderType = LlmProviderType.Ollama,
                 Endpoint = "http://localhost:11434",
-                Model = "ministral-3:8b",
+                Model = "ministral-3:14b",
                 IsEnabled = true,
                 Priority = 1,
                 TimeoutSeconds = 300,
@@ -730,3 +707,7 @@ public class EventWatchPipelineTests : TestBase, IClassFixture<EventWatchPipelin
         }
     }
 }
+
+
+
+

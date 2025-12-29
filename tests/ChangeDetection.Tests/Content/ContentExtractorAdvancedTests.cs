@@ -1,5 +1,6 @@
 using ChangeDetection.Services.Content;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -10,8 +11,8 @@ public class ContentExtractorAdvancedTests
 {
     private readonly ContentExtractor _sut = new();
 
-    [Fact]
-    public void ExtractText_EmptyHtml_ReturnsEmpty()
+    [Test]
+    public async Task ExtractText_EmptyHtml_ReturnsEmpty()
     {
         // Arrange
         var html = "";
@@ -21,10 +22,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_MalformedHtml_StillExtracts()
+    [Test]
+    public async Task ExtractText_MalformedHtml_StillExtracts()
     {
         // Arrange - unclosed tags
         var html = "<html><body><p>Text without closing tag<div>More text";
@@ -35,10 +37,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldContain("Text");
         result.ShouldContain("More text");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_NestedDivs_ExtractsAllText()
+    [Test]
+    public async Task ExtractText_NestedDivs_ExtractsAllText()
     {
         // Arrange
         var html = """
@@ -58,10 +61,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldContain("Deeply nested");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithComments_RemovesComments()
+    [Test]
+    public async Task ExtractText_WithComments_RemovesComments()
     {
         // Arrange
         var html = """
@@ -80,10 +84,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldContain("Visible text");
         result.ShouldNotContain("comment");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithNoscript_RemovesNoscriptContent()
+    [Test]
+    public async Task ExtractText_WithNoscript_RemovesNoscriptContent()
     {
         // Arrange
         var html = """
@@ -101,10 +106,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldContain("Main content");
         result.ShouldNotContain("JavaScript is disabled");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithMultipleCssMatches_ReturnsFirst()
+    [Test]
+    public async Task ExtractText_WithMultipleCssMatches_ReturnsFirst()
     {
         // Arrange
         var html = """
@@ -121,10 +127,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("First");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithIdSelector_FindsById()
+    [Test]
+    public async Task ExtractText_WithIdSelector_FindsById()
     {
         // Arrange
         var html = """
@@ -140,10 +147,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Found by ID");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithElementClassSelector_FindsCorrectly()
+    [Test]
+    public async Task ExtractText_WithElementClassSelector_FindsCorrectly()
     {
         // Arrange
         var html = """
@@ -160,10 +168,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Right element");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithElementIdSelector_FindsCorrectly()
+    [Test]
+    public async Task ExtractText_WithElementIdSelector_FindsCorrectly()
     {
         // Arrange
         var html = """
@@ -180,10 +189,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Div");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithDescendantSelector_NotSupportedByBasicConverter()
+    [Test]
+    public async Task ExtractText_WithDescendantSelector_NotSupportedByBasicConverter()
     {
         // Arrange - The basic CSS-to-XPath converter doesn't support complex descendant selectors
         var html = """
@@ -203,10 +213,11 @@ public class ContentExtractorAdvancedTests
         // Assert - The basic converter may return empty for complex selectors
         // This is a known limitation of the simple CSS-to-XPath conversion
         result.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithXPathContainsText_Works()
+    [Test]
+    public async Task ExtractText_WithXPathContainsText_Works()
     {
         // Arrange
         var html = """
@@ -223,10 +234,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldContain("Target");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithUnicodeCharacters_PreservesContent()
+    [Test]
+    public async Task ExtractText_WithUnicodeCharacters_PreservesContent()
     {
         // Arrange
         var html = "<html><body><p>日本語テキスト 中文 한국어</p></body></html>";
@@ -238,10 +250,11 @@ public class ContentExtractorAdvancedTests
         result.ShouldContain("日本語");
         result.ShouldContain("中文");
         result.ShouldContain("한국어");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithHtmlEntities_PreservesEntities()
+    [Test]
+    public async Task ExtractText_WithHtmlEntities_PreservesEntities()
     {
         // Arrange - HtmlAgilityPack preserves entities in InnerText
         var html = "<html><body><p>&lt;script&gt; &amp; &quot;quotes&quot;</p></body></html>";
@@ -252,10 +265,11 @@ public class ContentExtractorAdvancedTests
         // Assert - Entities remain encoded
         result.ShouldContain("&lt;script&gt;");
         result.ShouldContain("&amp;");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_WithBreakTags_NormalizesWhitespace()
+    [Test]
+    public async Task ExtractText_WithBreakTags_NormalizesWhitespace()
     {
         // Arrange
         var html = "<html><body><p>Line1<br>Line2<br/>Line3</p></body></html>";
@@ -265,10 +279,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldNotBeNullOrEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ComputeHash_EmptyString_ReturnsValidHash()
+    [Test]
+    public async Task ComputeHash_EmptyString_ReturnsValidHash()
     {
         // Arrange
         var content = "";
@@ -279,10 +294,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldNotBeNullOrEmpty();
         result.Length.ShouldBe(64); // SHA256 produces 64 hex characters
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ComputeHash_WhitespaceVariations_ProduceDifferentHashes()
+    [Test]
+    public async Task ComputeHash_WhitespaceVariations_ProduceDifferentHashes()
     {
         // Arrange
         var content1 = "Hello World";
@@ -294,10 +310,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         hash1.ShouldNotBe(hash2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ComputeHash_LargeContent_Succeeds()
+    [Test]
+    public async Task ComputeHash_LargeContent_Succeeds()
     {
         // Arrange
         var content = new string('x', 1_000_000); // 1MB of text
@@ -308,10 +325,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldNotBeNullOrEmpty();
         result.Length.ShouldBe(64);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractTitle_WithWhitespace_Trims()
+    [Test]
+    public async Task ExtractTitle_WithWhitespace_Trims()
     {
         // Arrange
         var html = "<html><head><title>  Spaced Title  </title></head></html>";
@@ -321,10 +339,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Spaced Title");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractTitle_NestedInHead_StillFinds()
+    [Test]
+    public async Task ExtractTitle_NestedInHead_StillFinds()
     {
         // Arrange
         var html = """
@@ -342,10 +361,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Found Title");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractHtml_InvalidSelector_ReturnsNull()
+    [Test]
+    public async Task ExtractHtml_InvalidSelector_ReturnsNull()
     {
         // Arrange
         var html = "<html><body><p>Content</p></body></html>";
@@ -355,10 +375,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractHtml_WithXPath_ReturnsHtmlFragment()
+    [Test]
+    public async Task ExtractHtml_WithXPath_ReturnsHtmlFragment()
     {
         // Arrange
         var html = """
@@ -375,10 +396,11 @@ public class ContentExtractorAdvancedTests
         // Assert
         result.ShouldNotBeNull();
         result.ShouldContain("<span>Text</span>");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void CleanHtml_PreservesEssentialAttributes()
+    [Test]
+    public async Task CleanHtml_PreservesEssentialAttributes()
     {
         // Arrange
         var html = """
@@ -399,10 +421,11 @@ public class ContentExtractorAdvancedTests
         result.ShouldContain("alt=");
         result.ShouldNotContain("onclick");
         result.ShouldNotContain("data-tracking");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void CleanHtml_PreservesIdAndClass()
+    [Test]
+    public async Task CleanHtml_PreservesIdAndClass()
     {
         // Arrange
         var html = """
@@ -420,10 +443,11 @@ public class ContentExtractorAdvancedTests
         result.ShouldContain("id=\"main\"");
         result.ShouldContain("class=\"container\"");
         result.ShouldNotContain("style=");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_ElementSelector_FindsElements()
+    [Test]
+    public async Task ExtractText_ElementSelector_FindsElements()
     {
         // Arrange
         var html = """
@@ -439,10 +463,11 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Article content");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ExtractText_PreservesTitleAttribute()
+    [Test]
+    public async Task ExtractText_PreservesTitleAttribute()
     {
         // Arrange
         var html = """
@@ -458,5 +483,6 @@ public class ContentExtractorAdvancedTests
 
         // Assert
         result.ShouldBe("Link");
+        await Task.CompletedTask;
     }
 }

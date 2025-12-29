@@ -5,8 +5,8 @@ using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
-using Xunit.Abstractions;
+using TUnit.Core;
+
 
 namespace ChangeDetection.Tests.EndToEnd;
 
@@ -14,13 +14,8 @@ namespace ChangeDetection.Tests.EndToEnd;
 /// Integration tests for schema discovery in the input flow.
 /// Tests the LLM-powered detection of structured data patterns.
 /// </summary>
-public class SchemaDiscoveryIntegrationTests : TestBase
+public class SchemaDiscoveryIntegrationTests
 {
-    public SchemaDiscoveryIntegrationTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Test HTML Data
 
     private const string EventListHtml = """
@@ -120,8 +115,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 
     #region Schema Discovery Detection Tests
 
-    [Fact]
-    public void SchemaDiscovery_DetectsRepeatingEventItems()
+    [Test]
+    public async Task SchemaDiscovery_DetectsRepeatingEventItems()
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(EventListHtml);
@@ -142,8 +137,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         }
     }
 
-    [Fact]
-    public void SchemaDiscovery_DetectsRepeatingProductItems()
+    [Test]
+    public async Task SchemaDiscovery_DetectsRepeatingProductItems()
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(ProductCatalogHtml);
@@ -162,8 +157,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         }
     }
 
-    [Fact]
-    public void SchemaDiscovery_DetectsIdentityFieldsFromDataAttributes()
+    [Test]
+    public async Task SchemaDiscovery_DetectsIdentityFieldsFromDataAttributes()
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(ProductCatalogHtml);
@@ -179,8 +174,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         skus.Distinct().Count().ShouldBe(skus.Count);
     }
 
-    [Fact]
-    public void SchemaDiscovery_ExtractsFieldTypesCorrectly()
+    [Test]
+    public async Task SchemaDiscovery_ExtractsFieldTypesCorrectly()
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(ProductCatalogHtml);
@@ -207,8 +202,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 
     #region Partial Configuration Tests
 
-    [Fact]
-    public void PartialWatchConfiguration_TracksDiscoveredSchema()
+    [Test]
+    public async Task PartialWatchConfiguration_TracksDiscoveredSchema()
     {
         var config = new PartialWatchConfiguration
         {
@@ -250,8 +245,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         config.DiscoveredSchema.InferredIdentityFields.ShouldContain("name");
     }
 
-    [Fact]
-    public void PartialWatchConfiguration_TracksInferredIdentityFields()
+    [Test]
+    public async Task PartialWatchConfiguration_TracksInferredIdentityFields()
     {
         var config = new PartialWatchConfiguration
         {
@@ -268,23 +263,23 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 
     #region Setup Stage Flow Tests
 
-    [Theory]
-    [InlineData(SetupStage.Initial, "Initial state")]
-    [InlineData(SetupStage.Processing, "Processing input")]
-    [InlineData(SetupStage.Fetching, "Fetching content")]
-    [InlineData(SetupStage.Analyzing, "Analyzing page")]
-    [InlineData(SetupStage.SchemaDiscovery, "Discovering schema")]
-    [InlineData(SetupStage.SchemaRefinement, "Refining schema")]
-    [InlineData(SetupStage.Confirmation, "Confirming configuration")]
-    [InlineData(SetupStage.Completed, "Setup completed")]
+    [Test]
+    [Arguments(SetupStage.Initial, "Initial state")]
+    [Arguments(SetupStage.Processing, "Processing input")]
+    [Arguments(SetupStage.Fetching, "Fetching content")]
+    [Arguments(SetupStage.Analyzing, "Analyzing page")]
+    [Arguments(SetupStage.SchemaDiscovery, "Discovering schema")]
+    [Arguments(SetupStage.SchemaRefinement, "Refining schema")]
+    [Arguments(SetupStage.Confirmation, "Confirming configuration")]
+    [Arguments(SetupStage.Completed, "Setup completed")]
     public void SetupStage_HasAllExpectedStages(SetupStage stage, string description)
     {
-        Output.WriteLine($"Stage: {stage} - {description}");
+        TestContext.Current?.OutputWriter?.WriteLine($"Stage: {stage} - {description}");
         Enum.IsDefined(typeof(SetupStage), stage).ShouldBeTrue();
     }
 
-    [Fact]
-    public void ConversationSession_TracksSetupStageProgression()
+    [Test]
+    public async Task ConversationSession_TracksSetupStageProgression()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -297,8 +292,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         session.CurrentStage.ShouldBe(SetupStage.SchemaDiscovery);
     }
 
-    [Fact]
-    public void ConversationSession_BuildsPartialConfiguration()
+    [Test]
+    public async Task ConversationSession_BuildsPartialConfiguration()
     {
         var session = new ConversationSession { SessionId = Guid.NewGuid() };
 
@@ -316,8 +311,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 
     #region Selector Validation for Schema Discovery
 
-    [Fact]
-    public void SelectorValidation_ValidatesItemContainerSelector()
+    [Test]
+    public async Task SelectorValidation_ValidatesItemContainerSelector()
     {
         var extractor = CreateMockExtractor();
         var logger = Substitute.For<ILogger<SelectorValidationStage>>();
@@ -349,8 +344,8 @@ public class SchemaDiscoveryIntegrationTests : TestBase
         validations[0].MatchCount.ShouldBe(3);
     }
 
-    [Fact]
-    public void SelectorValidation_ValidatesNestedFieldSelectors()
+    [Test]
+    public async Task SelectorValidation_ValidatesNestedFieldSelectors()
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(EventListHtml);
@@ -378,15 +373,15 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 
     #region Content Type to Schema Mapping
 
-    [Theory]
-    [InlineData(ContentType.EventList, true)]
-    [InlineData(ContentType.ProductListing, true)]
-    [InlineData(ContentType.NewsList, true)]
-    [InlineData(ContentType.Table, true)]
-    [InlineData(ContentType.Feed, true)]
-    [InlineData(ContentType.Article, false)]
-    [InlineData(ContentType.PriceInfo, false)]
-    [InlineData(ContentType.StatusPage, false)]
+    [Test]
+    [Arguments(ContentType.EventList, true)]
+    [Arguments(ContentType.ProductListing, true)]
+    [Arguments(ContentType.NewsList, true)]
+    [Arguments(ContentType.Table, true)]
+    [Arguments(ContentType.Feed, true)]
+    [Arguments(ContentType.Article, false)]
+    [Arguments(ContentType.PriceInfo, false)]
+    [Arguments(ContentType.StatusPage, false)]
     public void ContentType_DeterminesSchemaDiscoveryApplicability(ContentType contentType, bool expectsSchema)
     {
         var isListType = contentType switch
@@ -431,17 +426,12 @@ public class SchemaDiscoveryIntegrationTests : TestBase
 /// <summary>
 /// Integration tests for multi-step pipeline recovery flows.
 /// </summary>
-public class PipelineRecoveryIntegrationTests : TestBase
+public class PipelineRecoveryIntegrationTests
 {
-    public PipelineRecoveryIntegrationTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Recovery Flow Tests
 
-    [Fact]
-    public void PipelineSession_TracksRecoveryAttempts()
+    [Test]
+    public async Task PipelineSession_TracksRecoveryAttempts()
     {
         var session = new PipelineSession
         {
@@ -458,8 +448,8 @@ public class PipelineRecoveryIntegrationTests : TestBase
         session.RecoveryDiagnosticContext.ShouldNotBeNullOrWhiteSpace();
     }
 
-    [Fact]
-    public void PipelineSession_RecordsLlmCalls()
+    [Test]
+    public async Task PipelineSession_RecordsLlmCalls()
     {
         var session = new PipelineSession();
 
@@ -470,8 +460,8 @@ public class PipelineRecoveryIntegrationTests : TestBase
         session.LlmCallCount.ShouldBe(3);
     }
 
-    [Fact]
-    public void PipelineSession_ThrowsOnLlmCallLimitExceeded()
+    [Test]
+    public async Task PipelineSession_ThrowsOnLlmCallLimitExceeded()
     {
         var session = new PipelineSession();
 
@@ -486,8 +476,8 @@ public class PipelineRecoveryIntegrationTests : TestBase
             .Message.ShouldContain("limit exceeded");
     }
 
-    [Fact]
-    public void PipelineOptions_HasRecoverySettings()
+    [Test]
+    public async Task PipelineOptions_HasRecoverySettings()
     {
         var options = new PipelineOptions
         {
@@ -503,8 +493,8 @@ public class PipelineRecoveryIntegrationTests : TestBase
 
     #region Iteration History Tests
 
-    [Fact]
-    public void PipelineSession_TracksIterationHistory()
+    [Test]
+    public async Task PipelineSession_TracksIterationHistory()
     {
         var session = new PipelineSession
         {
@@ -521,8 +511,8 @@ public class PipelineRecoveryIntegrationTests : TestBase
         session.IterationHistory.ShouldContain(h => h.Contains("EventList"));
     }
 
-    [Fact]
-    public void PipelineSession_TracksCurrentIteration()
+    [Test]
+    public async Task PipelineSession_TracksCurrentIteration()
     {
         var session = new PipelineSession();
 
@@ -542,24 +532,19 @@ public class PipelineRecoveryIntegrationTests : TestBase
 /// <summary>
 /// Integration tests for complex user input scenarios.
 /// </summary>
-public class ComplexInputScenariosTests : TestBase
+public class ComplexInputScenariosTests
 {
-    public ComplexInputScenariosTests(ITestOutputHelper output)
-        : base(output)
-    {
-    }
-
     #region Natural Language Variation Tests
 
-    [Theory]
-    [InlineData("https://example.com/events")]
-    [InlineData("Watch https://example.com/events")]
-    [InlineData("I want to monitor https://example.com/events")]
-    [InlineData("Please track changes on https://example.com/events")]
-    [InlineData("https://example.com/events - notify me when new events appear")]
-    [InlineData("Monitor https://example.com/events for upcoming conferences")]
-    [InlineData("Keep an eye on https://example.com/events and alert me")]
-    [InlineData("https://example.com/events I need to know about new seminars")]
+    [Test]
+    [Arguments("https://example.com/events")]
+    [Arguments("Watch https://example.com/events")]
+    [Arguments("I want to monitor https://example.com/events")]
+    [Arguments("Please track changes on https://example.com/events")]
+    [Arguments("https://example.com/events - notify me when new events appear")]
+    [Arguments("Monitor https://example.com/events for upcoming conferences")]
+    [Arguments("Keep an eye on https://example.com/events and alert me")]
+    [Arguments("https://example.com/events I need to know about new seminars")]
     public void UrlExtraction_HandlesVariousNaturalLanguagePatterns(string input)
     {
         var stage = new UrlExtractionStage();
@@ -569,12 +554,12 @@ public class ComplexInputScenariosTests : TestBase
         urls[0].NormalizedUrl.ShouldContain("example.com/events");
     }
 
-    [Theory]
-    [InlineData("monitor events", "monitor events")]
-    [InlineData("watch for new products", "watch for new products")]
-    [InlineData("track price changes daily", "track price changes daily")]
-    [InlineData("notify when stock is available", "notify when stock is available")]
-    [InlineData("alert on breaking news", "alert on breaking news")]
+    [Test]
+    [Arguments("monitor events", "monitor events")]
+    [Arguments("watch for new products", "watch for new products")]
+    [Arguments("track price changes daily", "track price changes daily")]
+    [Arguments("notify when stock is available", "notify when stock is available")]
+    [Arguments("alert on breaking news", "alert on breaking news")]
     public void UrlExtraction_PreservesIntentWithoutUrl(string input, string expectedIntent)
     {
         var stage = new UrlExtractionStage();
@@ -588,14 +573,14 @@ public class ComplexInputScenariosTests : TestBase
 
     #region URL Format Variation Tests
 
-    [Theory]
-    [InlineData("http://example.com", "http://example.com")]
-    [InlineData("https://example.com", "https://example.com")]
-    [InlineData("https://www.example.com", "https://www.example.com")]
-    [InlineData("https://sub.example.com/path", "https://sub.example.com/path")]
-    [InlineData("https://example.com:8080/path", "https://example.com:8080/path")]
-    [InlineData("https://example.com/path?q=1&r=2", "https://example.com/path?q=1&r=2")]
-    [InlineData("https://example.com/path#section", "https://example.com/path#section")]
+    [Test]
+    [Arguments("http://example.com", "http://example.com")]
+    [Arguments("https://example.com", "https://example.com")]
+    [Arguments("https://www.example.com", "https://www.example.com")]
+    [Arguments("https://sub.example.com/path", "https://sub.example.com/path")]
+    [Arguments("https://example.com:8080/path", "https://example.com:8080/path")]
+    [Arguments("https://example.com/path?q=1&r=2", "https://example.com/path?q=1&r=2")]
+    [Arguments("https://example.com/path#section", "https://example.com/path#section")]
     public void UrlExtraction_HandlesVariousUrlFormats(string url, string expectedNormalized)
     {
         var stage = new UrlExtractionStage();
@@ -609,8 +594,8 @@ public class ComplexInputScenariosTests : TestBase
 
     #region Edge Case Input Tests
 
-    [Fact]
-    public void UrlExtraction_HandlesEmptyInput()
+    [Test]
+    public async Task UrlExtraction_HandlesEmptyInput()
     {
         var stage = new UrlExtractionStage();
 
@@ -621,8 +606,8 @@ public class ComplexInputScenariosTests : TestBase
         intent.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesWhitespaceOnlyInput()
+    [Test]
+    public async Task UrlExtraction_HandlesWhitespaceOnlyInput()
     {
         var stage = new UrlExtractionStage();
 
@@ -630,8 +615,8 @@ public class ComplexInputScenariosTests : TestBase
         urls.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesVeryLongInput()
+    [Test]
+    public async Task UrlExtraction_HandlesVeryLongInput()
     {
         var stage = new UrlExtractionStage();
         var longText = new string('a', 10000);
@@ -643,8 +628,8 @@ public class ComplexInputScenariosTests : TestBase
         urls[0].NormalizedUrl.ShouldContain("example.com");
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesUrlInMiddleOfText()
+    [Test]
+    public async Task UrlExtraction_HandlesUrlInMiddleOfText()
     {
         var stage = new UrlExtractionStage();
         var input = "I found this great page https://example.com/events yesterday and I want to monitor it for new conferences";
@@ -658,8 +643,8 @@ public class ComplexInputScenariosTests : TestBase
         intent.ShouldContain("monitor");
     }
 
-    [Fact]
-    public void UrlExtraction_HandlesMixedCaseUrl()
+    [Test]
+    public async Task UrlExtraction_HandlesMixedCaseUrl()
     {
         var stage = new UrlExtractionStage();
         // Note: The scheme must be lowercase due to a case-sensitivity issue in IsValidUrl
@@ -675,3 +660,7 @@ public class ComplexInputScenariosTests : TestBase
 
     #endregion
 }
+
+
+
+

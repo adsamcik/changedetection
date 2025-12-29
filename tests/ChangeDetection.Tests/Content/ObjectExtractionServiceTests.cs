@@ -4,6 +4,7 @@ using ChangeDetection.Services.Content;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -23,7 +24,7 @@ public class ObjectExtractionServiceTests
         _sut = new ObjectExtractionService(_llmChain, _logger);
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractAsync_WithNoItemsFound_ReturnsDriftDetected()
     {
         // Arrange
@@ -48,7 +49,7 @@ public class ObjectExtractionServiceTests
         error.ShouldContain("No items found");
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractAsync_WithValidSchema_ExtractsObjects()
     {
         // Arrange
@@ -100,7 +101,7 @@ public class ObjectExtractionServiceTests
         result.Objects[1].Fields["Title"].ShouldBe("Event 2");
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractAsync_WithDuplicateIdentities_ReturnsWarnings()
     {
         // Arrange
@@ -147,7 +148,7 @@ public class ObjectExtractionServiceTests
         result.AmbiguousIdentityWarnings[0].ShouldContain("Duplicate Event");
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractAsync_ComputesIdentityKey()
     {
         // Arrange
@@ -190,7 +191,7 @@ public class ObjectExtractionServiceTests
         identityKey.ShouldContain("SKU-001");
     }
 
-    [Fact]
+    [Test]
     public async Task ExtractAsync_SetsObjectIndex()
     {
         // Arrange

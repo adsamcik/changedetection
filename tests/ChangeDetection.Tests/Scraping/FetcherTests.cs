@@ -1,12 +1,13 @@
 using ChangeDetection.Core.Interfaces;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Scraping;
 
 public class FetchOptionsTests
 {
-    [Fact]
-    public void FetchOptions_HasCorrectDefaults()
+    [Test]
+    public async Task FetchOptions_HasCorrectDefaults()
     {
         // Act
         var options = new FetchOptions();
@@ -23,10 +24,11 @@ public class FetchOptionsTests
         options.ViewportHeight.ShouldBe(1080);
         options.Headers.ShouldNotBeNull();
         options.Headers.ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchOptions_CanSetAllProperties()
+    [Test]
+    public async Task FetchOptions_CanSetAllProperties()
     {
         // Arrange & Act
         var options = new FetchOptions
@@ -54,13 +56,14 @@ public class FetchOptionsTests
         options.ViewportWidth.ShouldBe(1280);
         options.ViewportHeight.ShouldBe(720);
         options.Headers["X-Custom"].ShouldBe("value");
+        await Task.CompletedTask;
     }
 }
 
 public class FetchResultTests
 {
-    [Fact]
-    public void FetchResult_HasCorrectDefaults()
+    [Test]
+    public async Task FetchResult_HasCorrectDefaults()
     {
         // Act
         var result = new FetchResult();
@@ -73,10 +76,11 @@ public class FetchResultTests
         result.DurationMs.ShouldBe(0);
         result.Screenshot.ShouldBeNull();
         result.ResponseHeaders.ShouldNotBeNull();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchResult_CanSetSuccessResult()
+    [Test]
+    public async Task FetchResult_CanSetSuccessResult()
     {
         // Arrange & Act
         var result = new FetchResult
@@ -97,10 +101,11 @@ public class FetchResultTests
         result.HttpStatusCode.ShouldBe(200);
         result.DurationMs.ShouldBe(150);
         result.ResponseHeaders["Content-Type"].ShouldBe("text/html");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchResult_CanSetErrorResult()
+    [Test]
+    public async Task FetchResult_CanSetErrorResult()
     {
         // Arrange & Act
         var result = new FetchResult
@@ -114,10 +119,11 @@ public class FetchResultTests
         // Assert
         result.IsSuccess.ShouldBeFalse();
         result.ErrorMessage.ShouldBe("Connection timed out");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void FetchResult_CanIncludeScreenshot()
+    [Test]
+    public async Task FetchResult_CanIncludeScreenshot()
     {
         // Arrange
         var screenshotData = new byte[] { 0x89, 0x50, 0x4E, 0x47 }; // PNG header
@@ -133,5 +139,6 @@ public class FetchResultTests
         // Assert
         result.Screenshot.ShouldNotBeNull();
         result.Screenshot.Length.ShouldBe(4);
+        await Task.CompletedTask;
     }
 }

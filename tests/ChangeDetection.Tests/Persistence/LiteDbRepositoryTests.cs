@@ -3,32 +3,37 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Persistence;
 using LiteDB;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Persistence;
 
-public class LiteDbRepositoryTests : IDisposable
+public class LiteDbRepositoryTests
 {
-    private readonly string _dbPath;
-    private readonly LiteDbContext _context;
-    private readonly LiteDbRepository<WatchedSite> _repository;
+    private string _dbPath = null!;
+    private LiteDbContext _context = null!;
+    private LiteDbRepository<WatchedSite> _repository = null!;
 
-    public LiteDbRepositoryTests()
+    [Before(Test)]
+    public async Task SetUp()
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         _context = new LiteDbContext(_dbPath);
         _repository = new LiteDbRepository<WatchedSite>(_context);
+        await Task.CompletedTask;
     }
 
-    public void Dispose()
+    [After(Test)]
+    public async Task TearDown()
     {
         _context.Dispose();
         if (File.Exists(_dbPath))
         {
             File.Delete(_dbPath);
         }
+        await Task.CompletedTask;
     }
 
-    [Fact]
+    [Test]
     public async Task InsertAsync_NewEntity_AssignsId()
     {
         // Arrange
@@ -41,7 +46,7 @@ public class LiteDbRepositoryTests : IDisposable
         entity.Id.ShouldNotBe(Guid.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task GetByIdAsync_ExistingEntity_ReturnsEntity()
     {
         // Arrange
@@ -57,7 +62,7 @@ public class LiteDbRepositoryTests : IDisposable
         result.Name.ShouldBe("Test");
     }
 
-    [Fact]
+    [Test]
     public async Task GetByIdAsync_NonExistingEntity_ReturnsNull()
     {
         // Act
@@ -67,7 +72,7 @@ public class LiteDbRepositoryTests : IDisposable
         result.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task GetAllAsync_MultipleEntities_ReturnsAll()
     {
         // Arrange
@@ -82,7 +87,7 @@ public class LiteDbRepositoryTests : IDisposable
         result.Count().ShouldBe(3);
     }
 
-    [Fact]
+    [Test]
     public async Task UpdateAsync_ExistingEntity_UpdatesValues()
     {
         // Arrange
@@ -98,7 +103,7 @@ public class LiteDbRepositoryTests : IDisposable
         result!.Name.ShouldBe("Updated");
     }
 
-    [Fact]
+    [Test]
     public async Task DeleteAsync_ExistingEntity_RemovesEntity()
     {
         // Arrange
@@ -113,7 +118,7 @@ public class LiteDbRepositoryTests : IDisposable
         result.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task FindAsync_WithPredicate_ReturnsMatchingEntities()
     {
         // Arrange
@@ -129,7 +134,7 @@ public class LiteDbRepositoryTests : IDisposable
         result.All(x => x.IsEnabled).ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task CountAsync_ReturnsCorrectCount()
     {
         // Arrange
@@ -143,7 +148,7 @@ public class LiteDbRepositoryTests : IDisposable
         count.ShouldBe(2);
     }
 
-    [Fact]
+    [Test]
     public async Task CountAsync_WithPredicate_ReturnsFilteredCount()
     {
         // Arrange
@@ -158,7 +163,7 @@ public class LiteDbRepositoryTests : IDisposable
         count.ShouldBe(2);
     }
 
-    [Fact]
+    [Test]
     public async Task ExistsAsync_ExistingEntity_ReturnsTrue()
     {
         // Arrange
@@ -172,7 +177,7 @@ public class LiteDbRepositoryTests : IDisposable
         exists.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task ExistsAsync_NonExistingEntity_ReturnsFalse()
     {
         // Act
@@ -185,112 +190,157 @@ public class LiteDbRepositoryTests : IDisposable
 
 /// <summary>
 /// Integration tests for LiteDbContext.
+/// Uses local variables instead of instance fields to avoid TUnit0018 warnings
+/// and ensure thread-safety in parallel test execution.
 /// </summary>
-public class LiteDbContextTests : IDisposable
+public class LiteDbContextTests
 {
-    private readonly string _dbPath;
-    private LiteDbContext? _context;
-
-    public LiteDbContextTests()
+    /// <summary>
+    /// Creates a unique temp database path and returns a cleanup action.
+    /// </summary>
+    private static (string dbPath, Action cleanup) CreateTempDb()
     {
-        _dbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
+        var dbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
+        return (dbPath, () =>
+        {
+            if (File.Exists(dbPath))
+            {
+                try { File.Delete(dbPath); } catch { }
+            }
+        });
     }
 
-    public void Dispose()
+    [Test]
+    public async Task Database_IsAccessible()
     {
-        _context?.Dispose();
-        if (File.Exists(_dbPath))
+        var (dbPath, cleanup) = CreateTempDb();
+        try
         {
-            try { File.Delete(_dbPath); } catch { }
+            // Act
+            using var context = new LiteDbContext(dbPath);
+            var db = context.Database;
+
+            // Assert
+            db.ShouldNotBeNull();
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            cleanup();
         }
     }
 
-    [Fact]
-    public void Database_IsAccessible()
+    [Test]
+    public async Task Database_CanGetCollection()
     {
-        // Act
-        _context = new LiteDbContext(_dbPath);
-        var db = _context.Database;
-
-        // Assert
-        db.ShouldNotBeNull();
-    }
-
-    [Fact]
-    public void Database_CanGetCollection()
-    {
-        // Act
-        _context = new LiteDbContext(_dbPath);
-        var collection = _context.Database.GetCollection<WatchedSite>("watches");
-
-        // Assert
-        collection.ShouldNotBeNull();
-    }
-
-    [Fact]
-    public void Database_CanStoreAndRetrieveChangeSnapshot()
-    {
-        // Arrange
-        _context = new LiteDbContext(_dbPath);
-        var collection = _context.Database.GetCollection<ChangeSnapshot>("snapshots");
-        var snapshot = new ChangeSnapshot
+        var (dbPath, cleanup) = CreateTempDb();
+        try
         {
-            WatchedSiteId = Guid.NewGuid(),
-            ContentHash = "abc123",
-            Content = "Test content"
-        };
+            // Act
+            using var context = new LiteDbContext(dbPath);
+            var collection = context.Database.GetCollection<WatchedSite>("watches");
 
-        // Act
-        collection.Insert(snapshot);
-        var retrieved = collection.FindById(snapshot.Id);
-
-        // Assert
-        retrieved.ShouldNotBeNull();
-        retrieved.ContentHash.ShouldBe("abc123");
-        retrieved.Content.ShouldBe("Test content");
-    }
-
-    [Fact]
-    public void Database_CanStoreAndRetrieveChangeEvent()
-    {
-        // Arrange
-        _context = new LiteDbContext(_dbPath);
-        var collection = _context.Database.GetCollection<ChangeEvent>("events");
-        var changeEvent = new ChangeEvent
+            // Assert
+            collection.ShouldNotBeNull();
+            await Task.CompletedTask;
+        }
+        finally
         {
-            WatchedSiteId = Guid.NewGuid(),
-            PreviousSnapshotId = Guid.NewGuid(),
-            CurrentSnapshotId = Guid.NewGuid(),
-            ChangeType = ChangeType.Modified,
-            Importance = ChangeImportance.High
-        };
-
-        // Act
-        collection.Insert(changeEvent);
-        var retrieved = collection.FindById(changeEvent.Id);
-
-        // Assert
-        retrieved.ShouldNotBeNull();
-        retrieved.ChangeType.ShouldBe(ChangeType.Modified);
-        retrieved.Importance.ShouldBe(ChangeImportance.High);
+            cleanup();
+        }
     }
 
-    [Fact]
-    public void Database_CanQueryByWatchedSiteId()
+    [Test]
+    public async Task Database_CanStoreAndRetrieveChangeSnapshot()
     {
-        // Arrange
-        _context = new LiteDbContext(_dbPath);
-        var collection = _context.Database.GetCollection<ChangeSnapshot>("snapshots");
-        var watchId = Guid.NewGuid();
-        
-        collection.Insert(new ChangeSnapshot { WatchedSiteId = watchId, ContentHash = "hash1", Content = "content1" });
-        collection.Insert(new ChangeSnapshot { WatchedSiteId = watchId, ContentHash = "hash2", Content = "content2" });
-        collection.Insert(new ChangeSnapshot { WatchedSiteId = Guid.NewGuid(), ContentHash = "hash3", Content = "content3" });
+        var (dbPath, cleanup) = CreateTempDb();
+        try
+        {
+            // Arrange
+            using var context = new LiteDbContext(dbPath);
+            var collection = context.Database.GetCollection<ChangeSnapshot>("snapshots");
+            var snapshot = new ChangeSnapshot
+            {
+                WatchedSiteId = Guid.NewGuid(),
+                ContentHash = "abc123",
+                Content = "Test content"
+            };
 
-        // Act
-        var results = collection.Find(x => x.WatchedSiteId == watchId).ToList();
+            // Act
+            collection.Insert(snapshot);
+            var retrieved = collection.FindById(snapshot.Id);
 
-        // Assert
-        results.Count.ShouldBe(2);
+            // Assert
+            retrieved.ShouldNotBeNull();
+            retrieved.ContentHash.ShouldBe("abc123");
+            retrieved.Content.ShouldBe("Test content");
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Test]
+    public async Task Database_CanStoreAndRetrieveChangeEvent()
+    {
+        var (dbPath, cleanup) = CreateTempDb();
+        try
+        {
+            // Arrange
+            using var context = new LiteDbContext(dbPath);
+            var collection = context.Database.GetCollection<ChangeEvent>("events");
+            var changeEvent = new ChangeEvent
+            {
+                WatchedSiteId = Guid.NewGuid(),
+                PreviousSnapshotId = Guid.NewGuid(),
+                CurrentSnapshotId = Guid.NewGuid(),
+                ChangeType = ChangeType.Modified,
+                Importance = ChangeImportance.High
+            };
+
+            // Act
+            collection.Insert(changeEvent);
+            var retrieved = collection.FindById(changeEvent.Id);
+
+            // Assert
+            retrieved.ShouldNotBeNull();
+            retrieved.ChangeType.ShouldBe(ChangeType.Modified);
+            retrieved.Importance.ShouldBe(ChangeImportance.High);
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Test]
+    public async Task Database_CanQueryByWatchedSiteId()
+    {
+        var (dbPath, cleanup) = CreateTempDb();
+        try
+        {
+            // Arrange
+            using var context = new LiteDbContext(dbPath);
+            var collection = context.Database.GetCollection<ChangeSnapshot>("snapshots");
+            var watchId = Guid.NewGuid();
+            
+            collection.Insert(new ChangeSnapshot { WatchedSiteId = watchId, ContentHash = "hash1", Content = "content1" });
+            collection.Insert(new ChangeSnapshot { WatchedSiteId = watchId, ContentHash = "hash2", Content = "content2" });
+            collection.Insert(new ChangeSnapshot { WatchedSiteId = Guid.NewGuid(), ContentHash = "hash3", Content = "content3" });
+
+            // Act
+            var results = collection.Find(x => x.WatchedSiteId == watchId).ToList();
+
+            // Assert
+            results.Count.ShouldBe(2);
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            cleanup();
+        }
     }
 }

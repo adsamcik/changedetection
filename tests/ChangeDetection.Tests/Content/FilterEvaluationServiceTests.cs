@@ -4,6 +4,7 @@ using ChangeDetection.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
@@ -65,7 +66,7 @@ public class FilterEvaluationServiceTests
         };
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithNoRules_ReturnsEmptyResult()
     {
         // Arrange
@@ -83,7 +84,7 @@ public class FilterEvaluationServiceTests
         result.FilteredObjects.ShouldBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithContainsCondition_MatchesCorrectly()
     {
         // Arrange
@@ -113,7 +114,7 @@ public class FilterEvaluationServiceTests
         result.TagsToAdd.ShouldContain("workshop");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithEqualsCondition_MatchesExactly()
     {
         // Arrange
@@ -140,7 +141,7 @@ public class FilterEvaluationServiceTests
         result.FilteredObjects[0].Object.Fields["Title"].ShouldBe("Exact Match");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithSuppressAction_SetsSuppressFlag()
     {
         // Arrange
@@ -162,7 +163,7 @@ public class FilterEvaluationServiceTests
         result.SuppressNotification.ShouldBeTrue();
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithRouteAction_AddsChannel()
     {
         // Arrange
@@ -184,7 +185,7 @@ public class FilterEvaluationServiceTests
         result.RouteToChannels.ShouldContain("alerts");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithImportanceAction_SetsOverride()
     {
         // Arrange
@@ -206,7 +207,7 @@ public class FilterEvaluationServiceTests
         result.ImportanceOverride.ShouldBe(ChangeImportance.High);
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithDisabledRule_SkipsRule()
     {
         // Arrange
@@ -234,7 +235,7 @@ public class FilterEvaluationServiceTests
         result.TagsToAdd.ShouldBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithAmbiguousIdentities_SkipsEvaluation()
     {
         // Arrange
@@ -256,7 +257,7 @@ public class FilterEvaluationServiceTests
         result.FilteredObjects.ShouldBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithMultipleMatchingRules_AppliesAll()
     {
         // Arrange
@@ -281,7 +282,7 @@ public class FilterEvaluationServiceTests
         result.TagsToAdd.ShouldContain("workshop");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithAndLogic_RequiresAllConditions()
     {
         // Arrange
@@ -318,7 +319,7 @@ public class FilterEvaluationServiceTests
         result.FilteredObjects[0].Object.Fields["Title"].ShouldBe("AI Workshop");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithOrLogic_RequiresAnyCondition()
     {
         // Arrange
@@ -356,7 +357,7 @@ public class FilterEvaluationServiceTests
         result.TagsToAdd.ShouldContain("tech");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithChangeTypeCondition_FiltersCorrectly()
     {
         // Arrange
@@ -380,7 +381,7 @@ public class FilterEvaluationServiceTests
         result.FilteredObjects[0].Object.Fields["Title"].ShouldBe("New Item");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithRulesByPriority_EvaluatesInOrder()
     {
         // Arrange
@@ -417,7 +418,7 @@ public class FilterEvaluationServiceTests
         result.ImportanceOverride.ShouldBe(ChangeImportance.High);
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithRequireReviewAction_AddsToReviewList()
     {
         // Arrange
@@ -439,7 +440,7 @@ public class FilterEvaluationServiceTests
         result.ObjectsRequiringReview.ShouldNotBeEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_WithIsEmptyCondition_MatchesEmptyFields()
     {
         // Arrange
@@ -471,7 +472,7 @@ public class FilterEvaluationServiceTests
         result.TagsToAdd.ShouldContain("incomplete");
     }
 
-    [Fact]
+    [Test]
     public async Task EvaluateAsync_AppliesActionsToAllMatchingChangeTypes()
     {
         // Arrange

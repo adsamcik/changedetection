@@ -1,30 +1,29 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Content;
-using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
-using Xunit;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
 /// <summary>
 /// Tests for ContentEnricher LLM-powered content enrichment service.
+/// Uses NSubstitute mocking - no real LLM calls are made.
 /// </summary>
-public class ContentEnricherTests
+[Category("Unit")]
+public class ContentEnricherTests : TestBase
 {
     private readonly ILlmProviderChain _llmChain;
-    private readonly ILogger<ContentEnricher> _logger;
     private readonly ContentEnricher _sut;
 
     public ContentEnricherTests()
     {
         _llmChain = Substitute.For<ILlmProviderChain>();
-        _logger = Substitute.For<ILogger<ContentEnricher>>();
-        _sut = new ContentEnricher(_llmChain, _logger);
+        _sut = new ContentEnricher(_llmChain, CreateLogger<ContentEnricher>());
     }
 
-    [Fact]
+    [Test]
     public async Task EnrichContentAsync_WithValidContent_ReturnsEnrichedResult()
     {
         // Arrange
@@ -101,7 +100,7 @@ public class ContentEnricherTests
         result.Confidence.ShouldBeGreaterThan(0);
     }
 
-    [Fact]
+    [Test]
     public async Task EnrichContentAsync_WhenLlmFails_ReturnsFailureResult()
     {
         // Arrange
@@ -126,7 +125,7 @@ public class ContentEnricherTests
         result.ErrorMessage.ShouldNotBeNullOrEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task QuickClassifyAsync_ReturnsContentClassification()
     {
         // Arrange
@@ -160,7 +159,7 @@ public class ContentEnricherTests
         result.Confidence.ShouldBeGreaterThan(0);
     }
 
-    [Fact]
+    [Test]
     public async Task QuickClassifyAsync_WhenLlmFails_ReturnsDefaultClassification()
     {
         // Arrange
@@ -181,7 +180,7 @@ public class ContentEnricherTests
         result.Confidence.ShouldBe(0);
     }
 
-    [Fact]
+    [Test]
     public async Task GenerateFingerprintAsync_ReturnsSemanticFingerprint()
     {
         // Arrange
@@ -211,7 +210,7 @@ public class ContentEnricherTests
         result.StructureSignature.ShouldNotBeNullOrEmpty();
     }
 
-    [Fact]
+    [Test]
     public async Task GenerateFingerprintAsync_WhenLlmFails_ReturnsFallbackFingerprint()
     {
         // Arrange
@@ -233,8 +232,8 @@ public class ContentEnricherTests
         result.SemanticHash.Length.ShouldBe(16); // SHA256 truncated to 16 chars
     }
 
-    [Fact]
-    public void ContentFingerprint_CompareSimilarity_CalculatesOverlap()
+    [Test]
+    public async Task ContentFingerprint_CompareSimilarity_CalculatesOverlap()
     {
         // Arrange
         var fingerprint1 = new ContentFingerprint
@@ -257,10 +256,11 @@ public class ContentEnricherTests
         // Assert
         similarity.ShouldBeGreaterThan(0);
         similarity.ShouldBeLessThan(1);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ContentFingerprint_CompareSimilarity_WithIdentical_ReturnsOne()
+    [Test]
+    public async Task ContentFingerprint_CompareSimilarity_WithIdentical_ReturnsOne()
     {
         // Arrange
         var fingerprint1 = new ContentFingerprint
@@ -282,10 +282,11 @@ public class ContentEnricherTests
 
         // Assert
         similarity.ShouldBe(1.0f);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void ContentFingerprint_CompareSimilarity_WithNoOverlap_ReturnsZero()
+    [Test]
+    public async Task ContentFingerprint_CompareSimilarity_WithNoOverlap_ReturnsZero()
     {
         // Arrange
         var fingerprint1 = new ContentFingerprint
@@ -307,9 +308,10 @@ public class ContentEnricherTests
 
         // Assert
         similarity.ShouldBe(0);
+        await Task.CompletedTask;
     }
 
-    [Fact]
+    [Test]
     public async Task EnrichContentAsync_TruncatesLongContent()
     {
         // Arrange

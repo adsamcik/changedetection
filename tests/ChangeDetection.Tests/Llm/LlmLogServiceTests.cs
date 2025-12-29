@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
 using Shouldly;
+using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
@@ -13,8 +14,8 @@ public class LlmLogServiceTests
         _sut = new LlmLogService(maxEntries: 10);
     }
 
-    [Fact]
-    public void Log_AddsEntryToLogs()
+    [Test]
+    public async Task Log_AddsEntryToLogs()
     {
         // Arrange
         var entry = new LlmLogEntry
@@ -31,10 +32,11 @@ public class LlmLogServiceTests
         // Assert
         var logs = _sut.GetRecentLogs();
         logs.ShouldContain(entry);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Log_RaisesOnLogAddedEvent()
+    [Test]
+    public async Task Log_RaisesOnLogAddedEvent()
     {
         // Arrange
         LlmLogEntry? receivedEntry = null;
@@ -53,10 +55,11 @@ public class LlmLogServiceTests
 
         // Assert
         receivedEntry.ShouldBe(entry);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GetRecentLogs_ReturnsLogsOrderedByTimestampDescending()
+    [Test]
+    public async Task GetRecentLogs_ReturnsLogsOrderedByTimestampDescending()
     {
         // Arrange
         var entry1 = new LlmLogEntry
@@ -95,10 +98,11 @@ public class LlmLogServiceTests
         logs[0].Message.ShouldBe("Third");
         logs[1].Message.ShouldBe("Second");
         logs[2].Message.ShouldBe("First");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GetRecentLogs_RespectsCountLimit()
+    [Test]
+    public async Task GetRecentLogs_RespectsCountLimit()
     {
         // Arrange
         for (int i = 0; i < 5; i++)
@@ -117,10 +121,11 @@ public class LlmLogServiceTests
 
         // Assert
         logs.Count.ShouldBe(2);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GetLogsForProvider_FiltersCorrectly()
+    [Test]
+    public async Task GetLogsForProvider_FiltersCorrectly()
     {
         // Arrange
         _sut.Log(new LlmLogEntry
@@ -147,10 +152,11 @@ public class LlmLogServiceTests
         logsA[0].Message.ShouldBe("From A");
         logsB.Count.ShouldBe(1);
         logsB[0].Message.ShouldBe("From B");
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void GetLogsForProvider_IsCaseInsensitive()
+    [Test]
+    public async Task GetLogsForProvider_IsCaseInsensitive()
     {
         // Arrange
         _sut.Log(new LlmLogEntry
@@ -166,10 +172,11 @@ public class LlmLogServiceTests
 
         // Assert
         logs.Count.ShouldBe(1);
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Clear_RemovesAllEntries()
+    [Test]
+    public async Task Clear_RemovesAllEntries()
     {
         // Arrange
         _sut.Log(new LlmLogEntry
@@ -185,10 +192,11 @@ public class LlmLogServiceTests
 
         // Assert
         _sut.GetRecentLogs().ShouldBeEmpty();
+        await Task.CompletedTask;
     }
 
-    [Fact]
-    public void Log_PrunesOldEntriesWhenOverLimit()
+    [Test]
+    public async Task Log_PrunesOldEntriesWhenOverLimit()
     {
         // Arrange - service has maxEntries: 10
         for (int i = 0; i < 15; i++)
@@ -207,6 +215,7 @@ public class LlmLogServiceTests
 
         // Assert - should be pruned to around maxEntries
         logs.Count.ShouldBeLessThanOrEqualTo(12); // Allows for 1.2x buffer
+        await Task.CompletedTask;
     }
 }
 
@@ -219,8 +228,8 @@ public class LlmLogServiceExtensionsTests
         _service = new LlmLogService();
     }
 
-    [Fact]
-    public void LogRequest_StoresFullPrompt()
+    [Test]
+    public async Task LogRequest_StoresFullPrompt()
     {
         // Arrange
         var prompt = "This is the full prompt that should be stored completely";
@@ -235,8 +244,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].PromptPreview.ShouldBe(prompt); // Short prompt, preview equals full
     }
 
-    [Fact]
-    public void LogRequest_TruncatesPromptPreviewForLongPrompts()
+    [Test]
+    public async Task LogRequest_TruncatesPromptPreviewForLongPrompts()
     {
         // Arrange
         var longPrompt = new string('x', 1000); // 1000 chars
@@ -252,8 +261,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].PromptPreview!.ShouldContain("... (");
     }
 
-    [Fact]
-    public void LogRequest_SetsCorrectProperties()
+    [Test]
+    public async Task LogRequest_SetsCorrectProperties()
     {
         // Arrange
         var metadata = new Dictionary<string, string> { ["key"] = "value" };
@@ -271,8 +280,8 @@ public class LlmLogServiceExtensionsTests
         log.Metadata.ShouldBe(metadata);
     }
 
-    [Fact]
-    public void LogResponse_StoresFullResponse()
+    [Test]
+    public async Task LogResponse_StoresFullResponse()
     {
         // Arrange
         var response = "This is the full response that should be stored completely";
@@ -287,8 +296,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].ResponsePreview.ShouldBe(response); // Short response, preview equals full
     }
 
-    [Fact]
-    public void LogResponse_TruncatesResponsePreviewForLongResponses()
+    [Test]
+    public async Task LogResponse_TruncatesResponsePreviewForLongResponses()
     {
         // Arrange
         var longResponse = new string('y', 1000); // 1000 chars
@@ -304,8 +313,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].ResponsePreview!.ShouldContain("... (");
     }
 
-    [Fact]
-    public void LogResponse_SetsCorrectProperties()
+    [Test]
+    public async Task LogResponse_SetsCorrectProperties()
     {
         // Act
         _service.LogResponse("Anthropic", "claude-3", "Response", 250, 150, 75);
@@ -322,8 +331,8 @@ public class LlmLogServiceExtensionsTests
         log.IsSuccess.ShouldBe(true);
     }
 
-    [Fact]
-    public void LogError_StoresFullPrompt()
+    [Test]
+    public async Task LogError_StoresFullPrompt()
     {
         // Arrange
         var prompt = "This is the prompt that caused the error";
@@ -338,8 +347,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].FullPrompt.ShouldBe(prompt);
     }
 
-    [Fact]
-    public void LogError_TruncatesPromptPreviewForLongPrompts()
+    [Test]
+    public async Task LogError_TruncatesPromptPreviewForLongPrompts()
     {
         // Arrange
         var longPrompt = new string('z', 1000);
@@ -354,8 +363,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].PromptPreview!.Length.ShouldBeLessThan(1000);
     }
 
-    [Fact]
-    public void LogError_HandlesNullPrompt()
+    [Test]
+    public async Task LogError_HandlesNullPrompt()
     {
         // Arrange
         var exception = new InvalidOperationException("Test error");
@@ -369,8 +378,8 @@ public class LlmLogServiceExtensionsTests
         logs[0].PromptPreview.ShouldBeNull();
     }
 
-    [Fact]
-    public void LogError_SetsCorrectProperties()
+    [Test]
+    public async Task LogError_SetsCorrectProperties()
     {
         // Arrange
         var exception = new ArgumentException("Invalid argument");
@@ -389,8 +398,8 @@ public class LlmLogServiceExtensionsTests
         log.IsSuccess.ShouldBe(false);
     }
 
-    [Fact]
-    public void LogRetry_SetsCorrectProperties()
+    [Test]
+    public async Task LogRetry_SetsCorrectProperties()
     {
         // Act
         _service.LogRetry("OpenAI", "gpt-4", 2, "Timeout");
@@ -404,8 +413,8 @@ public class LlmLogServiceExtensionsTests
         log.Metadata!["attemptNumber"].ShouldBe("2");
     }
 
-    [Fact]
-    public void LogCircuitBreaker_Open_SetsWarningLevel()
+    [Test]
+    public async Task LogCircuitBreaker_Open_SetsWarningLevel()
     {
         // Act
         _service.LogCircuitBreaker("TestProvider", isOpen: true, "Too many failures");
@@ -418,8 +427,8 @@ public class LlmLogServiceExtensionsTests
         log.Metadata!["circuitState"].ShouldBe("OPENED");
     }
 
-    [Fact]
-    public void LogCircuitBreaker_Closed_SetsInfoLevel()
+    [Test]
+    public async Task LogCircuitBreaker_Closed_SetsInfoLevel()
     {
         // Act
         _service.LogCircuitBreaker("TestProvider", isOpen: false);
@@ -431,8 +440,8 @@ public class LlmLogServiceExtensionsTests
         log.Metadata!["circuitState"].ShouldBe("CLOSED");
     }
 
-    [Fact]
-    public void LogFallback_SetsCorrectProperties()
+    [Test]
+    public async Task LogFallback_SetsCorrectProperties()
     {
         // Act
         _service.LogFallback("OpenAI", "Anthropic", "Rate limited");
@@ -447,8 +456,8 @@ public class LlmLogServiceExtensionsTests
         log.Metadata!["toProvider"].ShouldBe("Anthropic");
     }
 
-    [Fact]
-    public void LogConnectionError_SetsCorrectProperties()
+    [Test]
+    public async Task LogConnectionError_SetsCorrectProperties()
     {
         // Arrange
         var exception = new HttpRequestException("Connection refused");
@@ -466,8 +475,8 @@ public class LlmLogServiceExtensionsTests
         log.IsSuccess.ShouldBe(false);
     }
 
-    [Fact]
-    public void PreviewTruncation_ExactlyAt500Chars_NoTruncation()
+    [Test]
+    public async Task PreviewTruncation_ExactlyAt500Chars_NoTruncation()
     {
         // Arrange
         var prompt = new string('a', 500);
@@ -481,8 +490,8 @@ public class LlmLogServiceExtensionsTests
         log.PromptPreview!.ShouldNotContain("...");
     }
 
-    [Fact]
-    public void PreviewTruncation_At501Chars_Truncates()
+    [Test]
+    public async Task PreviewTruncation_At501Chars_Truncates()
     {
         // Arrange
         var prompt = new string('a', 501);
@@ -498,8 +507,8 @@ public class LlmLogServiceExtensionsTests
         log.PromptPreview.ShouldStartWith(new string('a', 500));
     }
 
-    [Fact]
-    public void PreviewTruncation_EmptyString_ReturnsEmpty()
+    [Test]
+    public async Task PreviewTruncation_EmptyString_ReturnsEmpty()
     {
         // Act
         _service.LogRequest("TestProvider", "model", "");
