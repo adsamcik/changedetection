@@ -861,3 +861,80 @@ public class ErrorResolutionResultDto
     public bool MajorStructureChange { get; set; }
 }
 
+// ============================================================================
+// Bulk Edit DTOs
+// ============================================================================
+
+/// <summary>
+/// DTO for bulk operations on multiple watches.
+/// </summary>
+public class BulkWatchOperationDto
+{
+    /// <summary>
+    /// IDs of watches to operate on.
+    /// </summary>
+    public required List<string> WatchIds { get; set; }
+}
+
+/// <summary>
+/// DTO for bulk editing multiple watches.
+/// </summary>
+public class BulkWatchEditDto : BulkWatchOperationDto
+{
+    /// <summary>
+    /// Tags to add to all selected watches.
+    /// </summary>
+    public List<string>? AddTags { get; set; }
+
+    /// <summary>
+    /// Tags to remove from all selected watches.
+    /// </summary>
+    public List<string>? RemoveTags { get; set; }
+
+    /// <summary>
+    /// Category ID to set (null = don't change, empty string = remove category).
+    /// </summary>
+    public string? CategoryId { get; set; }
+
+    /// <summary>
+    /// Whether to change the category (allows setting null/remove).
+    /// </summary>
+    public bool ChangeCategoryId { get; set; }
+
+    /// <summary>
+    /// Check interval to set (null = don't change).
+    /// </summary>
+    public TimeSpan? CheckInterval { get; set; }
+
+    /// <summary>
+    /// Whether to enable JavaScript fetching (null = don't change).
+    /// </summary>
+    public bool? UseJavaScript { get; set; }
+
+    /// <summary>
+    /// Whether to enable notifications (null = don't change).
+    /// </summary>
+    public bool? NotificationsEnabled { get; set; }
+}
+
+/// <summary>
+/// Result of a bulk operation.
+/// </summary>
+public class BulkOperationResultDto
+{
+    /// <summary>
+    /// Number of watches successfully updated.
+    /// </summary>
+    public int SuccessCount { get; set; }
+
+    /// <summary>
+    /// Number of watches that failed to update.
+    /// </summary>
+    public int FailureCount { get; set; }
+
+    /// <summary>
+    /// IDs of watches that failed to update with error messages.
+    /// </summary>
+    public Dictionary<string, string> Failures { get; set; } = [];
+}
+
