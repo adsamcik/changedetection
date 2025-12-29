@@ -1,0 +1,46 @@
+{
+  "name": "ChangeDetection Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/dotnet:1-10.0",
+  
+  // Run as non-root user for security
+  "remoteUser": "vscode",
+  
+  // Security hardening - drop all capabilities, prevent privilege escalation
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--pids-limit=512"
+  ],
+  
+  // VS Code extensions to install inside the container
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit"
+      ],
+      "settings": {
+        "dotnet.defaultSolution": "ChangeDetection.slnx"
+      }
+    }
+  },
+  
+  // Features to add to the container
+  "features": {
+    // Playwright needs browser dependencies
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    // PowerShell for test.ps1 script
+    "ghcr.io/devcontainers/features/powershell:1": {}
+  },
+  
+  // Run bootstrap script after container creation
+  "postCreateCommand": "chmod +x .devcontainer/bootstrap.sh && .devcontainer/bootstrap.sh",
+  
+  // Environment variables
+  "containerEnv": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1"
+  }
+}
