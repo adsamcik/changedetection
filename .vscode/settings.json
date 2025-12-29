@@ -1,0 +1,32 @@
+{
+  // ============================================================================
+  // YOLO Terminal Settings for Copilot Agents
+  // Enables auto-approval of terminal commands in Agent mode
+  // ============================================================================
+  
+  // Ignore default blocking rules for terminal commands
+  "chat.tools.terminal.ignoreDefaultAutoApproveRules": true,
+  
+  // Auto-approve ALL terminal commands (regex pattern matches everything)
+  "chat.tools.terminal.autoApprove": {
+    "/.*/": true
+  },
+  
+  // Allow more agent requests before requiring confirmation
+  "chat.agent.maxRequests": 50,
+  
+  // ============================================================================
+  // .NET / C# Settings
+  // ============================================================================
+  
+  // Use the solution file for C# DevKit
+  "dotnet.defaultSolution": "ChangeDetection.slnx",
+  
+  // Format on save
+  "editor.formatOnSave": true,
+  
+  // File associations
+  "files.associations": {
+    "*.razor": "razor"
+  }
+}
