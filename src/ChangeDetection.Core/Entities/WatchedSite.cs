@@ -271,6 +271,21 @@ public class LlmAnalysisSettings
     /// Whether to only notify on high-importance changes when LLM analysis is enabled.
     /// </summary>
     public bool OnlyNotifyHighImportance { get; set; }
+
+    // ========== Deduplication Settings ==========
+
+    /// <summary>
+    /// Whether to enable semantic deduplication using content fingerprinting.
+    /// Prevents creating change events for semantically identical content.
+    /// </summary>
+    public bool EnableSemanticDeduplication { get; set; }
+
+    /// <summary>
+    /// Similarity threshold (0.0 to 1.0) for semantic deduplication.
+    /// Content with similarity above this threshold is considered a duplicate.
+    /// Default is 0.95 (95% similar).
+    /// </summary>
+    public float SemanticSimilarityThreshold { get; set; } = 0.95f;
 }
 
 /// <summary>

@@ -18,6 +18,12 @@ public class AppSettings
     public int MaxConcurrentChecks { get; set; } = 5;
     
     /// <summary>
+    /// Maximum concurrent pipeline executions.
+    /// Controls how many watch setup pipelines can run in parallel.
+    /// </summary>
+    public int MaxConcurrentPipelines { get; set; } = 1;
+    
+    /// <summary>
     /// Email settings for notifications.
     /// </summary>
     public EmailSettings? Email { get; set; }
@@ -66,6 +72,18 @@ public class AppSettings
     /// Delay between retries in seconds.
     /// </summary>
     public int RetryDelaySeconds { get; set; } = 60;
+    
+    /// <summary>
+    /// Maximum pending queue items per user.
+    /// Set to 0 for unlimited.
+    /// </summary>
+    public int MaxPendingItemsPerUser { get; set; } = 10;
+    
+    /// <summary>
+    /// Maximum concurrent processing items per user.
+    /// Set to 0 for unlimited.
+    /// </summary>
+    public int MaxConcurrentItemsPerUser { get; set; } = 2;
 }
 
 /// <summary>

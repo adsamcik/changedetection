@@ -139,6 +139,13 @@ public class ConversationSession
     public string? CurrentPipelineStage { get; set; }
 
     /// <summary>
+    /// Whether the pipeline is actively processing this session.
+    /// Set to true when processing starts, false when it completes or fails.
+    /// Used to correctly display "Processing" vs "Setting up" state.
+    /// </summary>
+    public bool IsActivelyProcessing { get; set; }
+
+    /// <summary>
     /// Touch the session to update last activity time.
     /// </summary>
     public void Touch() => LastActivityAt = DateTimeOffset.UtcNow;
