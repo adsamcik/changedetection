@@ -89,12 +89,15 @@ public class TenantRepository<T>(
     /// </summary>
     private void SetOwner(T entity)
     {
+        var currentUserId = userContext.CurrentUserId;
+        var isAdmin = userContext.IsAdmin;
+        
         // In normal (non-admin) contexts, ownership is always enforced to the current user.
         // In admin/background contexts, allow the caller to explicitly set OwnerId for
         // cross-tenant operations (e.g., background checks persisting events for the watch owner).
-        if (!userContext.IsAdmin || entity.OwnerId == Guid.Empty)
+        if (!isAdmin || entity.OwnerId == Guid.Empty)
         {
-            entity.OwnerId = userContext.CurrentUserId;
+            entity.OwnerId = currentUserId;
         }
     }
     

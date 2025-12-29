@@ -25,11 +25,20 @@ public static class PriceExtractionPrompts
            - Unknown: Cannot determine stock status
         4. Always preserve the original raw text for both price and stock status
 
-        LOCALE HANDLING:
-        - Czech: "2 499 Kč" → value: 2499, currency: "CZK"
-        - German: "1.299,00 €" → value: 1299.00, currency: "EUR"
-        - US: "$1,299.00" → value: 1299.00, currency: "USD"
-        - UK: "£999.99" → value: 999.99, currency: "GBP"
+        DECIMAL SEPARATOR RULE:
+        The LAST separator (comma or period) before the currency symbol is ALWAYS the decimal point.
+        Everything before that last separator (commas, periods, spaces, apostrophes) are thousands/grouping separators - ignore them.
+        
+        Examples:
+        - "29,99 €" → 29.99 (comma is last separator = decimal)
+        - "1.299,00 €" → 1299.00 (comma is last separator = decimal, period is thousands)
+        - "$1,299.00" → 1299.00 (period is last separator = decimal, comma is thousands)
+        - "2 499 Kč" → 2499 (space is grouping, no decimal separator)
+        - "£1,299.99" → 1299.99 (period is last separator = decimal, comma is thousands)
+        - "CHF 1'499.00" → 1499.00 (period is last separator = decimal, apostrophe is thousands)
+        - "$50" → 50 (no separator = whole number)
+        - "99,00 €" → 99.00 (comma is last separator = decimal)
+        - "¥12,800" → 12800 (Yen typically has no decimals, comma is thousands)
 
         STOCK STATUS EXAMPLES:
         - "Skladem" (Czech) → InStock
@@ -40,10 +49,12 @@ public static class PriceExtractionPrompts
         - "Vyprodáno" → OutOfStock
         - "In Stock" → InStock
         - "Out of Stock" → OutOfStock
-        - "Pre-order" → PreOrder
-        - "Backorder" → Backorder
+        - "Pre-order" / "Pre-order Now" → PreOrder
+        - "Backorder" / "Backordered" → Backorder
         - "Only 3 left" → LimitedStock
         - "Limited availability" → LimitedStock
+        - "在庫あり" (Japanese) → InStock
+        - "Available" / "Subscribe Now" → InStock
         """;
 
     /// <summary>

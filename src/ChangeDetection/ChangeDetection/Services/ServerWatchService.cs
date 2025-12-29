@@ -22,6 +22,7 @@ public class ServerWatchService : IWatchService
     private readonly IErrorResolutionService _errorResolutionService;
     private readonly IChangeAnalyzer _changeAnalyzer;
     private readonly IContentEnricher _contentEnricher;
+    private readonly IDeduplicationService _deduplicationService;
     private readonly IPriceTrackingService _priceTrackingService;
     private readonly ILogger<ServerWatchService> _logger;
 
@@ -38,6 +39,7 @@ public class ServerWatchService : IWatchService
         IErrorResolutionService errorResolutionService,
         IChangeAnalyzer changeAnalyzer,
         IContentEnricher contentEnricher,
+        IDeduplicationService deduplicationService,
         IPriceTrackingService priceTrackingService,
         ILogger<ServerWatchService> logger)
     {
@@ -53,6 +55,7 @@ public class ServerWatchService : IWatchService
         _errorResolutionService = errorResolutionService;
         _changeAnalyzer = changeAnalyzer;
         _contentEnricher = contentEnricher;
+        _deduplicationService = deduplicationService;
         _priceTrackingService = priceTrackingService;
         _logger = logger;
     }
@@ -275,6 +278,26 @@ public class ServerWatchService : IWatchService
 
             var contentHash = _extractor.ComputeHash(extractedContent);
 
+            // Deduplication step: Check if content is a duplicate before creating snapshot
+            var deduplicationResult = await PerformDeduplicationCheckAsync(
+                watch, extractedContent, contentHash, ct);
+            
+            if (deduplicationResult.IsDuplicate)
+            {
+                _logger.LogDebug(
+                    "Content deduplicated for watch {Id}: {Reason}",
+                    watch.Id, deduplicationResult.Reason);
+                
+                // Update watch status without creating new snapshot
+                watch.LastChecked = DateTime.UtcNow;
+                watch.Status = WatchStatus.Active;
+                watch.LastError = null;
+                watch.ConsecutiveFailures = 0;
+                await _watchRepo.UpdateAsync(watch, ct);
+                
+                return null; // No change event - content is duplicate
+            }
+
             // Create snapshot
             var snapshot = new ChangeSnapshot
             {
@@ -284,7 +307,11 @@ public class ServerWatchService : IWatchService
                 ContentHash = contentHash,
                 HttpStatusCode = fetchResult.HttpStatusCode,
                 FetchDurationMs = fetchResult.DurationMs,
-                ContentSizeBytes = extractedContent.Length
+                ContentSizeBytes = extractedContent.Length,
+                // Store fingerprint for future deduplication comparisons
+                ContentFingerprintJson = deduplicationResult.NewFingerprint != null 
+                    ? JsonSerializer.Serialize(deduplicationResult.NewFingerprint)
+                    : null
             };
 
             // Handle schema-based object extraction
@@ -427,7 +454,7 @@ public class ServerWatchService : IWatchService
         {
             _logger.LogError(ex, "Error checking watch {Id}", watchId);
             
-            watch.Status = WatchStatus.Error;
+            watch!.Status = WatchStatus.Error;
             watch.LastError = ex.Message;
             watch.ConsecutiveFailures++;
             watch.LastChecked = DateTime.UtcNow;
@@ -666,6 +693,72 @@ public class ServerWatchService : IWatchService
             _logger.LogWarning(ex, "Content enrichment error for watch {Id}", watch.Id);
             // Don't fail the whole check just because enrichment failed
         }
+    }
+
+    /// <summary>
+    /// Performs deduplication check to prevent creating duplicate snapshots.
+    /// Uses hash-based and optional semantic fingerprint comparison.
+    /// </summary>
+    private async Task<DeduplicationResult> PerformDeduplicationCheckAsync(
+        WatchedSite watch,
+        string extractedContent,
+        string contentHash,
+        CancellationToken ct)
+    {
+        // Skip deduplication if this is the first check (no previous content)
+        if (string.IsNullOrEmpty(watch.LastContentHash))
+        {
+            _logger.LogDebug("First check for watch {Id}, skipping deduplication", watch.Id);
+            
+            // Generate fingerprint if semantic deduplication is enabled
+            ContentFingerprint? fingerprint = null;
+            if (watch.AnalysisSettings.EnableSemanticDeduplication)
+            {
+                fingerprint = await _deduplicationService.GenerateFingerprintAsync(
+                    extractedContent, ct);
+            }
+            
+            return DeduplicationResult.NotDuplicate(fingerprint);
+        }
+
+        // Get previous fingerprint from the last snapshot for semantic comparison
+        ContentFingerprint? previousFingerprint = null;
+        if (watch.AnalysisSettings.EnableSemanticDeduplication)
+        {
+            var previousSnapshot = await _snapshotRepo.FirstOrDefaultOrderedDescAsync(
+                s => s.WatchedSiteId == watch.Id,
+                s => s.CapturedAt,
+                ct);
+
+            if (previousSnapshot?.ContentFingerprintJson != null)
+            {
+                try
+                {
+                    previousFingerprint = JsonSerializer.Deserialize<ContentFingerprint>(
+                        previousSnapshot.ContentFingerprintJson);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to deserialize previous fingerprint for watch {Id}",
+                        watch.Id);
+                }
+            }
+        }
+
+        var request = new DeduplicationRequest
+        {
+            NewContent = extractedContent,
+            NewContentHash = contentHash,
+            PreviousContentHash = watch.LastContentHash,
+            PreviousFingerprint = previousFingerprint,
+            WatchId = watch.Id,
+            SimilarityThreshold = watch.AnalysisSettings.SemanticSimilarityThreshold,
+            UseSemanticComparison = watch.AnalysisSettings.EnableSemanticDeduplication
+        };
+
+        return await _deduplicationService.CheckForDuplicateAsync(request, ct);
     }
 
     /// <summary>

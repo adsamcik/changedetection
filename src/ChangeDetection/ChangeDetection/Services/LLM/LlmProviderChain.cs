@@ -21,6 +21,7 @@ public class LlmProviderChain : ILlmProviderChain
     private readonly ILogger<LlmProviderChain> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILlmLogService _llmLog;
+    private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Dictionary<Guid, ResiliencePipeline> _circuitBreakers = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -29,13 +30,15 @@ public class LlmProviderChain : ILlmProviderChain
         IRepository<LlmUsageRecord> usageRepo,
         ILogger<LlmProviderChain> logger,
         IServiceProvider serviceProvider,
-        ILlmLogService llmLogService)
+        ILlmLogService llmLogService,
+        IHttpClientFactory? httpClientFactory = null)
     {
         _providerRepo = providerRepo;
         _usageRepo = usageRepo;
         _logger = logger;
         _serviceProvider = serviceProvider;
         _llmLog = llmLogService;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<LlmResponse> ExecuteAsync(string prompt, LlmRequestOptions? options = null, CancellationToken ct = default)
@@ -504,20 +507,39 @@ public class LlmProviderChain : ILlmProviderChain
     private Kernel CreateKernelForProvider(LlmProviderConfig provider)
     {
         var builder = Kernel.CreateBuilder();
+        
+        // Create HttpClient with the provider's configured timeout
+        // Default HttpClient has 100s timeout which is too short for some LLM operations
+        // Use IHttpClientFactory if available (allows test mocking), otherwise create directly
+        HttpClient httpClient;
+        if (_httpClientFactory != null)
+        {
+            httpClient = _httpClientFactory.CreateClient("LlmProvider");
+            httpClient.Timeout = TimeSpan.FromSeconds(provider.TimeoutSeconds);
+        }
+        else
+        {
+            httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(provider.TimeoutSeconds)
+            };
+        }
 
         switch (provider.ProviderType)
         {
             case LlmProviderType.OpenAI:
                 builder.AddOpenAIChatCompletion(
                     modelId: provider.Model,
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("OpenAI API key is required"));
+                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("OpenAI API key is required"),
+                    httpClient: httpClient);
                 break;
 
             case LlmProviderType.AzureOpenAI:
                 builder.AddAzureOpenAIChatCompletion(
                     deploymentName: provider.Model,
                     endpoint: provider.Endpoint ?? throw new InvalidOperationException("Azure OpenAI endpoint is required"),
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Azure OpenAI API key is required"));
+                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Azure OpenAI API key is required"),
+                    httpClient: httpClient);
                 break;
 
             case LlmProviderType.Ollama:
@@ -527,7 +549,8 @@ public class LlmProviderChain : ILlmProviderChain
                 builder.AddOpenAIChatCompletion(
                     modelId: provider.Model,
                     apiKey: "ollama", // Ollama doesn't require API key but SK requires non-null
-                    endpoint: new Uri($"{endpoint}/v1"));
+                    endpoint: new Uri($"{endpoint}/v1"),
+                    httpClient: httpClient);
 #pragma warning restore SKEXP0010
                 break;
 
@@ -535,7 +558,8 @@ public class LlmProviderChain : ILlmProviderChain
 #pragma warning disable SKEXP0070
                 builder.AddGoogleAIGeminiChatCompletion(
                     modelId: provider.Model,
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Gemini API key is required"));
+                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Gemini API key is required"),
+                    httpClient: httpClient);
 #pragma warning restore SKEXP0070
                 break;
 
@@ -546,7 +570,8 @@ public class LlmProviderChain : ILlmProviderChain
                     null,
                     new AnthropicChatCompletionService(
                         modelId: provider.Model,
-                        apiKey: provider.ApiKey ?? throw new InvalidOperationException("Claude API key is required")));
+                        apiKey: provider.ApiKey ?? throw new InvalidOperationException("Claude API key is required"),
+                        httpClient: httpClient));
 #pragma warning restore SKEXP0070
                 break;
 

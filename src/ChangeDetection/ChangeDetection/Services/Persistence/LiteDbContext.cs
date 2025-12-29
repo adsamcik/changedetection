@@ -102,6 +102,28 @@ public class LiteDbContext : IDisposable
                 .Field(x => x.FieldName, "FieldName")
                 .Field(x => x.Value, "Value");
             
+            // PipelineRun
+            mapper.Entity<Core.Entities.PipelineRun>()
+                .Id(x => x.Id)
+                .Field(x => x.SessionId, "SessionId")
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.OriginalInput, "OriginalInput");
+            
+            // PipelineEvent
+            mapper.Entity<Core.Entities.PipelineEvent>()
+                .Id(x => x.Id)
+                .Field(x => x.PipelineRunId, "PipelineRunId")
+                .Field(x => x.Stage, "Stage")
+                .Field(x => x.EventType, "EventType");
+            
+            // PipelineQueueItem - register to fix LiteDB enum index issues
+            mapper.Entity<Core.Entities.PipelineQueueItem>()
+                .Id(x => x.Id)
+                .Field(x => x.SessionId, "SessionId")
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.OperationType, "OperationType")
+                .Field(x => x.Status, "Status");
+            
             _mapperConfigured = true;
         }
     }
@@ -156,6 +178,21 @@ public class LiteDbContext : IDisposable
         var users = _database.GetCollection<Core.Entities.User>("users");
         users.EnsureIndex(x => x.Username, unique: true);
         users.EnsureIndex(x => x.Email);
+        
+        // Configure indexes for PipelineRuns
+        var pipelineRuns = _database.GetCollection<Core.Entities.PipelineRun>("pipeline_runs");
+        pipelineRuns.EnsureIndex(x => x.SessionId);
+        pipelineRuns.EnsureIndex(x => x.OwnerId);
+        pipelineRuns.EnsureIndex(x => x.Status);
+        pipelineRuns.EnsureIndex(x => x.StartedAt);
+        pipelineRuns.EnsureIndex(x => x.CreatedWatchId);
+        
+        // Configure indexes for PipelineEvents
+        var pipelineEvents = _database.GetCollection<Core.Entities.PipelineEvent>("pipeline_events");
+        pipelineEvents.EnsureIndex(x => x.PipelineRunId);
+        pipelineEvents.EnsureIndex(x => x.Stage);
+        pipelineEvents.EnsureIndex(x => x.EventType);
+        pipelineEvents.EnsureIndex(x => x.Timestamp);
     }
 
     public void Dispose()
