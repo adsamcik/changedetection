@@ -16,40 +16,45 @@ public interface IBackgroundServiceScopeFactory
 }
 
 /// <summary>
-/// Implementation of IBackgroundServiceScopeFactory that wraps the standard scope factory.
+/// Implementation of IBackgroundServiceScopeFactory that creates scopes with BackgroundServiceUserContext.
 /// </summary>
-public class BackgroundServiceScopeFactory(IServiceScopeFactory scopeFactory) : IBackgroundServiceScopeFactory
+/// <remarks>
+/// This implementation uses the ambient user context pattern to override IUserContext for the
+/// duration of the scope. This ensures that all services within the scope see the background
+/// service user context, regardless of how they were originally constructed.
+/// </remarks>
+public class BackgroundServiceScopeFactory(IServiceProvider rootProvider) : IBackgroundServiceScopeFactory
 {
     public IServiceScope CreateBackgroundScope()
     {
-        return new BackgroundServiceScope(scopeFactory.CreateScope());
+        return new BackgroundServiceScope(rootProvider);
     }
 }
 
 /// <summary>
-/// Service scope wrapper that provides BackgroundServiceUserContext.
+/// Service scope that provides BackgroundServiceUserContext via the ambient context.
 /// </summary>
-internal class BackgroundServiceScope(IServiceScope innerScope) : IServiceScope
+/// <remarks>
+/// Uses <see cref="AmbientUserContext"/> to set the background service context for all
+/// services that use <see cref="AmbientAwareUserContext"/> as their IUserContext implementation.
+/// </remarks>
+internal sealed class BackgroundServiceScope : IServiceScope
 {
-    private readonly BackgroundServiceUserContext _userContext = new();
+    private readonly IServiceScope _innerScope;
+    private readonly IDisposable _contextOverride;
     
-    public IServiceProvider ServiceProvider => new BackgroundServiceProvider(innerScope.ServiceProvider, _userContext);
-    
-    public void Dispose() => innerScope.Dispose();
-}
-
-/// <summary>
-/// Service provider wrapper that substitutes IUserContext with BackgroundServiceUserContext.
-/// </summary>
-internal class BackgroundServiceProvider(IServiceProvider innerProvider, IUserContext userContext) : IServiceProvider
-{
-    public object? GetService(Type serviceType)
+    public BackgroundServiceScope(IServiceProvider rootProvider)
     {
-        if (serviceType == typeof(IUserContext))
-        {
-            return userContext;
-        }
-        
-        return innerProvider.GetService(serviceType);
+        _innerScope = rootProvider.CreateScope();
+        _contextOverride = AmbientUserContext.Use(new BackgroundServiceUserContext());
+    }
+    
+    public IServiceProvider ServiceProvider => _innerScope.ServiceProvider;
+    
+    public void Dispose()
+    {
+        _contextOverride.Dispose();
+        _innerScope.Dispose();
     }
 }
+

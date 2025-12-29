@@ -29,15 +29,17 @@ public static class AuthenticationExtensions
         // Register background service scope factory (used by background services to get admin access)
         services.AddSingleton<IBackgroundServiceScopeFactory, BackgroundServiceScopeFactory>();
         
+        // Always register authentication services to ensure middleware can be activated.
+        // This is required for WebApplicationFactory tests that may override config to SSO mode.
+        // The middleware itself is only added conditionally in UseChangeDetectionAuthentication.
+        services.AddAuthentication(HeaderAuthenticationHandler.SchemeName)
+            .AddScheme<AuthenticationSchemeOptions, HeaderAuthenticationHandler>(
+                HeaderAuthenticationHandler.SchemeName, 
+                null);
+        
         if (settings.Mode == AuthenticationMode.SSO)
         {
-            // SSO mode: Use header-based authentication
-            services.AddAuthentication(HeaderAuthenticationHandler.SchemeName)
-                .AddScheme<AuthenticationSchemeOptions, HeaderAuthenticationHandler>(
-                    HeaderAuthenticationHandler.SchemeName, 
-                    null);
-            
-            // Register SSO user context
+            // SSO mode: Use header-based user context
             services.AddScoped<IUserContext, SsoUserContext>();
             
             // Register user service for auto-provisioning
