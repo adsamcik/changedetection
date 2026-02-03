@@ -41,6 +41,9 @@ public record LlmLogEntry
     /// <summary>Unique identifier for this log entry.</summary>
     public Guid Id { get; init; } = Guid.NewGuid();
 
+    /// <summary>Correlation ID to group request/response pairs together.</summary>
+    public Guid? RequestId { get; init; }
+
     /// <summary>When this entry was created.</summary>
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
 

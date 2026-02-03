@@ -1,3 +1,5 @@
+using ChangeDetection.Core.Entities;
+
 namespace ChangeDetection.Core.Interfaces;
 
 /// <summary>
@@ -233,6 +235,19 @@ public class PipelineSession
     public List<SelectorValidation> ValidationResults { get; set; } = [];
     public GeneratedSelector? BestSelector { get; set; }
     
+    // Stage 6: Schema Discovery (for list-type content)
+    /// <summary>
+    /// Schema discovered by LLM for structured object extraction.
+    /// Populated when ContentType is EventList, ProductListing, Table, etc.
+    /// </summary>
+    public DiscoveredSchema? DiscoveredSchema { get; set; }
+    
+    /// <summary>
+    /// Whether schema extraction should be enabled for this watch.
+    /// Auto-set based on content type, can be overridden by user.
+    /// </summary>
+    public bool? SchemaEnabled { get; set; }
+    
     // Iteration tracking
     public int CurrentIteration { get; set; }
     public List<string> IterationHistory { get; set; } = [];
@@ -439,4 +454,14 @@ public class WatchConfiguration
     public TimeSpan? CheckInterval { get; set; }
     public List<string> Tags { get; set; } = [];
     public float Confidence { get; set; }
+    
+    /// <summary>
+    /// Whether structured object extraction is enabled.
+    /// </summary>
+    public bool SchemaEnabled { get; set; }
+    
+    /// <summary>
+    /// Schema for extracting structured objects from the page.
+    /// </summary>
+    public ExtractionSchema? Schema { get; set; }
 }

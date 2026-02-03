@@ -146,6 +146,12 @@ public class ConversationSession
     public bool IsActivelyProcessing { get; set; }
 
     /// <summary>
+    /// Whether the session has completed (watch was successfully created).
+    /// Completed sessions are kept briefly for page reload resilience but excluded from pending list.
+    /// </summary>
+    public bool IsCompleted { get; set; }
+
+    /// <summary>
     /// Touch the session to update last activity time.
     /// </summary>
     public void Touch() => LastActivityAt = DateTimeOffset.UtcNow;

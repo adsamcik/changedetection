@@ -209,7 +209,12 @@ public class FetchSettingsDto
     public bool UseJavaScript { get; set; }
     public string? WaitForSelector { get; set; }
     public int WaitTimeMs { get; set; }
+    
+    /// <summary>
+    /// Legacy screenshot flag. Use <see cref="Screenshot"/> for detailed settings.
+    /// </summary>
     public bool CaptureScreenshot { get; set; }
+    
     public int TimeoutSeconds { get; set; } = 30;
     public Dictionary<string, string> CustomHeaders { get; set; } = new();
     
@@ -232,6 +237,77 @@ public class FetchSettingsDto
     /// Viewport height for screenshot capture.
     /// </summary>
     public int ViewportHeight { get; set; } = 1080;
+
+    /// <summary>
+    /// Detailed screenshot capture settings.
+    /// </summary>
+    public ScreenshotSettingsDto Screenshot { get; set; } = new();
+}
+
+/// <summary>
+/// DTO for screenshot capture settings.
+/// </summary>
+public class ScreenshotSettingsDto
+{
+    /// <summary>
+    /// Screenshot capture mode: None, Viewport, FullPage, ElementOnly, FullPageAndElement.
+    /// </summary>
+    public string Mode { get; set; } = "None";
+
+    /// <summary>
+    /// Whether to capture a screenshot on every check.
+    /// </summary>
+    public bool CaptureOnEveryCheck { get; set; } = true;
+
+    /// <summary>
+    /// Whether to capture a screenshot when a change is detected.
+    /// </summary>
+    public bool CaptureOnChange { get; set; } = true;
+
+    /// <summary>
+    /// Image quality for JPEG format (1-100).
+    /// </summary>
+    public int JpegQuality { get; set; } = 85;
+
+    /// <summary>
+    /// Image format: Png or Jpeg.
+    /// </summary>
+    public string Format { get; set; } = "Png";
+
+    /// <summary>
+    /// Scale factor for screenshots (0.1 to 2.0).
+    /// </summary>
+    public double Scale { get; set; } = 1.0;
+
+    /// <summary>
+    /// Padding in pixels around element screenshots.
+    /// </summary>
+    public int ElementPadding { get; set; } = 10;
+
+    /// <summary>
+    /// Whether to highlight the monitored element in screenshots.
+    /// </summary>
+    public bool HighlightElement { get; set; } = true;
+
+    /// <summary>
+    /// Color of the element highlight border (hex format).
+    /// </summary>
+    public string HighlightColor { get; set; } = "#FF6B6B";
+
+    /// <summary>
+    /// Width of the element highlight border in pixels.
+    /// </summary>
+    public int HighlightBorderWidth { get; set; } = 3;
+
+    /// <summary>
+    /// Maximum width for screenshots (null = no limit).
+    /// </summary>
+    public int? MaxWidth { get; set; }
+
+    /// <summary>
+    /// Maximum height for screenshots (null = no limit).
+    /// </summary>
+    public int? MaxHeight { get; set; }
 }
 
 /// <summary>
@@ -273,7 +349,52 @@ public class SnapshotDto
     public int ContentLength { get; set; }
     public string ContentHash { get; set; } = "";
     public DateTime CapturedAt { get; set; }
+    
+    /// <summary>
+    /// Path to the full page or viewport screenshot.
+    /// </summary>
     public string? ScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Path to the element-specific screenshot.
+    /// </summary>
+    public string? ElementScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Bounding box of the monitored element in the screenshot.
+    /// </summary>
+    public ElementBoundingBoxDto? ElementBoundingBox { get; set; }
+    
+    /// <summary>
+    /// Extracted structured objects when schema extraction is enabled.
+    /// </summary>
+    public List<ExtractedObjectDto>? ExtractedObjects { get; set; }
+}
+
+/// <summary>
+/// DTO for element bounding box coordinates.
+/// </summary>
+public class ElementBoundingBoxDto
+{
+    /// <summary>
+    /// X coordinate of the element's top-left corner.
+    /// </summary>
+    public double X { get; set; }
+
+    /// <summary>
+    /// Y coordinate of the element's top-left corner.
+    /// </summary>
+    public double Y { get; set; }
+
+    /// <summary>
+    /// Width of the element in pixels.
+    /// </summary>
+    public double Width { get; set; }
+
+    /// <summary>
+    /// Height of the element in pixels.
+    /// </summary>
+    public double Height { get; set; }
 }
 
 /// <summary>

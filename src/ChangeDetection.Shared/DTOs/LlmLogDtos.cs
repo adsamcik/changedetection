@@ -6,6 +6,8 @@ namespace ChangeDetection.Shared.Dtos;
 public class LlmLogEntryDto
 {
     public required Guid Id { get; set; }
+    /// <summary>Correlation ID to group request/response pairs together.</summary>
+    public Guid? RequestId { get; set; }
     public required DateTime Timestamp { get; set; }
     public required string Level { get; set; }
     public required string ProviderName { get; set; }

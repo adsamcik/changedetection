@@ -727,5 +727,19 @@ public class SnapshotInfoDto
     public string Id { get; set; } = "";
     public DateTime CapturedAt { get; set; }
     public string Content { get; set; } = "";
+    
+    /// <summary>
+    /// Path to the full page or viewport screenshot.
+    /// </summary>
     public string? ScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Path to the element-specific screenshot.
+    /// </summary>
+    public string? ElementScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Bounding box of the monitored element in the screenshot.
+    /// </summary>
+    public ElementBoundingBoxDto? ElementBoundingBox { get; set; }
 }
