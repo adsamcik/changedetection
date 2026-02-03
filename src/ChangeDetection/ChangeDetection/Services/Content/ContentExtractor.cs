@@ -45,13 +45,85 @@ public partial class ContentExtractor : IContentExtractor
             }
         }
 
-        var text = targetNode.InnerText;
+        // Extract text with block element awareness for proper formatting
+        var sb = new StringBuilder();
+        ExtractFormattedText(targetNode, sb);
         
-        // Normalize whitespace
-        text = WhitespaceRegex().Replace(text, " ");
+        var text = sb.ToString();
+        
+        // Clean up excessive blank lines (more than 2 consecutive)
+        text = ExcessiveNewlinesRegex().Replace(text, "\n\n");
         text = text.Trim();
 
         return text;
+    }
+    
+    /// <summary>
+    /// Recursively extracts text from HTML nodes, adding line breaks for block elements.
+    /// </summary>
+    private static void ExtractFormattedText(HtmlNode node, StringBuilder sb)
+    {
+        foreach (var child in node.ChildNodes)
+        {
+            switch (child.NodeType)
+            {
+                case HtmlNodeType.Text:
+                    var text = child.InnerText;
+                    // Normalize inline whitespace but preserve the content
+                    text = WhitespaceRegex().Replace(text, " ");
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        sb.Append(text);
+                    }
+                    break;
+                    
+                case HtmlNodeType.Element:
+                    var tagName = child.Name.ToLowerInvariant();
+                    
+                    // Skip hidden elements
+                    if (tagName is "script" or "style" or "noscript" or "template")
+                    {
+                        continue;
+                    }
+                    
+                    // Handle line break elements
+                    if (tagName == "br")
+                    {
+                        sb.AppendLine();
+                        continue;
+                    }
+                    
+                    // Block elements that should start on a new line
+                    var isBlockElement = tagName is "p" or "div" or "section" or "article" 
+                        or "header" or "footer" or "nav" or "aside" or "main"
+                        or "h1" or "h2" or "h3" or "h4" or "h5" or "h6"
+                        or "ul" or "ol" or "li" or "dl" or "dt" or "dd"
+                        or "table" or "tr" or "blockquote" or "pre" or "hr"
+                        or "form" or "fieldset" or "address" or "figure" or "figcaption";
+                    
+                    if (isBlockElement && sb.Length > 0 && !EndsWithNewline(sb))
+                    {
+                        sb.AppendLine();
+                    }
+                    
+                    // Recurse into children
+                    ExtractFormattedText(child, sb);
+                    
+                    // Add trailing newline for block elements
+                    if (isBlockElement && sb.Length > 0 && !EndsWithNewline(sb))
+                    {
+                        sb.AppendLine();
+                    }
+                    break;
+            }
+        }
+    }
+    
+    private static bool EndsWithNewline(StringBuilder sb)
+    {
+        if (sb.Length == 0) return true;
+        var lastChar = sb[sb.Length - 1];
+        return lastChar == '\n' || lastChar == '\r';
     }
 
     public string? ExtractHtml(string html, string? cssSelector = null, string? xpathSelector = null)
@@ -185,6 +257,9 @@ public partial class ContentExtractor : IContentExtractor
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+    
+    [GeneratedRegex(@"\n{3,}")]
+    private static partial Regex ExcessiveNewlinesRegex();
 
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9]*$")]
     private static partial Regex ElementNameRegex();

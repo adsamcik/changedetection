@@ -66,10 +66,11 @@ public class LlmProviderChain : ILlmProviderChain
 
         foreach (var provider in providers)
         {
+            Guid? requestId = null;
             try
             {
-                // Log the request attempt
-                _llmLog.LogRequest(provider.Name, provider.Model, prompt);
+                // Log the request attempt and capture correlation ID
+                requestId = _llmLog.LogRequest(provider.Name, provider.Model, prompt);
                 
                 var circuitBreaker = await GetOrCreateCircuitBreakerAsync(provider);
                 
@@ -83,14 +84,15 @@ public class LlmProviderChain : ILlmProviderChain
                     result.FailedProviderCount = failedProviders;
                     result.DurationMs = stopwatch.ElapsedMilliseconds;
                     
-                    // Log successful response
+                    // Log successful response with correlation ID
                     _llmLog.LogResponse(
                         provider.Name,
                         provider.Model,
                         result.Content ?? "",
                         result.DurationMs,
                         result.InputTokens,
-                        result.OutputTokens);
+                        result.OutputTokens,
+                        requestId);
                     
                     // Restore health if previously unhealthy
                     if (!provider.IsHealthy)
@@ -124,7 +126,7 @@ public class LlmProviderChain : ILlmProviderChain
             {
                 failedProviders++;
                 _logger.LogError(ex, "Provider {Provider} failed with exception", provider.Name);
-                _llmLog.LogError(provider.Name, provider.Model, ex, prompt);
+                _llmLog.LogError(provider.Name, provider.Model, ex, prompt, requestId);
                 
                 // Update provider health
                 await UpdateProviderHealthAsync(provider, false, ex.Message, ct);

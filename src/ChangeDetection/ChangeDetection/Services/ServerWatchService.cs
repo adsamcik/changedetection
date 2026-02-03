@@ -178,6 +178,7 @@ public class ServerWatchService : IWatchService
             await _watchRepo.UpdateAsync(watch, ct);
 
             // Fetch content
+            var screenshotSettings = watch.FetchSettings.Screenshot;
             var fetchOptions = new FetchOptions
             {
                 UseJavaScript = watch.FetchSettings.UseJavaScript,
@@ -187,9 +188,22 @@ public class ServerWatchService : IWatchService
                 UserAgent = watch.FetchSettings.UserAgent,
                 WaitForSelector = watch.FetchSettings.WaitForSelector,
                 WaitAfterLoadMs = watch.FetchSettings.WaitAfterLoadMs,
-                CaptureScreenshot = watch.FetchSettings.CaptureScreenshot,
+                CaptureScreenshot = screenshotSettings.IsEnabled,
                 ViewportWidth = watch.FetchSettings.ViewportWidth,
-                ViewportHeight = watch.FetchSettings.ViewportHeight
+                ViewportHeight = watch.FetchSettings.ViewportHeight,
+                ElementSelector = watch.CssSelector ?? watch.XPathSelector,
+                ScreenshotSettings = new ScreenshotCaptureOptions
+                {
+                    CaptureFullPage = screenshotSettings.Mode is ScreenshotMode.FullPage or ScreenshotMode.FullPageAndElement,
+                    CaptureViewport = screenshotSettings.Mode == ScreenshotMode.Viewport,
+                    CaptureElement = screenshotSettings.CapturesElement,
+                    Format = screenshotSettings.Format == ScreenshotFormat.Jpeg ? "jpeg" : "png",
+                    JpegQuality = screenshotSettings.JpegQuality,
+                    ElementPadding = screenshotSettings.ElementPadding,
+                    HighlightElement = screenshotSettings.HighlightElement,
+                    HighlightColor = screenshotSettings.HighlightColor,
+                    HighlightBorderWidth = screenshotSettings.HighlightBorderWidth
+                }
             };
 
             var fetchResult = await _fetcher.FetchAsync(watch.Url, fetchOptions, ct);
@@ -340,15 +354,8 @@ public class ServerWatchService : IWatchService
                 }
             }
 
-            // Save screenshot if captured
-            if (fetchResult.Screenshot != null)
-            {
-                var screenshotPath = Path.Combine("screenshots", $"{snapshot.Id}.png");
-                var fullPath = Path.Combine(Directory.GetCurrentDirectory(), screenshotPath);
-                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                await File.WriteAllBytesAsync(fullPath, fetchResult.Screenshot, ct);
-                snapshot.ScreenshotPath = screenshotPath;
-            }
+            // Save screenshots if captured
+            await SaveScreenshotsAsync(snapshot, fetchResult, watch.FetchSettings.Screenshot, ct);
 
             // Perform LLM-powered content enrichment if enabled
             if (watch.AnalysisSettings.EnableContentEnrichment)
@@ -627,6 +634,53 @@ public class ServerWatchService : IWatchService
         {
             // Price tracking failures should not fail the whole check
             _logger.LogError(ex, "Error during price tracking for watch {Id}", watch.Id);
+        }
+    }
+
+    /// <summary>
+    /// Saves screenshots to disk and updates the snapshot with file paths.
+    /// </summary>
+    private async Task SaveScreenshotsAsync(
+        ChangeSnapshot snapshot,
+        FetchResult fetchResult,
+        ScreenshotSettings settings,
+        CancellationToken ct)
+    {
+        var screenshotsDir = Path.Combine(Directory.GetCurrentDirectory(), "screenshots");
+        Directory.CreateDirectory(screenshotsDir);
+
+        var extension = settings.Format == ScreenshotFormat.Jpeg ? "jpg" : "png";
+
+        // Save full page or viewport screenshot
+        if (fetchResult.Screenshot != null)
+        {
+            var screenshotPath = Path.Combine("screenshots", $"{snapshot.Id}.{extension}");
+            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), screenshotPath);
+            await File.WriteAllBytesAsync(fullPath, fetchResult.Screenshot, ct);
+            snapshot.ScreenshotPath = screenshotPath;
+            _logger.LogDebug("Saved page screenshot: {Path} ({Size} bytes)", screenshotPath, fetchResult.Screenshot.Length);
+        }
+
+        // Save element screenshot
+        if (fetchResult.ElementScreenshot != null)
+        {
+            var elementScreenshotPath = Path.Combine("screenshots", $"{snapshot.Id}_element.{extension}");
+            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), elementScreenshotPath);
+            await File.WriteAllBytesAsync(fullPath, fetchResult.ElementScreenshot, ct);
+            snapshot.ElementScreenshotPath = elementScreenshotPath;
+            _logger.LogDebug("Saved element screenshot: {Path} ({Size} bytes)", elementScreenshotPath, fetchResult.ElementScreenshot.Length);
+        }
+
+        // Save element bounding box
+        if (fetchResult.ElementBoundingBox != null)
+        {
+            snapshot.ElementBoundingBoxJson = JsonSerializer.Serialize(new
+            {
+                x = fetchResult.ElementBoundingBox.X,
+                y = fetchResult.ElementBoundingBox.Y,
+                width = fetchResult.ElementBoundingBox.Width,
+                height = fetchResult.ElementBoundingBox.Height
+            });
         }
     }
 

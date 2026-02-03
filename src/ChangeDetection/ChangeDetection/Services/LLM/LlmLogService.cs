@@ -78,26 +78,29 @@ public static class LlmLogServiceExtensions
     private const int MaxPreviewLength = 500;
 
     /// <summary>
-    /// Logs an LLM request starting.
+    /// Logs an LLM request starting and returns a RequestId for correlation.
     /// </summary>
-    public static void LogRequest(
+    public static Guid LogRequest(
         this ILlmLogService service,
         string providerName,
         string? model,
         string prompt,
         Dictionary<string, string>? metadata = null)
     {
+        var requestId = Guid.NewGuid();
         service.Log(new LlmLogEntry
         {
             Level = LlmLogLevel.Debug,
             ProviderName = providerName,
             Model = model,
             Category = LlmLogCategory.Request,
+            RequestId = requestId,
             Message = $"Sending request to {providerName}",
             PromptPreview = TruncatePreview(prompt),
             FullPrompt = prompt,
             Metadata = metadata
         });
+        return requestId;
     }
 
     /// <summary>
@@ -110,7 +113,8 @@ public static class LlmLogServiceExtensions
         string response,
         long durationMs,
         int inputTokens,
-        int outputTokens)
+        int outputTokens,
+        Guid? requestId = null)
     {
         service.Log(new LlmLogEntry
         {
@@ -118,6 +122,7 @@ public static class LlmLogServiceExtensions
             ProviderName = providerName,
             Model = model,
             Category = LlmLogCategory.Response,
+            RequestId = requestId,
             Message = $"Received response from {providerName} in {durationMs}ms",
             ResponsePreview = TruncatePreview(response),
             FullResponse = response,
@@ -136,7 +141,8 @@ public static class LlmLogServiceExtensions
         string providerName,
         string? model,
         Exception exception,
-        string? prompt = null)
+        string? prompt = null,
+        Guid? requestId = null)
     {
         service.Log(new LlmLogEntry
         {
@@ -144,6 +150,7 @@ public static class LlmLogServiceExtensions
             ProviderName = providerName,
             Model = model,
             Category = LlmLogCategory.Error,
+            RequestId = requestId,
             Message = $"Error from {providerName}: {exception.Message}",
             PromptPreview = prompt != null ? TruncatePreview(prompt) : null,
             FullPrompt = prompt,
