@@ -695,8 +695,33 @@ public class ImgCasEventsPipelineTests : IAsyncDisposable
         return reader.ReadToEnd();
     }
 
+    /// <summary>
+    /// Fetches page HTML with caching to avoid live HTTP calls during test runs.
+    /// Uses ContentCache for deterministic, offline-capable test execution.
+    /// </summary>
     private static async Task<string> FetchPageHtmlAsync(string url)
     {
+        var cache = Scraping.Cache.ContentCache.GetSharedInstance();
+        var cacheMode = CachedLlmKernelFactory.GetDefaultCacheMode();
+        
+        // Try to get from cache first
+        var cached = cache.TryGet(url);
+        if (cached != null)
+        {
+            TestContext.Current?.OutputWriter?.WriteLine($"  [Cache HIT] {url}");
+            return cached.Html ?? string.Empty;
+        }
+        
+        // Cache miss - check mode
+        if (cacheMode == CacheMode.CacheOnly)
+        {
+            throw new InvalidOperationException(
+                $"Content cache miss for '{url}' in CacheOnly mode. " +
+                $"Run tests with -IncludeInternet flag to populate the cache.");
+        }
+        
+        // CacheFirst mode - fetch and cache
+        TestContext.Current?.OutputWriter?.WriteLine($"  [Cache MISS] Fetching: {url}");
         using var client = new HttpClient();
         client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChangeDetection/1.0");
         client.DefaultRequestHeaders.Add("Accept-Language", "cs-CZ,cs;q=0.9,en;q=0.8");
@@ -704,7 +729,19 @@ public class ImgCasEventsPipelineTests : IAsyncDisposable
         
         var response = await client.GetAsync(url);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync();
+        var html = await response.Content.ReadAsStringAsync();
+        
+        // Store in cache for future runs
+        cache.Store(url, new Scraping.Cache.CachedContentEntry
+        {
+            Url = url,
+            Html = html,
+            HttpStatusCode = (int)response.StatusCode,
+            IsSuccess = true
+        });
+        TestContext.Current?.OutputWriter?.WriteLine($"  [Cache STORED] {html.Length:N0} chars");
+        
+        return html;
     }
 
     private static string CleanText(string text)

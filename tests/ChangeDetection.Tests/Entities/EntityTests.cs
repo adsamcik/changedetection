@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Entities;
 
+[Category("Unit")]
 public class WatchedSiteTests
 {
     [Test]

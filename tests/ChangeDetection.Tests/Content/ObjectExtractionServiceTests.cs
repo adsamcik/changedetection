@@ -11,6 +11,7 @@ namespace ChangeDetection.Tests.Content;
 /// <summary>
 /// Tests for ObjectExtractionService.
 /// </summary>
+[Category("Unit")]
 public class ObjectExtractionServiceTests
 {
     private readonly ILlmProviderChain _llmChain;

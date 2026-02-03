@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
+[Category("Unit")]
 public class InputProcessorTests
 {
     private readonly ILlmProviderChain _llmChain;

@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Scraping;
 
+[Category("Unit")]
 public class FetchOptionsTests
 {
     [Test]

@@ -27,6 +27,7 @@ namespace ChangeDetection.Tests.Components;
 /// 1. Actually rendering pages via HTTP and checking for 500 errors
 /// 2. Scanning component metadata for invalid attribute combinations
 /// </summary>
+[Category("Integration")]
 public class BlazorComponentRenderingTests
 {
     private HttpClient _client = null!;

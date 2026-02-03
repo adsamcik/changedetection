@@ -7,6 +7,7 @@ namespace ChangeDetection.Tests.Dtos;
 /// <summary>
 /// Advanced DTO tests covering edge cases and validation scenarios.
 /// </summary>
+[Category("Unit")]
 public class DtoAdvancedTests
 {
     // WatchListItemDto Tests

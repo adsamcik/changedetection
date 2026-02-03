@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Dtos;
 
+[Category("Unit")]
 public class GeneralSettingsDtoTests
 {
     [Test]

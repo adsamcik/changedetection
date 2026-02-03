@@ -11,6 +11,7 @@ namespace ChangeDetection.Tests.Llm;
 /// <summary>
 /// Advanced tests for InputProcessor covering edge cases and error scenarios.
 /// </summary>
+[Category("Unit")]
 public class InputProcessorAdvancedTests
 {
     private readonly ILlmProviderChain _llmChain;

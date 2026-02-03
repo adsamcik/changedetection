@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Llm;
 
+[Category("Unit")]
 public class LlmLogServiceTests
 {
     private readonly LlmLogService _sut;

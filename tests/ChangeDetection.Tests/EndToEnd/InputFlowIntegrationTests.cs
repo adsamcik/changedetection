@@ -1279,6 +1279,8 @@ public class InputFlowIntegrationTests : TestBase
             llmChain, CreatePassThroughDomCompactor(), Substitute.For<ILogger<SelectorGenerationStage>>());
         var selectorValidation = new SelectorValidationStage(
             extractor, Substitute.For<ILogger<SelectorValidationStage>>());
+        var schemaDiscovery = new SchemaDiscoveryStage(
+            llmChain, Substitute.For<ILogger<SchemaDiscoveryStage>>());
 
         return new WatchSetupPipeline(
             urlExtraction,
@@ -1286,6 +1288,7 @@ public class InputFlowIntegrationTests : TestBase
             contentAnalysis,
             selectorGeneration,
             selectorValidation,
+            schemaDiscovery,
             llmChain,
             CreateMockPipelineEventService(),
             Substitute.For<IUserContext>(),
@@ -1304,15 +1307,18 @@ public class InputFlowIntegrationTests : TestBase
             llmChain, Substitute.For<ILogger<ContentAnalysisStage>>());
         var selectorGeneration = new SelectorGenerationStage(
             llmChain, CreatePassThroughDomCompactor(), Substitute.For<ILogger<SelectorGenerationStage>>());
-        var selectorValidation = new SelectorValidationStage(
+        var selectorValidation2 = new SelectorValidationStage(
             extractor, Substitute.For<ILogger<SelectorValidationStage>>());
+        var schemaDiscovery2 = new SchemaDiscoveryStage(
+            llmChain, Substitute.For<ILogger<SchemaDiscoveryStage>>());
 
         return new WatchSetupPipeline(
             urlExtraction,
             contentFetching,
             contentAnalysis,
             selectorGeneration,
-            selectorValidation,
+            selectorValidation2,
+            schemaDiscovery2,
             llmChain,
             CreateMockPipelineEventService(),
             Substitute.For<IUserContext>(),

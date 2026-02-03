@@ -7,6 +7,7 @@ namespace ChangeDetection.Tests.Content;
 /// <summary>
 /// Advanced tests for ContentExtractor covering edge cases.
 /// </summary>
+[Category("Unit")]
 public class ContentExtractorAdvancedTests
 {
     private readonly ContentExtractor _sut = new();

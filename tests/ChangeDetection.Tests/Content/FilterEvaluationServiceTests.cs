@@ -11,6 +11,7 @@ namespace ChangeDetection.Tests.Content;
 /// <summary>
 /// Tests for FilterEvaluationService.
 /// </summary>
+[Category("Unit")]
 public class FilterEvaluationServiceTests
 {
     private readonly ILogger<FilterEvaluationService> _logger;

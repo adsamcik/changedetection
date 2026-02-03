@@ -8,6 +8,7 @@ namespace ChangeDetection.Tests.Content;
 /// <summary>
 /// Advanced tests for DiffService covering edge cases and comprehensive scenarios.
 /// </summary>
+[Category("Unit")]
 public class DiffServiceAdvancedTests
 {
     private readonly DiffService _sut = new();

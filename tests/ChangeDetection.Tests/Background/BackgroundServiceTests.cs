@@ -12,6 +12,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Background;
 
+[Category("Unit")]
 public class ChangeCheckBackgroundServiceTests
 {
     private readonly IBackgroundServiceScopeFactory _scopeFactory;

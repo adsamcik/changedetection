@@ -11,6 +11,7 @@ namespace ChangeDetection.Tests.Content;
 /// <summary>
 /// Tests for ObjectDiffService.
 /// </summary>
+[Category("Unit")]
 public class ObjectDiffServiceTests
 {
     private readonly ILlmProviderChain _llmChain;

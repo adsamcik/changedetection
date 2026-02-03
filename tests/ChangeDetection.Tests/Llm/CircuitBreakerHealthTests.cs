@@ -13,6 +13,7 @@ namespace ChangeDetection.Tests.Llm;
 /// These tests verify that provider health status is correctly updated
 /// when circuit breaker state changes or when providers recover.
 /// </summary>
+[Category("Unit")]
 public class CircuitBreakerHealthTests
 {
     private readonly IRepository<LlmProviderConfig> _providerRepo;

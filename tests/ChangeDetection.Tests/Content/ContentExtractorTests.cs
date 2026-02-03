@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace ChangeDetection.Tests.Content;
 
+[Category("Unit")]
 public class ContentExtractorTests
 {
     private readonly ContentExtractor _sut = new();
