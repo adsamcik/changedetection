@@ -1,0 +1,211 @@
+@namespace ChangeDetection.Client.Components
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@ChildContent
+
+@if (showNavigationWarning)
+{
+    <div class="unsaved-changes-backdrop visible" @onclick="HandleBackdropClick">
+        <div class="unsaved-changes-dialog visible" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown" tabindex="-1">
+            <div class="unsaved-changes-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path fill-rule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clip-rule="evenodd" />
+                </svg>
+            </div>
+            
+            <h3 class="unsaved-changes-title">Unsaved Changes</h3>
+            
+            <p class="unsaved-changes-message">
+                You have unsaved changes that will be lost if you leave this page. Do you want to continue?
+            </p>
+            
+            <div class="unsaved-changes-actions">
+                <button class="btn btn-stay" @onclick="HandleStay">
+                    Stay
+                </button>
+                <button class="btn btn-leave" @onclick="HandleLeave">
+                    Leave
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IJSObjectReference? jsModule;
+    private IDisposable? _locationChangingRegistration;
+    private bool showNavigationWarning;
+    private string? pendingNavigationUri;
+    private bool isRegistered;
+    private bool _isNavigatingAway;
+
+    /// <summary>
+    /// Whether the form has unsaved changes.
+    /// When true, navigation will trigger a warning dialog.
+    /// </summary>
+    [Parameter]
+    public bool IsDirty { get; set; }
+
+    /// <summary>
+    /// Optional callback when IsDirty changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<bool> IsDirtyChanged { get; set; }
+
+    /// <summary>
+    /// The form content to protect.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Called when the user confirms they want to leave with unsaved changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnLeaveConfirmed { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Load the JS module for beforeunload handling
+            jsModule = await JS.InvokeAsync<IJSObjectReference>(
+                "import", "/unsaved-changes.js");
+
+            // Register for internal navigation interception
+            _locationChangingRegistration = Navigation.RegisterLocationChangingHandler(OnLocationChanging);
+        }
+
+        // Update browser beforeunload handler based on dirty state
+        await UpdateBrowserWarning();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Update browser warning when IsDirty changes
+        if (jsModule is not null)
+        {
+            await UpdateBrowserWarning();
+        }
+    }
+
+    private async Task UpdateBrowserWarning()
+    {
+        if (jsModule is null) return;
+
+        try
+        {
+            if (IsDirty && !isRegistered)
+            {
+                await jsModule.InvokeVoidAsync("registerBeforeUnload");
+                isRegistered = true;
+            }
+            else if (!IsDirty && isRegistered)
+            {
+                await jsModule.InvokeVoidAsync("unregisterBeforeUnload");
+                isRegistered = false;
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit disconnected, ignore
+        }
+    }
+
+    private ValueTask OnLocationChanging(LocationChangingContext context)
+    {
+        if (IsDirty && !showNavigationWarning && !_isNavigatingAway)
+        {
+            // Prevent the navigation and show our dialog
+            context.PreventNavigation();
+            pendingNavigationUri = context.TargetLocation;
+            showNavigationWarning = true;
+            StateHasChanged();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void HandleStay()
+    {
+        showNavigationWarning = false;
+        pendingNavigationUri = null;
+    }
+
+    private async Task HandleLeave()
+    {
+        showNavigationWarning = false;
+        _isNavigatingAway = true;  // Prevent re-triggering
+        
+        // Notify that user confirmed leaving
+        await OnLeaveConfirmed.InvokeAsync();
+
+        // Unregister beforeunload before navigation
+        if (jsModule is not null && isRegistered)
+        {
+            try
+            {
+                await jsModule.InvokeVoidAsync("unregisterBeforeUnload");
+                isRegistered = false;
+            }
+            catch (JSDisconnectedException) { }
+        }
+
+        if (!string.IsNullOrEmpty(pendingNavigationUri))
+        {
+            Navigation.NavigateTo(pendingNavigationUri);
+        }
+    }
+
+    private void HandleBackdropClick()
+    {
+        HandleStay();
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            HandleStay();
+        }
+    }
+
+    /// <summary>
+    /// Mark the form as having unsaved changes.
+    /// </summary>
+    public async Task SetDirty(bool dirty = true)
+    {
+        if (IsDirty != dirty)
+        {
+            await IsDirtyChanged.InvokeAsync(dirty);
+        }
+    }
+
+    /// <summary>
+    /// Reset the dirty state (call after successful save).
+    /// </summary>
+    public Task ResetDirty() => SetDirty(false);
+
+    public async ValueTask DisposeAsync()
+    {
+        _locationChangingRegistration?.Dispose();
+        
+        if (jsModule is not null)
+        {
+            try
+            {
+                if (isRegistered)
+                {
+                    await jsModule.InvokeVoidAsync("unregisterBeforeUnload");
+                }
+                await jsModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit disconnected, ignore
+            }
+        }
+    }
+}

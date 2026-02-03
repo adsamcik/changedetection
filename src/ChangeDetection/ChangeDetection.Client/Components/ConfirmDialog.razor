@@ -1,0 +1,160 @@
+@namespace ChangeDetection.Client.Components
+
+<div class="confirm-dialog-backdrop @(IsVisible ? "visible" : "")" @onclick="HandleBackdropClick">
+    <div class="confirm-dialog @(IsVisible ? "visible" : "") @(IsDanger ? "danger" : "")" 
+         @onclick:stopPropagation="true"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="confirm-dialog-title"
+         aria-describedby="confirm-dialog-message"
+         @onkeydown="HandleKeyDown">
+        @if (ShowIcon)
+        {
+            <div class="confirm-dialog-icon @(IsDanger ? "danger" : "")">
+                @if (IsDanger)
+                {
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path fill-rule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clip-rule="evenodd" />
+                    </svg>
+                }
+                else
+                {
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 01.67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 11-.671-1.34l.041-.022zM12 9a.75.75 0 100-1.5.75.75 0 000 1.5z" clip-rule="evenodd" />
+                    </svg>
+                }
+            </div>
+        }
+        
+        <h3 class="confirm-dialog-title" id="confirm-dialog-title">@Title</h3>
+        
+        <p class="confirm-dialog-message" id="confirm-dialog-message">@Message</p>
+        
+        @if (ChildContent != null)
+        {
+            <div class="confirm-dialog-content">
+                @ChildContent
+            </div>
+        }
+        
+        <div class="confirm-dialog-actions">
+            <button class="btn btn-cancel" @onclick="HandleCancel" disabled="@IsProcessing" @ref="_cancelButtonRef">
+                @CancelText
+            </button>
+            <button class="btn @(IsDanger ? "btn-danger" : "btn-confirm")" @onclick="HandleConfirm" disabled="@IsProcessing">
+                @if (IsProcessing)
+                {
+                    <span class="spinner-small"></span>
+                }
+                @ConfirmText
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// Whether the dialog is visible
+    /// </summary>
+    [Parameter]
+    public bool IsVisible { get; set; }
+
+    /// <summary>
+    /// The dialog title
+    /// </summary>
+    [Parameter]
+    public string Title { get; set; } = "Confirm";
+
+    /// <summary>
+    /// The dialog message
+    /// </summary>
+    [Parameter]
+    public string Message { get; set; } = "Are you sure you want to proceed?";
+
+    /// <summary>
+    /// Text for the cancel button
+    /// </summary>
+    [Parameter]
+    public string CancelText { get; set; } = "Cancel";
+
+    /// <summary>
+    /// Text for the confirm button
+    /// </summary>
+    [Parameter]
+    public string ConfirmText { get; set; } = "Confirm";
+
+    /// <summary>
+    /// Whether to show a warning/info icon
+    /// </summary>
+    [Parameter]
+    public bool ShowIcon { get; set; } = true;
+
+    /// <summary>
+    /// Whether this is a dangerous/destructive action (shows red styling)
+    /// </summary>
+    [Parameter]
+    public bool IsDanger { get; set; }
+
+    /// <summary>
+    /// Whether an operation is in progress (disables buttons)
+    /// </summary>
+    [Parameter]
+    public bool IsProcessing { get; set; }
+
+    /// <summary>
+    /// Callback when user confirms
+    /// </summary>
+    [Parameter]
+    public EventCallback OnConfirm { get; set; }
+
+    /// <summary>
+    /// Callback when user cancels
+    /// </summary>
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    /// <summary>
+    /// Optional child content for additional information
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private ElementReference _cancelButtonRef;
+    private bool _previousVisibility;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (IsVisible && !_previousVisibility)
+        {
+            // Focus cancel button when dialog opens
+            await _cancelButtonRef.FocusAsync();
+        }
+        _previousVisibility = IsVisible;
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && !IsProcessing)
+        {
+            await OnCancel.InvokeAsync();
+        }
+    }
+
+    private async Task HandleConfirm()
+    {
+        await OnConfirm.InvokeAsync();
+    }
+
+    private async Task HandleCancel()
+    {
+        await OnCancel.InvokeAsync();
+    }
+
+    private async Task HandleBackdropClick()
+    {
+        if (!IsProcessing)
+        {
+            await OnCancel.InvokeAsync();
+        }
+    }
+}
