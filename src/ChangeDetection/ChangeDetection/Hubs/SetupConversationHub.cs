@@ -536,11 +536,21 @@ public class SetupConversationHub(
                             FetchSettings = new FetchSettings
                             {
                                 UseJavaScript = recoveryResult.Session.FetchedContent?.UsedJavaScript ?? false
-                            }
+                            },
+                            SchemaEnabled = recoveryResult.FinalConfiguration.SchemaEnabled,
+                            Schema = recoveryResult.FinalConfiguration.Schema
                         };
                         
                         createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
                         logger.LogInformation("Created watch {WatchId} after recovery for URL {Url}", createdWatch.Id, createRequest.Url);
+                        
+                        // Mark session as completed so it's excluded from pending list
+                        var convSessionAfterRecovery = sessionManager.GetSession(sessionId);
+                        if (convSessionAfterRecovery != null)
+                        {
+                            convSessionAfterRecovery.IsCompleted = true;
+                            sessionManager.UpdateSession(convSessionAfterRecovery);
+                        }
                         
                         // Broadcast to dashboard group so Home page updates
                         await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("WatchCreated", new WatchCreatedEvent(
@@ -672,11 +682,21 @@ public class SetupConversationHub(
                     FetchSettings = new FetchSettings
                     {
                         UseJavaScript = finalResult.Session.FetchedContent?.UsedJavaScript ?? false
-                    }
+                    },
+                    SchemaEnabled = finalResult.FinalConfiguration.SchemaEnabled,
+                    Schema = finalResult.FinalConfiguration.Schema
                 };
                 
                 createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
                 logger.LogInformation("Created watch {WatchId} for URL {Url}", createdWatch.Id, createRequest.Url);
+                
+                // Mark session as completed so it's excluded from pending list
+                var convSessionAfterCreate = sessionManager.GetSession(sessionId);
+                if (convSessionAfterCreate != null)
+                {
+                    convSessionAfterCreate.IsCompleted = true;
+                    sessionManager.UpdateSession(convSessionAfterCreate);
+                }
                 
                 // Broadcast to dashboard group so Home page updates
                 await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("WatchCreated", new WatchCreatedEvent(
@@ -852,11 +872,23 @@ public class SetupConversationHub(
                 FetchSettings = new FetchSettings
                 {
                     UseJavaScript = pipelineSession.FetchedContent?.UsedJavaScript ?? false
-                }
+                },
+                SchemaEnabled = pipelineSession.SchemaEnabled ?? false,
+                Schema = pipelineSession.DiscoveredSchema != null
+                    ? ConvertToExtractionSchema(pipelineSession.DiscoveredSchema)
+                    : null
             };
             
             var createdWatch = await watchService.CreateWatchAsync(createRequest, ct);
             logger.LogInformation("Created watch {WatchId} for URL {Url}", createdWatch.Id, createRequest.Url);
+            
+            // Mark session as completed so it's excluded from pending list
+            var convSessionAfterFinalize = sessionManager.GetSession(sessionId);
+            if (convSessionAfterFinalize != null)
+            {
+                convSessionAfterFinalize.IsCompleted = true;
+                sessionManager.UpdateSession(convSessionAfterFinalize);
+            }
             
             // Broadcast to dashboard group so Home page updates
             await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("WatchCreated", new WatchCreatedEvent(
@@ -934,6 +966,45 @@ public class SetupConversationHub(
         if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
             return text;
         return text[..maxLength] + "...";
+    }
+
+    private static ExtractionSchema ConvertToExtractionSchema(DiscoveredSchema discovered)
+    {
+        return new ExtractionSchema
+        {
+            ItemSelector = discovered.ItemSelector,
+            Fields = discovered.Fields.Select(f => new SchemaField
+            {
+                Name = f.Name,
+                Type = ParseFieldType(f.Type),
+                Selector = f.Selector,
+                IsRequired = f.IsRequired,
+                IsIdentityField = f.IsIdentityField,
+                SampleValue = f.SampleValues.FirstOrDefault(),
+                Confidence = f.Confidence
+            }).ToList(),
+            IdentityFieldNames = discovered.InferredIdentityFields.ToList(),
+            Version = 1,
+            DiscoveredAt = DateTime.UtcNow
+        };
+    }
+
+    private static FieldType ParseFieldType(string typeString)
+    {
+        return typeString?.ToLowerInvariant() switch
+        {
+            "date" => FieldType.Date,
+            "url" => FieldType.Url,
+            "number" => FieldType.Number,
+            "currency" => FieldType.Currency,
+            "image" => FieldType.Image,
+            "html" => FieldType.Html,
+            "percentage" => FieldType.Percentage,
+            "duration" => FieldType.Duration,
+            "boolean" => FieldType.Boolean,
+            "status" => FieldType.Status,
+            _ => FieldType.String
+        };
     }
 }
 
