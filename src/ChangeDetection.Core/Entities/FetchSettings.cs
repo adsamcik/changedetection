@@ -1,3 +1,5 @@
+using ChangeDetection.Core.Interfaces;
+
 namespace ChangeDetection.Core.Entities;
 
 /// <summary>
@@ -21,9 +23,21 @@ public class FetchSettings
     public string? ProxyUrl { get; set; }
     
     /// <summary>
-    /// Timeout in seconds for the fetch operation.
+    /// Legacy timeout in seconds for the fetch operation.
+    /// Use <see cref="Timeouts"/> for more granular control.
     /// </summary>
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Granular timeout settings for different phases of the fetch operation.
+    /// If null, <see cref="TimeoutSeconds"/> is used with automatic conversion.
+    /// </summary>
+    public TimeoutSettings? Timeouts { get; set; }
+
+    /// <summary>
+    /// Gets effective timeout settings, using granular settings if available.
+    /// </summary>
+    public TimeoutSettings EffectiveTimeouts => Timeouts ?? TimeoutSettings.FromLegacyTimeout(TimeoutSeconds);
     
     /// <summary>
     /// Custom user agent string.
@@ -42,8 +56,14 @@ public class FetchSettings
     
     /// <summary>
     /// Whether to capture a screenshot on each check.
+    /// Deprecated: Use <see cref="Screenshot"/> settings instead.
     /// </summary>
-    public bool CaptureScreenshot { get; set; }
+    [Obsolete("Use Screenshot.Mode instead. This property is maintained for backward compatibility.")]
+    public bool CaptureScreenshot
+    {
+        get => Screenshot.Mode != ScreenshotMode.None;
+        set => Screenshot.Mode = value ? ScreenshotMode.Viewport : ScreenshotMode.None;
+    }
     
     /// <summary>
     /// Viewport width for screenshot capture.
@@ -54,4 +74,9 @@ public class FetchSettings
     /// Viewport height for screenshot capture.
     /// </summary>
     public int ViewportHeight { get; set; } = 1080;
+
+    /// <summary>
+    /// Detailed screenshot capture settings.
+    /// </summary>
+    public ScreenshotSettings Screenshot { get; set; } = new();
 }

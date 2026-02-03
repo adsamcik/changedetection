@@ -36,9 +36,20 @@ public class ChangeSnapshot : IOwnedEntity
     public required string Content { get; set; }
     
     /// <summary>
-    /// Optional screenshot as base64 or file path.
+    /// Path to the full page or viewport screenshot.
     /// </summary>
     public string? ScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Path to the element-specific screenshot (cropped to the monitored element).
+    /// </summary>
+    public string? ElementScreenshotPath { get; set; }
+
+    /// <summary>
+    /// Bounding box of the monitored element in the screenshot (JSON serialized).
+    /// Format: {"x": 0, "y": 0, "width": 100, "height": 100}
+    /// </summary>
+    public string? ElementBoundingBoxJson { get; set; }
     
     /// <summary>
     /// HTTP status code from the fetch.

@@ -127,6 +127,7 @@ public static class PipelineStageNames
     public const string UrlExtraction = "UrlExtraction";
     public const string ContentFetching = "ContentFetching";
     public const string ContentAnalysis = "ContentAnalysis";
+    public const string SchemaDiscovery = "SchemaDiscovery";
     public const string SelectorGeneration = "SelectorGeneration";
     public const string SelectorValidation = "SelectorValidation";
     public const string Configuration = "Configuration";
