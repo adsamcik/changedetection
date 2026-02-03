@@ -1,5 +1,128 @@
 ﻿@page "/not-found"
 @layout MainLayout
 
-<h3>Not Found</h3>
-<p>Sorry, the content you are looking for does not exist.</p>
+<PageTitle>Page Not Found - Change Detection</PageTitle>
+
+<div class="not-found-page">
+    <div class="not-found-content">
+        <div class="not-found-icon">🔍</div>
+        <h1>404 - Page Not Found</h1>
+        <p class="not-found-message">
+            Sorry, we couldn't find the page you're looking for. 
+            It may have been moved, deleted, or never existed.
+        </p>
+        
+        <div class="not-found-suggestions">
+            <h2>What you can do:</h2>
+            <ul>
+                <li>Check the URL for typos</li>
+                <li>Go back to the previous page</li>
+                <li>Use one of the links below to navigate</li>
+            </ul>
+        </div>
+
+        <div class="not-found-actions">
+            <a href="/" class="btn btn-primary">
+                <span class="btn-icon">🏠</span>
+                Dashboard
+            </a>
+            <a href="/settings" class="btn btn-outline">
+                <span class="btn-icon">⚙️</span>
+                Settings
+            </a>
+        </div>
+
+        <p class="not-found-help">
+            Need help? Check your watches on the <a href="/">dashboard</a> or configure your 
+            <a href="/settings">settings</a>.
+        </p>
+    </div>
+</div>
+
+<style>
+    .not-found-page {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 60vh;
+        padding: 2rem;
+    }
+    
+    .not-found-content {
+        text-align: center;
+        max-width: 500px;
+    }
+    
+    .not-found-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+    
+    .not-found-content h1 {
+        color: var(--text-primary, #333);
+        margin-bottom: 0.5rem;
+        font-size: 2rem;
+    }
+    
+    .not-found-message {
+        color: var(--text-muted, #6c757d);
+        margin-bottom: 1.5rem;
+        font-size: 1.1rem;
+    }
+    
+    .not-found-suggestions {
+        background: var(--bg-secondary, #f8f9fa);
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+        text-align: left;
+    }
+    
+    .not-found-suggestions h2 {
+        font-size: 1rem;
+        margin-bottom: 0.75rem;
+        color: var(--text-primary, #333);
+    }
+    
+    .not-found-suggestions ul {
+        margin: 0;
+        padding-left: 1.25rem;
+        color: var(--text-muted, #6c757d);
+    }
+    
+    .not-found-suggestions li {
+        margin-bottom: 0.25rem;
+    }
+    
+    .not-found-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        margin-bottom: 2rem;
+        flex-wrap: wrap;
+    }
+    
+    .not-found-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .not-found-actions .btn-icon {
+        font-size: 1.1rem;
+    }
+    
+    .not-found-help {
+        font-size: 0.875rem;
+        color: var(--text-muted, #6c757d);
+    }
+    
+    .not-found-help a {
+        color: var(--primary, #3b82f6);
+        text-decoration: none;
+    }
+    
+    .not-found-help a:hover {
+        text-decoration: underline;
+    }
+</style>

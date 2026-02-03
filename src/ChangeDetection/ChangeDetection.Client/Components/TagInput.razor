@@ -8,13 +8,13 @@
                 <span class="tag-name">@tag.Name</span>
                 @if (AllowColorOverride)
                 {
-                    <button type="button" class="tag-color-btn" @onclick="() => ShowColorPicker(tag.Name)" @onclick:stopPropagation="true" title="Change color">
+                    <button type="button" class="tag-color-btn" @onclick="() => ShowColorPicker(tag.Name)" @onclick:stopPropagation="true" title="Change color" aria-label="Change color for @tag.Name">
                         🎨
                     </button>
                 }
                 @if (AllowRemove)
                 {
-                    <button type="button" class="tag-remove-btn" @onclick="() => RemoveTag(tag.Name)" @onclick:stopPropagation="true" title="Remove tag">
+                    <button type="button" class="tag-remove-btn" @onclick="() => RemoveTag(tag.Name)" @onclick:stopPropagation="true" title="Remove tag" aria-label="Remove tag @tag.Name">
                         ×
                     </button>
                 }

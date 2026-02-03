@@ -34,7 +34,9 @@
     }
     else
     {
-        <EditForm Model="model" OnValidSubmit="HandleSubmit" class="edit-form">
+        <UnsavedChangesGuard IsDirty="@isDirty">
+        <EditForm Model="model" OnValidSubmit="HandleSubmit" class="edit-form" @oninput="MarkAsDirty">
+
             <DataAnnotationsValidator />
 
             <section class="form-section">
@@ -293,6 +295,14 @@
                         <option value="Critical">Critical - Major changes only</option>
                     </InputSelect>
                 </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <InputCheckbox @bind-Value="model.NotificationSettings.UseLlmSummary" />
+                        <span>Use LLM to summarize changes</span>
+                    </label>
+                    <p class="form-hint">Generate AI-powered summaries of detected changes in notifications. Requires an LLM provider to be configured.</p>
+                </div>
             </section>
 
             @if (!string.IsNullOrEmpty(errorMessage))
@@ -313,6 +323,7 @@
                 </button>
             </div>
         </EditForm>
+        </UnsavedChangesGuard>
     }
 </div>
 
@@ -365,6 +376,7 @@
     private bool isLoading = false;
     private bool isSubmitting = false;
     private string? errorMessage;
+    private bool isDirty = false;
     
     private void OnScheduleModeChanged(ChangeEventArgs e)
     {
@@ -534,6 +546,7 @@
 
             if (response.IsSuccessStatusCode)
             {
+                isDirty = false; // Reset dirty state before navigation
                 var result = await response.Content.ReadFromJsonAsync<WatchDetailDto>();
                 Navigation.NavigateTo($"/watches/{result?.Id ?? Id}");
             }
@@ -553,6 +566,14 @@
         }
     }
     
+    private void MarkAsDirty()
+    {
+        if (!isDirty)
+        {
+            isDirty = true;
+        }
+    }
+
     private static void SetIntervalFields(TimeSpan interval, out int value, out string unit)
     {
         if (interval.TotalDays >= 1)

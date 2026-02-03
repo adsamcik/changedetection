@@ -5,9 +5,9 @@
 }
 
 .category-label {
-    font-weight: 500;
-    color: var(--text-color, #374151);
-    font-size: 0.875rem;
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
 }
 
 .category-options {
@@ -19,24 +19,24 @@
 .category-option {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    border: 2px solid var(--border-color, #e5e7eb);
-    border-radius: 0.5rem;
-    background: var(--card-bg, #fff);
+    gap: var(--spacing-3);
+    padding: var(--spacing-3) var(--spacing-4);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
     cursor: pointer;
     text-align: left;
-    transition: all 0.15s ease;
+    transition: all var(--transition-fast);
 }
 
 .category-option:hover {
-    border-color: var(--category-color, #3b82f6);
-    background: var(--hover-bg, #f9fafb);
+    border-color: var(--color-primary);
+    background: var(--color-bg-secondary);
 }
 
 .category-option.selected {
-    border-color: var(--category-color, #3b82f6);
-    background: color-mix(in srgb, var(--category-color, #3b82f6) 10%, transparent);
+    border-color: var(--color-primary);
+    background: rgba(var(--color-primary-rgb), 0.1);
 }
 
 .category-indicator {
@@ -47,14 +47,14 @@
 }
 
 .category-name {
-    font-weight: 500;
-    color: var(--text-color, #1f2937);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text);
     flex-shrink: 0;
 }
 
 .category-description {
-    color: var(--text-muted, #6b7280);
-    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -64,45 +64,45 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border: 2px dashed var(--border-color, #e5e7eb);
-    border-radius: 0.5rem;
+    gap: var(--spacing-2);
+    padding: var(--spacing-3) var(--spacing-4);
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
     background: transparent;
-    color: var(--text-muted, #6b7280);
+    color: var(--color-text-muted);
     cursor: pointer;
-    font-size: 0.875rem;
-    transition: all 0.15s ease;
+    font-size: var(--font-size-sm);
+    transition: all var(--transition-fast);
 }
 
 .add-category-btn:hover {
-    border-color: var(--primary-color, #3b82f6);
-    color: var(--primary-color, #3b82f6);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
 }
 
 .create-category-form {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 1rem;
-    border: 2px solid var(--border-color, #e5e7eb);
-    border-radius: 0.5rem;
-    background: var(--card-bg, #fff);
+    gap: var(--spacing-3);
+    padding: var(--spacing-4);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
 }
 
 .category-input {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: var(--input-bg, #fff);
-    color: var(--text-color, #1f2937);
-    transition: border-color 0.15s ease;
+    padding: var(--spacing-2) var(--spacing-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    transition: border-color var(--transition-fast);
 }
 
 .category-input:focus {
     outline: none;
-    border-color: var(--primary-color, #3b82f6);
+    border-color: var(--color-primary);
 }
 
 .color-picker-inline {
@@ -114,9 +114,9 @@
     width: 1.5rem;
     height: 1.5rem;
     border: 2px solid transparent;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     cursor: pointer;
-    transition: transform 0.15s ease, border-color 0.15s ease;
+    transition: transform var(--transition-fast), border-color var(--transition-fast);
 }
 
 .color-dot:hover {
@@ -124,7 +124,7 @@
 }
 
 .color-dot.selected {
-    border-color: var(--text-color, #1f2937);
+    border-color: var(--color-text);
     box-shadow: 0 0 0 2px white inset;
 }
 
@@ -141,40 +141,13 @@
 
 .btn-outline {
     background: transparent;
-    border: 1px solid var(--border-color, #e5e7eb);
-    color: var(--text-color, #1f2937);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
 }
 
 .loading {
-    padding: 1rem;
+    padding: var(--spacing-4);
     text-align: center;
-    color: var(--text-muted, #6b7280);
-    font-size: 0.875rem;
-}
-
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-    .category-option {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --hover-bg: #374151;
-        --text-color: #f9fafb;
-        --text-muted: #9ca3af;
-    }
-
-    .create-category-form {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-    }
-
-    .category-input {
-        --input-bg: #374151;
-        --border-color: #4b5563;
-        --text-color: #f9fafb;
-    }
-
-    .add-category-btn {
-        --border-color: #374151;
-        --text-muted: #9ca3af;
-    }
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
 }

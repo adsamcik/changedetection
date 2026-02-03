@@ -8,6 +8,10 @@
 @using ChangeDetection.Client.Components
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject ToastService ToastService
+@inject LocalStorageService LocalStorage
+@inject KeyboardShortcutService ShortcutService
+@inject IJSRuntime JSRuntime
 @implements IAsyncDisposable
 
 <PageTitle>Command Center - Change Detection</PageTitle>
@@ -34,11 +38,42 @@
         </div>
     </section>
 
+    <!-- Health Status Grid -->
+    <section class="health-grid-section">
+        <div class="health-grid">
+            <button class="health-card health-card-total @(IsHealthFilterActive(null) ? "active" : "")" @onclick="() => SetHealthFilter(null)">
+                <div class="health-card-icon">📊</div>
+                <div class="health-card-count">@watches.Count</div>
+                <div class="health-card-label">Total Watches</div>
+            </button>
+            <button class="health-card health-card-healthy @(IsHealthFilterActive("Active") ? "active" : "")" @onclick='() => SetHealthFilter("Active")'>
+                <div class="health-card-icon">✓</div>
+                <div class="health-card-count">@GetHealthyCount()</div>
+                <div class="health-card-label">Active / Healthy</div>
+            </button>
+            <button class="health-card health-card-checking @(IsHealthFilterActive("Checking") ? "active" : "")" @onclick='() => SetHealthFilter("Checking")'>
+                <div class="health-card-icon">⏳</div>
+                <div class="health-card-count">@GetCheckingCount()</div>
+                <div class="health-card-label">Checking</div>
+            </button>
+            <button class="health-card health-card-error @(IsHealthFilterActive("Error") ? "active" : "")" @onclick='() => SetHealthFilter("Error")'>
+                <div class="health-card-icon">⚠</div>
+                <div class="health-card-count">@GetErrorCount()</div>
+                <div class="health-card-label">Errors</div>
+            </button>
+            <button class="health-card health-card-paused @(IsHealthFilterActive("Paused") ? "active" : "")" @onclick='() => SetHealthFilter("Paused")'>
+                <div class="health-card-icon">⏸</div>
+                <div class="health-card-count">@GetPausedCount()</div>
+                <div class="health-card-label">Paused</div>
+            </button>
+        </div>
+    </section>
+
     <!-- Top Bar -->
     <header class="cmd-bar">
         <div class="cmd-search">
             <span class="search-icon">🔍</span>
-            <input type="text" placeholder="Filter watches..." @bind="searchText" @bind:event="oninput" />
+            <input type="text" id="home-search-input" placeholder="Filter watches..." @bind="searchText" @bind:event="oninput" @onblur="HandleSearchBlur" />
         </div>
 
         <div class="cmd-actions">
@@ -66,19 +101,19 @@
                 <span>@selectedWatchIds.Count selected</span>
             </div>
             <div class="bulk-actions">
-                <button class="btn-bulk" @onclick="BulkEnable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Enable selected watches">
+                <button class="btn-bulk" @onclick="BulkEnable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Enable selected watches" aria-label="Enable selected watches">
                     <span class="icon">✓</span> Enable
                 </button>
-                <button class="btn-bulk" @onclick="BulkDisable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Disable selected watches">
+                <button class="btn-bulk" @onclick="BulkDisable" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Disable selected watches" aria-label="Disable selected watches">
                     <span class="icon">⏸</span> Disable
                 </button>
-                <button class="btn-bulk" @onclick="BulkCheck" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Check selected watches now">
+                <button class="btn-bulk" @onclick="BulkCheck" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Check selected watches now" aria-label="Check selected watches now">
                     <span class="icon">▶</span> Check Now
                 </button>
-                <button class="btn-bulk btn-bulk-edit" @onclick="OpenBulkEditDialog" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Edit selected watches">
+                <button class="btn-bulk btn-bulk-edit" @onclick="OpenBulkEditDialog" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Edit selected watches" aria-label="Edit selected watches">
                     <span class="icon">✎</span> Edit
                 </button>
-                <button class="btn-bulk btn-bulk-danger" @onclick="BulkDelete" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Delete selected watches">
+                <button class="btn-bulk btn-bulk-danger" @onclick="BulkDelete" disabled="@(selectedWatchIds.Count == 0 || isBulkOperating)" title="Delete selected watches" aria-label="Delete selected watches">
                     <span class="icon">🗑</span> Delete
                 </button>
             </div>
@@ -138,19 +173,20 @@
                             <tr>
                                 @if (isBulkMode)
                                 {
-                                    <th width="40" class="checkbox-cell">
+                                    <th scope="col" width="40" class="checkbox-cell">
                                         <input type="checkbox" 
                                                checked="@IsAllSelected" 
                                                @onchange="ToggleSelectAll" 
-                                               title="Select all" />
+                                               title="Select all" 
+                                               aria-label="Select all watches" />
                                     </th>
                                 }
-                                <th width="40">St</th>
-                                <th>Name / URL</th>
-                                <th width="120">Last Check</th>
-                                <th width="120">Last Change</th>
-                                <th>Tags</th>
-                                <th width="120" class="text-right">Actions</th>
+                                <th scope="col" width="40">St</th>
+                                <th scope="col">Name / URL</th>
+                                <th scope="col" width="120">Last Check</th>
+                                <th scope="col" width="120">Last Change</th>
+                                <th scope="col">Tags</th>
+                                <th scope="col" width="120" class="text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -197,8 +233,8 @@
                                         <span class="tag-badge @GetSetupTagClass(setup)">@GetSetupTagText(setup)</span>
                                     </td>
                                     <td class="actions-cell" @onclick:stopPropagation>
-                                        <button class="btn-icon btn-resume" title="@(setup.IsProcessing ? "View Progress" : "Resume Setup")" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
-                                        <button class="btn-icon btn-cancel" title="Cancel Setup" @onclick="() => CancelSetup(setup.SessionId)">✕</button>
+                                        <button class="btn-icon btn-resume" title="@(setup.IsProcessing ? "View Progress" : "Resume Setup")" aria-label="@(setup.IsProcessing ? "View Progress" : "Resume Setup")" @onclick="() => ResumeSetup(setup.SessionId)">→</button>
+                                        <button class="btn-icon btn-cancel" title="Cancel Setup" aria-label="Cancel Setup" @onclick="() => CancelSetup(setup.SessionId)">✕</button>
                                     </td>
                                 </tr>
                             }
@@ -252,8 +288,8 @@
                                         }
                                     </td>
                                     <td class="actions-cell" @onclick:stopPropagation>
-                                        <button class="btn-icon" title="Check Now" @onclick="() => TriggerCheck(watch.Id)">▶</button>
-                                        <button class="btn-icon" title="Edit" @onclick="() => NavigateToEdit(watch.Id)">✎</button>
+                                        <button class="btn-icon" title="Check Now" aria-label="Check Now" @onclick="() => TriggerCheck(watch.Id)">▶</button>
+                                        <button class="btn-icon" title="Edit" aria-label="Edit" @onclick="() => NavigateToEdit(watch.Id)">✎</button>
                                     </td>
                                 </tr>
                             }
@@ -288,26 +324,177 @@
                         </div>
                     </div>
                 }
-                @* Then show recent changes *@
+                @* Then show grouped recent changes by time bucket *@
                 @if (recentChanges.Any())
                 {
-                    @foreach (var change in recentChanges)
+                    @foreach (var bucket in GetTimeBuckets())
                     {
-                        <div class="feed-item" @onclick="() => NavigateToChange(change.Id)">
-                            <div class="feed-icon">@GetImportanceIcon(change.Importance)</div>
-                            <div class="feed-content">
-                                <div class="feed-title">@change.WatchTitle</div>
-                                <div class="feed-summary">@TruncateSummary(change.Summary, 60)</div>
-                                <div class="feed-time">@FormatTimeAgo(change.DetectedAt)</div>
-                            </div>
-                        </div>
+                        var bucketGroups = GetGroupedChangesForBucket(bucket);
+                        @if (bucketGroups.Any())
+                        {
+                            <div class="time-bucket-header">@bucket</div>
+                            @foreach (var group in bucketGroups)
+                            {
+                                @if (group.Changes.Count == 1)
+                                {
+                                    var change = group.Changes[0];
+                                    <div class="feed-item @GetImportanceClass(change.Importance) @(change.IsViewed ? "" : "unread")" @onclick="() => NavigateToChange(change.Id)">
+                                        <div class="feed-icon-wrapper">
+                                            @if (change.Importance == "High")
+                                            {
+                                                <span class="feed-icon importance-high">🔴</span>
+                                            }
+                                            else if (change.Importance == "Medium")
+                                            {
+                                                <span class="feed-icon importance-medium">🟡</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="feed-icon">🟢</span>
+                                            }
+                                        </div>
+                                        <div class="feed-content">
+                                            <div class="feed-title-row">
+                                                <span class="feed-title">@change.WatchTitle</span>
+                                                @if (change.Importance != "Low")
+                                                {
+                                                    <span class="importance-badge @change.Importance.ToLower()">@change.Importance</span>
+                                                }
+                                            </div>
+                                            <div class="feed-summary">@TruncateSummary(change.Summary, 60)</div>
+                                            <div class="feed-time">@FormatTimeAgo(change.DetectedAt)</div>
+                                        </div>
+                                        <div class="feed-actions">
+                                            <button class="feed-action-btn" title="View change" @onclick="() => NavigateToChange(change.Id)" @onclick:stopPropagation>👁</button>
+                                            <button class="feed-action-btn" title="Mark as read" @onclick="() => MarkAsRead(change.Id)" @onclick:stopPropagation>✓</button>
+                                            <div class="snooze-dropdown" @onclick:stopPropagation>
+                                                <button class="feed-action-btn" title="Snooze" aria-label="Snooze notifications">💤</button>
+                                                <div class="snooze-menu">
+                                                    <button @onclick="() => SnoozeWatch(change.WatchId, 1)">1 hour</button>
+                                                    <button @onclick="() => SnoozeWatch(change.WatchId, 4)">4 hours</button>
+                                                    <button @onclick="() => SnoozeWatch(change.WatchId, 24)">24 hours</button>
+                                                    <button @onclick="() => SnoozeWatch(change.WatchId, 168)">1 week</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    var isExpanded = expandedGroups.Contains(group.WatchId);
+                                    var highestImportance = group.Changes.OrderByDescending(c => GetImportanceOrder(c.Importance)).First().Importance;
+                                    var hasUnread = group.Changes.Any(c => !c.IsViewed);
+                                    <div class="feed-group @GetImportanceClass(highestImportance) @(hasUnread ? "unread" : "")">
+                                        <div class="feed-group-header" @onclick="() => ToggleGroupExpand(group.WatchId)">
+                                            <div class="feed-icon-wrapper">
+                                                @if (highestImportance == "High")
+                                                {
+                                                    <span class="feed-icon importance-high">🔴</span>
+                                                }
+                                                else if (highestImportance == "Medium")
+                                                {
+                                                    <span class="feed-icon importance-medium">🟡</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="feed-icon">🟢</span>
+                                                }
+                                            </div>
+                                            <div class="feed-content">
+                                                <div class="feed-title-row">
+                                                    <span class="feed-title">@group.WatchTitle</span>
+                                                    <span class="group-count">@group.Changes.Count changes</span>
+                                                </div>
+                                                <div class="feed-summary">@group.Changes.Count changes in the last @GetBucketDuration(bucket)</div>
+                                                <div class="feed-time">Latest: @FormatTimeAgo(group.Changes.Max(c => c.DetectedAt))</div>
+                                            </div>
+                                            <span class="expand-icon">@(isExpanded ? "▼" : "▶")</span>
+                                        </div>
+                                        @if (isExpanded)
+                                        {
+                                            <div class="feed-group-items">
+                                                @foreach (var change in group.Changes.OrderByDescending(c => c.DetectedAt))
+                                                {
+                                                    <div class="feed-item nested @GetImportanceClass(change.Importance) @(change.IsViewed ? "" : "unread")" @onclick="() => NavigateToChange(change.Id)">
+                                                        <div class="feed-icon-wrapper">
+                                                            @if (change.Importance == "High")
+                                                            {
+                                                                <span class="feed-icon importance-high">🔴</span>
+                                                            }
+                                                            else if (change.Importance == "Medium")
+                                                            {
+                                                                <span class="feed-icon importance-medium">🟡</span>
+                                                            }
+                                                            else
+                                                            {
+                                                                <span class="feed-icon">🟢</span>
+                                                            }
+                                                        </div>
+                                                        <div class="feed-content">
+                                                            <div class="feed-title-row">
+                                                                <span class="feed-summary">@TruncateSummary(change.Summary, 50)</span>
+                                                                @if (change.Importance != "Low")
+                                                                {
+                                                                    <span class="importance-badge @change.Importance.ToLower()">@change.Importance</span>
+                                                                }
+                                                            </div>
+                                                            <div class="feed-time">@FormatTimeAgo(change.DetectedAt)</div>
+                                                        </div>
+                                                        <div class="feed-actions">
+                                                            <button class="feed-action-btn" title="View change" @onclick="() => NavigateToChange(change.Id)" @onclick:stopPropagation>👁</button>
+                                                            <button class="feed-action-btn" title="Mark as read" @onclick="() => MarkAsRead(change.Id)" @onclick:stopPropagation>✓</button>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                        <div class="feed-group-actions">
+                                            <button class="feed-action-btn-text" @onclick="() => MarkGroupAsRead(group.WatchId)" @onclick:stopPropagation>Mark all read</button>
+                                            <div class="snooze-dropdown" @onclick:stopPropagation>
+                                                <button class="feed-action-btn-text" aria-label="Snooze notifications">Snooze ▾</button>
+                                                <div class="snooze-menu">
+                                                    <button @onclick="() => SnoozeWatch(group.WatchId, 1)">1 hour</button>
+                                                    <button @onclick="() => SnoozeWatch(group.WatchId, 4)">4 hours</button>
+                                                    <button @onclick="() => SnoozeWatch(group.WatchId, 24)">24 hours</button>
+                                                    <button @onclick="() => SnoozeWatch(group.WatchId, 168)">1 week</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        }
                     }
                 }
                 else if (!GetCheckingWatches().Any())
                 {
-                    <div class="empty-feed">No recent activity</div>
+                    <div class="empty-feed">
+                        <div class="empty-feed-icon">📭</div>
+                        <div class="empty-feed-title">No recent activity</div>
+                        <div class="empty-feed-hint">Changes will appear here when detected</div>
+                    </div>
                 }
             </div>
+            
+            @* Snoozed Watches Section *@
+            @if (snoozedWatchIds.Any())
+            {
+                <div class="snoozed-section">
+                    <div class="snoozed-header">Snoozed (@snoozedWatchIds.Count)</div>
+                    @foreach (var watchId in snoozedWatchIds.ToList())
+                    {
+                        var watch = watches.FirstOrDefault(w => w.Id == watchId);
+                        if (watch != null && IsWatchSnoozed(watchId))
+                        {
+                            <div class="snoozed-item">
+                                <span class="snoozed-item-title">@(watch.Title ?? watch.Url)</span>
+                                <span class="snoozed-item-time">until @FormatSnoozeExpiration(watchId)</span>
+                                <button class="snoozed-item-unsnooze" @onclick="() => UnsnoozeWatch(watchId)" aria-label="Un-snooze">🔔</button>
+                            </div>
+                        }
+                    }
+                </div>
+            }
         </div>
     </div>
 
@@ -403,6 +590,16 @@
     </div>
 }
 
+@* Bulk Delete Confirmation Dialog *@
+<ConfirmDialog IsVisible="@showBulkDeleteConfirm"
+               Title="Delete Watches"
+               Message="@GetBulkDeleteMessage()"
+               ConfirmText="Delete"
+               IsDanger="true"
+               IsProcessing="@isBulkOperating"
+               OnConfirm="ConfirmBulkDelete"
+               OnCancel="CancelBulkDelete" />
+
 @code {
     [Parameter]
     public string? ViewId { get; set; }
@@ -416,6 +613,12 @@
     private string? creationMessage;
     private bool creationIsError;
 
+    // Activity feed grouping state
+    private HashSet<string> expandedGroups = [];
+    private HashSet<string> snoozedWatchIds = [];
+    private Dictionary<string, DateTime> snoozeExpirations = [];
+    private const string SnoozeStorageKey = "changedetection_snoozed_watches";
+
     // Bulk editing state
     private bool isBulkMode;
     private HashSet<string> selectedWatchIds = [];
@@ -423,6 +626,7 @@
     private string? bulkOperationMessage;
     private bool bulkOperationIsError;
     private bool showBulkEditDialog;
+    private bool showBulkDeleteConfirm;
     
     // Bulk edit form model
     private BulkEditModel bulkEditModel = new();
@@ -480,10 +684,32 @@
     // New fields
     private bool isCheckingAll;
 
-    private IEnumerable<WatchListItemDto> FilteredWatches
+    // Cache fields for FilteredWatches
+    private IReadOnlyList<WatchListItemDto>? _cachedFilteredWatches;
+    private string? _lastSearchText;
+    private string? _lastStatusFilter;
+    private bool? _lastChangedRecentlyFilter;
+    private int _lastWatchesCount;
+
+    // Cache fields for health counts
+    private (int healthy, int checking, int error, int paused) _healthCounts;
+    private bool _healthCountsValid;
+
+    private IReadOnlyList<WatchListItemDto> FilteredWatches
     {
         get
         {
+            // Check if cache is valid
+            if (_cachedFilteredWatches is not null &&
+                _lastSearchText == searchText &&
+                _lastStatusFilter == activeStatusFilter &&
+                _lastChangedRecentlyFilter == changedRecentlyFilter &&
+                _lastWatchesCount == watches.Count)
+            {
+                return _cachedFilteredWatches;
+            }
+
+            // Recompute and cache
             var query = watches.AsEnumerable();
 
             if (!string.IsNullOrWhiteSpace(searchText))
@@ -499,25 +725,149 @@
             {
                 query = query.Where(w => w.HasRecentChanges);
             }
+            else if (activeStatusFilter == "Paused")
+            {
+                query = query.Where(w => !w.IsEnabled);
+            }
             else if (activeStatusFilter != null)
             {
                 query = query.Where(w => w.Status == activeStatusFilter);
             }
 
-            return query.OrderByDescending(w => w.LastCheck);
+            _cachedFilteredWatches = query.OrderByDescending(w => w.LastCheck).ToList();
+            _lastSearchText = searchText;
+            _lastStatusFilter = activeStatusFilter;
+            _lastChangedRecentlyFilter = changedRecentlyFilter;
+            _lastWatchesCount = watches.Count;
+
+            return _cachedFilteredWatches;
         }
+    }
+
+    private void InvalidateCache()
+    {
+        _cachedFilteredWatches = null;
+        _healthCountsValid = false;
+    }
+
+    // Health grid count methods with caching
+    private void UpdateHealthCounts()
+    {
+        if (_healthCountsValid) return;
+
+        int healthy = 0, checking = 0, error = 0, paused = 0;
+
+        foreach (var w in watches)
+        {
+            // Categories are MUTUALLY EXCLUSIVE - each watch counts in exactly ONE category
+            if (!w.IsEnabled)
+            {
+                // Disabled/Paused takes precedence
+                paused++;
+            }
+            else if (w.Status == "Checking")
+            {
+                // Currently checking
+                checking++;
+            }
+            else if (w.Status == "Error")
+            {
+                // Has error STATUS (not just LastError - LastError could be stale)
+                error++;
+            }
+            else
+            {
+                // Everything else is healthy (Active, Success, etc.)
+                healthy++;
+            }
+        }
+
+        _healthCounts = (healthy, checking, error, paused);
+        _healthCountsValid = true;
+    }
+
+    private int GetHealthyCount() { UpdateHealthCounts(); return _healthCounts.healthy; }
+
+    private int GetCheckingCount() { UpdateHealthCounts(); return _healthCounts.checking; }
+
+    private int GetErrorCount() { UpdateHealthCounts(); return _healthCounts.error; }
+
+    private int GetPausedCount() { UpdateHealthCounts(); return _healthCounts.paused; }
+
+    private bool IsHealthFilterActive(string? filter)
+    {
+        if (changedRecentlyFilter) return false;
+        return activeStatusFilter == filter;
+    }
+
+    private void SetHealthFilter(string? filter)
+    {
+        activeStatusFilter = filter;
+        changedRecentlyFilter = false;
+        _ = PersistFiltersAsync();
     }
 
     private void SetFilter(string? status)
     {
         activeStatusFilter = status;
         changedRecentlyFilter = false;
+        _ = PersistFiltersAsync();
     }
 
     private void ToggleChangedFilter()
     {
         changedRecentlyFilter = !changedRecentlyFilter;
         activeStatusFilter = null;
+        _ = PersistFiltersAsync();
+    }
+
+    private async Task PersistFiltersAsync()
+    {
+        await LocalStorage.SetItemAsync(LocalStorageKeys.HomeStatusFilter, activeStatusFilter ?? "");
+        await LocalStorage.SetItemAsync(LocalStorageKeys.HomeChangedRecently, changedRecentlyFilter.ToString());
+    }
+
+    private async Task PersistSearchTextAsync()
+    {
+        await LocalStorage.SetItemAsync(LocalStorageKeys.HomeSearchText, searchText);
+    }
+
+    private void HandleSearchBlur()
+    {
+        _ = PersistSearchTextAsync();
+    }
+
+    private void HandleFocusSearch()
+    {
+        _ = FocusSearchInputAsync();
+    }
+
+    private async Task FocusSearchInputAsync()
+    {
+        if (_keyboardModule is not null)
+        {
+            try
+            {
+                await _keyboardModule.InvokeVoidAsync("focusElement", "home-search-input");
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit disconnected, ignore
+            }
+        }
+    }
+
+    private void HandleRefreshRequested()
+    {
+        _ = RefreshWatchesAsync();
+    }
+
+    private async Task RefreshWatchesAsync()
+    {
+        await LoadWatches();
+        await LoadRecentChanges();
+        await InvokeAsync(StateHasChanged);
+        ToastService.ShowSuccess("Watches refreshed");
     }
 
     private void NavigateToEdit(string watchId)
@@ -525,11 +875,69 @@
         Navigation.NavigateTo($"/watches/{watchId}/edit");
     }
 
+    // JS module reference for keyboard shortcuts
+    private IJSObjectReference? _keyboardModule;
+
     protected override async Task OnInitializedAsync()
     {
+        // Subscribe to keyboard shortcut events
+        ShortcutService.OnFocusSearch += HandleFocusSearch;
+        ShortcutService.OnRefreshRequested += HandleRefreshRequested;
+
         await InitializeSignalR();
         await LoadWatches();
         await LoadRecentChanges();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Import keyboard shortcuts module for focusing elements
+            try
+            {
+                _keyboardModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                    "import", "./js/keyboard-shortcuts.js");
+            }
+            catch (InvalidOperationException)
+            {
+                // Pre-rendering, ignore
+            }
+
+            // Restore persisted filter state from localStorage
+            var savedStatusFilter = await LocalStorage.GetItemAsync(LocalStorageKeys.HomeStatusFilter);
+            var savedChangedRecently = await LocalStorage.GetItemAsync(LocalStorageKeys.HomeChangedRecently);
+            var savedSearchText = await LocalStorage.GetItemAsync(LocalStorageKeys.HomeSearchText);
+
+            var stateChanged = false;
+
+            if (!string.IsNullOrEmpty(savedStatusFilter))
+            {
+                activeStatusFilter = savedStatusFilter;
+                stateChanged = true;
+            }
+
+            if (!string.IsNullOrEmpty(savedChangedRecently) && bool.TryParse(savedChangedRecently, out var changedRecently) && changedRecently)
+            {
+                changedRecentlyFilter = true;
+                activeStatusFilter = null; // changedRecentlyFilter takes precedence
+                stateChanged = true;
+            }
+
+            if (!string.IsNullOrEmpty(savedSearchText))
+            {
+                searchText = savedSearchText;
+                stateChanged = true;
+            }
+
+            // Load snooze state from localStorage
+            await LoadSnoozeStateAsync();
+
+            if (stateChanged || snoozedWatchIds.Any())
+            {
+                StateHasChanged();
+            }
+        }
     }
 
     private async Task InitializeSignalR()
@@ -547,8 +955,11 @@
 
         hubConnection.On<object>("ChangeDetected", async (data) =>
         {
-            await LoadRecentChanges();
-            await InvokeAsync(StateHasChanged);
+            await InvokeAsync(async () =>
+            {
+                await LoadRecentChanges();
+                StateHasChanged();
+            });
         });
 
         hubConnection.On<System.Text.Json.JsonElement>("WatchStatusChanged", async (data) =>
@@ -569,81 +980,70 @@
                 activeProcessing.Remove(watchId);
             }
             
-            // Refresh watches to get updated status
-            await LoadWatches();
-            await InvokeAsync(StateHasChanged);
+            // Refresh watches to get updated status - must use InvokeAsync since we're on SignalR thread
+            await InvokeAsync(async () =>
+            {
+                await LoadWatches();
+                StateHasChanged();
+            });
         });
 
         hubConnection.On<object>("WatchCreated", async (data) =>
         {
             // Refresh watches when a new watch is created
-            await LoadWatches();
-            await InvokeAsync(StateHasChanged);
+            await InvokeAsync(async () =>
+            {
+                await LoadWatches();
+                StateHasChanged();
+            });
         });
 
         hubConnection.On<System.Text.Json.JsonElement>("SetupSessionUpdated", async (data) =>
         {
-            // Handle setup session updates in real-time
-            var sessionId = data.GetProperty("sessionId").GetGuid();
-            var isCompleted = data.GetProperty("isCompleted").GetBoolean();
-            var isCancelled = data.GetProperty("isCancelled").GetBoolean();
-            
-            if (isCompleted || isCancelled)
+            await InvokeAsync(() =>
             {
-                // Remove session from pending list
-                pendingSetups.RemoveAll(s => s.SessionId == sessionId);
-            }
-            else
-            {
-                // Add or update session in pending list
-                var displayName = data.GetProperty("displayName").GetString() ?? "New Watch";
-                var isProcessing = data.GetProperty("isProcessing").GetBoolean();
-                string? currentPrompt = null;
-                if (data.TryGetProperty("currentPrompt", out var promptProp) && promptProp.ValueKind != System.Text.Json.JsonValueKind.Null)
+                try
                 {
-                    currentPrompt = promptProp.GetString();
-                }
-                
-                string? currentStage = null;
-                if (data.TryGetProperty("currentStage", out var stageProp) && stageProp.ValueKind != System.Text.Json.JsonValueKind.Null)
-                {
-                    currentStage = stageProp.GetString();
-                }
-                
-                var existing = pendingSetups.FirstOrDefault(s => s.SessionId == sessionId);
-                if (existing != null)
-                {
-                    existing.DisplayName = displayName;
-                    existing.IsProcessing = isProcessing;
-                    existing.CurrentPrompt = currentPrompt;
-                    existing.CurrentStage = currentStage;
-                    existing.LastActivityAt = DateTimeOffset.UtcNow;
-                }
-                else
-                {
-                    pendingSetups.Insert(0, new PendingSetupDto
+                    var sessionId = data.GetProperty("sessionId").GetGuid();
+                    var isCompleted = data.TryGetProperty("isCompleted", out var completedProp) && completedProp.GetBoolean();
+                    var isCancelled = data.TryGetProperty("isCancelled", out var cancelledProp) && cancelledProp.GetBoolean();
+
+                    if (isCompleted || isCancelled)
                     {
-                        SessionId = sessionId,
-                        DisplayName = displayName,
-                        IsProcessing = isProcessing,
-                        CurrentPrompt = currentPrompt,
-                        CurrentStage = currentStage,
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        LastActivityAt = DateTimeOffset.UtcNow
-                    });
+                        // Remove from pending setups
+                        pendingSetups.RemoveAll(s => s.SessionId == sessionId);
+                    }
+                    else
+                    {
+                        // Update the session in the list
+                        var existing = pendingSetups.FirstOrDefault(s => s.SessionId == sessionId);
+                        if (existing != null)
+                        {
+                            existing.IsProcessing = data.TryGetProperty("isProcessing", out var processingProp) && processingProp.GetBoolean();
+                            existing.CurrentPrompt = data.TryGetProperty("currentPrompt", out var promptProp) ? promptProp.GetString() : null;
+                            if (data.TryGetProperty("displayName", out var nameProp))
+                            {
+                                existing.DisplayName = nameProp.GetString() ?? existing.DisplayName;
+                            }
+                        }
+                    }
+                    StateHasChanged();
                 }
-            }
-            
-            await InvokeAsync(StateHasChanged);
+                catch
+                {
+                    // Ignore parsing errors
+                }
+                return Task.CompletedTask;
+            });
         });
 
         try
         {
             await hubConnection.StartAsync();
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+            // SignalR connection failed - page will operate without real-time updates
         }
     }
 
@@ -665,6 +1065,7 @@
             if (response.IsSuccessStatusCode)
             {
                 watches = await response.Content.ReadFromJsonAsync<List<WatchListItemDto>>() ?? [];
+                InvalidateCache(); // Invalidate cache when watches change
             }
             else
             {
@@ -815,6 +1216,237 @@
         _ => "🟢"
     };
 
+    // ============================================================================
+    // Activity Feed Grouping
+    // ============================================================================
+
+    /// <summary>
+    /// Represents a group of changes for the same watch within a time bucket.
+    /// </summary>
+    private record ChangeGroup(string WatchId, string WatchTitle, List<ChangeListItemDto> Changes);
+
+    /// <summary>
+    /// Gets the available time buckets for the activity feed.
+    /// </summary>
+    private static IEnumerable<string> GetTimeBuckets() =>
+    [
+        "Just now",
+        "Last hour",
+        "Today",
+        "Yesterday",
+        "This week",
+        "Older"
+    ];
+
+    /// <summary>
+    /// Gets the duration description for a time bucket.
+    /// </summary>
+    private static string GetBucketDuration(string bucket) => bucket switch
+    {
+        "Just now" => "5 minutes",
+        "Last hour" => "hour",
+        "Today" => "day",
+        "Yesterday" => "day",
+        "This week" => "week",
+        _ => "period"
+    };
+
+    /// <summary>
+    /// Determines which time bucket a change belongs to.
+    /// Uses local time for date-based comparisons since "Today" and "Yesterday" are local concepts.
+    /// </summary>
+    private static string GetTimeBucket(DateTime utcTime)
+    {
+        var now = DateTime.Now;  // Local time
+        var localTime = utcTime.ToLocalTime();  // Convert UTC to local
+        var diff = now - localTime;
+
+        if (diff.TotalMinutes < 5) return "Just now";
+        if (diff.TotalHours < 1) return "Last hour";
+        
+        // Use local dates for day comparisons
+        if (localTime.Date == now.Date) return "Today";
+        if (localTime.Date == now.Date.AddDays(-1)) return "Yesterday";
+        
+        if (diff.TotalDays < 7) return "This week";
+        return "Older";
+    }
+
+    /// <summary>
+    /// Groups changes by watch within a time bucket.
+    /// </summary>
+    private IEnumerable<ChangeGroup> GetGroupedChangesForBucket(string bucket)
+    {
+        // Filter changes for this bucket, excluding snoozed watches
+        var bucketChanges = recentChanges
+            .Where(c => GetTimeBucket(c.DetectedAt) == bucket)
+            .Where(c => !IsWatchSnoozed(c.WatchId))
+            .ToList();
+
+        // Group by watch
+        return bucketChanges
+            .GroupBy(c => c.WatchId)
+            .Select(g => new ChangeGroup(
+                g.Key,
+                g.First().WatchTitle ?? "Unknown",
+                g.OrderByDescending(c => c.DetectedAt).ToList()))
+            .OrderByDescending(g => g.Changes.Max(c => c.DetectedAt));
+    }
+
+    /// <summary>
+    /// Checks if a watch is currently snoozed.
+    /// </summary>
+    private bool IsWatchSnoozed(string watchId)
+    {
+        if (!snoozeExpirations.TryGetValue(watchId, out var expiration))
+            return false;
+
+        if (DateTime.UtcNow >= expiration)
+        {
+            snoozeExpirations.Remove(watchId);
+            snoozedWatchIds.Remove(watchId);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the CSS class based on importance level.
+    /// </summary>
+    private static string GetImportanceClass(string importance) => importance switch
+    {
+        "High" => "importance-high-item",
+        "Medium" => "importance-medium-item",
+        _ => ""
+    };
+
+    /// <summary>
+    /// Gets the numeric order for importance (for sorting).
+    /// </summary>
+    private static int GetImportanceOrder(string importance) => importance switch
+    {
+        "High" => 3,
+        "Medium" => 2,
+        _ => 1
+    };
+
+    /// <summary>
+    /// Toggles the expanded state of a change group.
+    /// </summary>
+    private void ToggleGroupExpand(string watchId)
+    {
+        if (!expandedGroups.Add(watchId))
+        {
+            expandedGroups.Remove(watchId);
+        }
+    }
+
+    /// <summary>
+    /// Marks a single change as read.
+    /// </summary>
+    private async Task MarkAsRead(string changeId)
+    {
+        try
+        {
+            await Http.PostAsync($"/api/changes/{changeId}/view", null);
+            var change = recentChanges.FirstOrDefault(c => c.Id == changeId);
+            if (change != null)
+            {
+                change.IsViewed = true;
+            }
+            StateHasChanged();
+        }
+        catch
+        {
+            // Silently fail - not critical
+        }
+    }
+
+    /// <summary>
+    /// Marks all changes for a watch as read.
+    /// </summary>
+    private async Task MarkGroupAsRead(string watchId)
+    {
+        var changes = recentChanges.Where(c => c.WatchId == watchId && !c.IsViewed).ToList();
+        foreach (var change in changes)
+        {
+            try
+            {
+                await Http.PostAsync($"/api/changes/{change.Id}/view", null);
+                change.IsViewed = true;
+            }
+            catch
+            {
+                // Continue with next
+            }
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Snoozes a watch from the activity feed for the specified number of hours.
+    /// </summary>
+    private async Task SnoozeWatch(string watchId, int hours)
+    {
+        snoozedWatchIds.Add(watchId);
+        snoozeExpirations[watchId] = DateTime.UtcNow.AddHours(hours);
+        await SaveSnoozeStateAsync();
+        ToastService.ShowInfo($"Snoozed for {hours} hour(s)");
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Un-snoozes a watch, resuming activity feed notifications.
+    /// </summary>
+    private async Task UnsnoozeWatch(string watchId)
+    {
+        snoozedWatchIds.Remove(watchId);
+        snoozeExpirations.Remove(watchId);
+        await SaveSnoozeStateAsync();
+        ToastService.ShowInfo("Watch un-snoozed");
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Saves snooze state to localStorage.
+    /// </summary>
+    private async Task SaveSnoozeStateAsync()
+    {
+        var snoozeData = snoozeExpirations
+            .Where(kvp => kvp.Value > DateTime.UtcNow)  // Only save unexpired
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToString("o"));
+        
+        await LocalStorage.SetItemAsync(SnoozeStorageKey, JsonSerializer.Serialize(snoozeData));
+    }
+
+    /// <summary>
+    /// Loads snooze state from localStorage.
+    /// </summary>
+    private async Task LoadSnoozeStateAsync()
+    {
+        try
+        {
+            var json = await LocalStorage.GetItemAsync(SnoozeStorageKey);
+            if (!string.IsNullOrEmpty(json))
+            {
+                var snoozeData = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                if (snoozeData != null)
+                {
+                    foreach (var kvp in snoozeData)
+                    {
+                        if (DateTime.TryParse(kvp.Value, out var expiration) && expiration > DateTime.UtcNow)
+                        {
+                            snoozedWatchIds.Add(kvp.Key);
+                            snoozeExpirations[kvp.Key] = expiration;
+                        }
+                    }
+                }
+            }
+        }
+        catch { /* Ignore corrupt data */ }
+    }
+
     private static string TruncateSummary(string text, int maxLength)
     {
         if (string.IsNullOrEmpty(text)) return "";
@@ -829,6 +1461,18 @@
         if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
         if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
         return $"{(int)diff.TotalDays}d ago";
+    }
+
+    private string FormatSnoozeExpiration(string watchId)
+    {
+        if (!snoozeExpirations.TryGetValue(watchId, out var expiration))
+            return "unknown";
+
+        var diff = expiration - DateTime.UtcNow;
+        if (diff.TotalMinutes < 1) return "< 1m";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h";
+        return $"{(int)diff.TotalDays}d";
     }
 
     private string GetDisplayTitle(WatchListItemDto watch)
@@ -926,24 +1570,27 @@
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
-                bulkOperationMessage = $"Enabled {result?.SuccessCount ?? 0} watches";
+                var message = $"Enabled {result?.SuccessCount ?? 0} watches";
                 if (result?.FailureCount > 0)
                 {
-                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                    message += $" ({result.FailureCount} failed)";
+                    ToastService.ShowWarning(message);
+                }
+                else
+                {
+                    ToastService.ShowSuccess(message);
                 }
                 await LoadWatches();
                 selectedWatchIds.Clear();
             }
             else
             {
-                bulkOperationMessage = "Failed to enable watches";
-                bulkOperationIsError = true;
+                ToastService.ShowError("Failed to enable watches");
             }
         }
         catch (Exception ex)
         {
-            bulkOperationMessage = $"Error: {ex.Message}";
-            bulkOperationIsError = true;
+            ToastService.ShowError($"Error: {ex.Message}");
         }
         finally
         {
@@ -969,24 +1616,27 @@
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
-                bulkOperationMessage = $"Disabled {result?.SuccessCount ?? 0} watches";
+                var message = $"Disabled {result?.SuccessCount ?? 0} watches";
                 if (result?.FailureCount > 0)
                 {
-                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                    message += $" ({result.FailureCount} failed)";
+                    ToastService.ShowWarning(message);
+                }
+                else
+                {
+                    ToastService.ShowSuccess(message);
                 }
                 await LoadWatches();
                 selectedWatchIds.Clear();
             }
             else
             {
-                bulkOperationMessage = "Failed to disable watches";
-                bulkOperationIsError = true;
+                ToastService.ShowError("Failed to disable watches");
             }
         }
         catch (Exception ex)
         {
-            bulkOperationMessage = $"Error: {ex.Message}";
-            bulkOperationIsError = true;
+            ToastService.ShowError($"Error: {ex.Message}");
         }
         finally
         {
@@ -1012,23 +1662,26 @@
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
-                bulkOperationMessage = $"Triggered check for {result?.SuccessCount ?? 0} watches";
+                var message = $"Triggered check for {result?.SuccessCount ?? 0} watches";
                 if (result?.FailureCount > 0)
                 {
-                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                    message += $" ({result.FailureCount} failed)";
+                    ToastService.ShowWarning(message);
+                }
+                else
+                {
+                    ToastService.ShowSuccess(message);
                 }
                 selectedWatchIds.Clear();
             }
             else
             {
-                bulkOperationMessage = "Failed to trigger checks";
-                bulkOperationIsError = true;
+                ToastService.ShowError("Failed to trigger checks");
             }
         }
         catch (Exception ex)
         {
-            bulkOperationMessage = $"Error: {ex.Message}";
-            bulkOperationIsError = true;
+            ToastService.ShowError($"Error: {ex.Message}");
         }
         finally
         {
@@ -1036,11 +1689,27 @@
         }
     }
 
-    private async Task BulkDelete()
+    private void BulkDelete()
     {
         if (selectedWatchIds.Count == 0) return;
+        showBulkDeleteConfirm = true;
+    }
 
-        // Simple confirmation - in a real app, use a modal dialog
+    private string GetBulkDeleteMessage()
+    {
+        var count = selectedWatchIds.Count;
+        return count == 1 
+            ? "Are you sure you want to delete this watch? This action cannot be undone."
+            : $"Are you sure you want to delete {count} watches? This action cannot be undone.";
+    }
+
+    private void CancelBulkDelete()
+    {
+        showBulkDeleteConfirm = false;
+    }
+
+    private async Task ConfirmBulkDelete()
+    {
         isBulkOperating = true;
         ClearBulkMessage();
         StateHasChanged();
@@ -1055,28 +1724,32 @@
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
-                bulkOperationMessage = $"Deleted {result?.SuccessCount ?? 0} watches";
+                var message = $"Deleted {result?.SuccessCount ?? 0} watches";
                 if (result?.FailureCount > 0)
                 {
-                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                    message += $" ({result.FailureCount} failed)";
+                    ToastService.ShowWarning(message);
+                }
+                else
+                {
+                    ToastService.ShowSuccess(message);
                 }
                 await LoadWatches();
                 selectedWatchIds.Clear();
             }
             else
             {
-                bulkOperationMessage = "Failed to delete watches";
-                bulkOperationIsError = true;
+                ToastService.ShowError("Failed to delete watches");
             }
         }
         catch (Exception ex)
         {
-            bulkOperationMessage = $"Error: {ex.Message}";
-            bulkOperationIsError = true;
+            ToastService.ShowError($"Error: {ex.Message}");
         }
         finally
         {
             isBulkOperating = false;
+            showBulkDeleteConfirm = false;
         }
     }
 
@@ -1122,10 +1795,15 @@
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<BulkOperationResultDto>();
-                bulkOperationMessage = $"Updated {result?.SuccessCount ?? 0} watches";
+                var message = $"Updated {result?.SuccessCount ?? 0} watches";
                 if (result?.FailureCount > 0)
                 {
-                    bulkOperationMessage += $" ({result.FailureCount} failed)";
+                    message += $" ({result.FailureCount} failed)";
+                    ToastService.ShowWarning(message);
+                }
+                else
+                {
+                    ToastService.ShowSuccess(message);
                 }
                 await LoadWatches();
                 selectedWatchIds.Clear();
@@ -1133,14 +1811,12 @@
             }
             else
             {
-                bulkOperationMessage = "Failed to update watches";
-                bulkOperationIsError = true;
+                ToastService.ShowError("Failed to update watches");
             }
         }
         catch (Exception ex)
         {
-            bulkOperationMessage = $"Error: {ex.Message}";
-            bulkOperationIsError = true;
+            ToastService.ShowError($"Error: {ex.Message}");
         }
         finally
         {
@@ -1164,6 +1840,22 @@
 
     public async ValueTask DisposeAsync()
     {
+        // Unsubscribe from keyboard shortcut events
+        ShortcutService.OnFocusSearch -= HandleFocusSearch;
+        ShortcutService.OnRefreshRequested -= HandleRefreshRequested;
+
+        if (_keyboardModule is not null)
+        {
+            try
+            {
+                await _keyboardModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit disconnected, ignore
+            }
+        }
+
         if (hubConnection is not null)
         {
             await hubConnection.DisposeAsync();

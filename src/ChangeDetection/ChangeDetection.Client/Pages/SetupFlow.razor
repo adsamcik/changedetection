@@ -190,9 +190,9 @@
                 {
                     await ResumeSession(_currentSessionId.Value);
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Console.WriteLine($"Failed to rejoin session after reconnect: {ex.Message}");
+                    // Session resume failed after reconnect - handled by UI state
                 }
             }
             
@@ -441,9 +441,6 @@
             // Include exception type for debugging - helps identify the root cause
             _errorMessage = GetFriendlyErrorMessage(ex, "stream");
             _isProcessing = false;
-            
-            // Log to console for development debugging
-            Console.WriteLine($"SetupFlow stream error: {ex}");
             
             await InvokeAsync(StateHasChanged);
         }

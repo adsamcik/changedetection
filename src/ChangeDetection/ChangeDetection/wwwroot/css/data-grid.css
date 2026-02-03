@@ -1,0 +1,701 @@
+/* ============================================================================
+   Data Grid / Table Styles - Sentinel Theme
+   Shared styles for data tables used across the application
+   ============================================================================ */
+
+/* Data Grid Container */
+.data-grid-container {
+    flex: 1;
+    background-color: var(--color-bg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    overflow: auto;
+    box-shadow: var(--shadow-md);
+}
+
+/* Data Grid Table */
+.data-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+}
+
+.data-grid th {
+    position: sticky;
+    top: 0;
+    background-color: var(--color-bg-secondary);
+    padding: var(--spacing-3) var(--spacing-4);
+    text-align: left;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--color-border);
+    z-index: 1;
+}
+
+.data-grid td {
+    padding: var(--spacing-3) var(--spacing-4);
+    border-bottom: 1px solid var(--color-border-light);
+    vertical-align: middle;
+    color: var(--color-text);
+}
+
+/* Grid Row States */
+.grid-row {
+    transition: background-color var(--transition-fast);
+}
+
+.grid-row:hover {
+    background-color: var(--color-bg-secondary);
+    cursor: pointer;
+}
+
+.grid-row.highlight-change {
+    background-color: var(--color-success-light);
+}
+
+.grid-row.highlight-change:hover {
+    background-color: rgba(var(--color-success-rgb), 0.15);
+}
+
+.grid-row.selected {
+    background-color: var(--color-primary-light);
+}
+
+.grid-row.selected:hover {
+    background-color: rgba(var(--color-primary-rgb), 0.12);
+}
+
+/* ============================================================================
+   Status Indicators
+   ============================================================================ */
+
+.status-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--color-border);
+    position: relative;
+}
+
+.status-indicator.active { 
+    background-color: var(--color-success); 
+    box-shadow: 0 0 0 2px rgba(var(--color-success-rgb), 0.2);
+}
+
+.status-indicator.error { 
+    background-color: var(--color-error); 
+    box-shadow: 0 0 0 2px rgba(var(--color-error-rgb), 0.2);
+}
+
+.status-indicator.changed { 
+    background-color: var(--color-accent); 
+    box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
+}
+
+.status-indicator.idle,
+.status-indicator.ok {
+    background-color: var(--color-success);
+    box-shadow: 0 0 0 2px rgba(var(--color-success-rgb), 0.2);
+}
+
+.status-indicator.checking {
+    background-color: var(--color-warning);
+    animation: pulse-status 1.5s infinite;
+}
+
+.status-indicator.loading {
+    background-color: var(--color-warning);
+    animation: pulse-status 0.8s infinite;
+}
+
+.status-indicator.paused {
+    background-color: var(--color-text-light);
+}
+
+@keyframes pulse-status {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.6;
+        transform: scale(1.1);
+    }
+}
+
+/* Pending Setup Status */
+.status-indicator.pending {
+    background-color: var(--color-warning);
+    animation: pulse-pending 2s ease-in-out infinite;
+    position: relative;
+}
+
+.status-indicator.pending .needs-input-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 12px;
+    height: 12px;
+    background: var(--color-error);
+    color: white;
+    font-size: 8px;
+    font-weight: var(--font-weight-bold);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@keyframes pulse-pending {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.9); }
+}
+
+/* Background Session Status */
+.status-indicator.background {
+    background-color: var(--color-info);
+    position: relative;
+}
+
+.status-indicator.background::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--color-info);
+    animation: ripple 1.5s ease-out infinite;
+}
+
+@keyframes ripple {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(2); opacity: 0; }
+}
+
+/* ============================================================================
+   Pending Setup Row Styles
+   ============================================================================ */
+
+.pending-setup-row {
+    background: linear-gradient(90deg, var(--color-warning-light) 0%, #fffbeb 100%) !important;
+    border-left: 3px solid var(--color-warning);
+}
+
+.pending-setup-row:hover {
+    background: linear-gradient(90deg, #fde68a 0%, var(--color-warning-light) 100%) !important;
+}
+
+.pending-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pending-icon {
+    font-size: 0.9rem;
+}
+
+.needs-input-label {
+    background: var(--color-error);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+    animation: pulse-label 2s ease-in-out infinite;
+}
+
+@keyframes pulse-label {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.pending-prompt {
+    font-style: italic;
+    color: #92400e !important;
+}
+
+.pending-tag {
+    background-color: var(--color-warning) !important;
+    color: white;
+}
+
+.processing-tag {
+    background-color: var(--color-info) !important;
+    color: white;
+}
+
+.processing-label {
+    font-size: 0.7rem;
+    color: var(--color-info);
+    margin-left: var(--spacing-2);
+    font-weight: 400;
+}
+
+/* ============================================================================
+   Background Session Row Styles
+   ============================================================================ */
+
+.background-session-row {
+    background: linear-gradient(90deg, var(--color-info-light) 0%, #eff6ff 100%) !important;
+    border-left: 3px solid var(--color-info);
+}
+
+.background-session-row:hover {
+    background: linear-gradient(90deg, #bfdbfe 0%, var(--color-info-light) 100%) !important;
+}
+
+.background-label {
+    background: var(--color-info);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+}
+
+.background-tag {
+    background-color: var(--color-info) !important;
+    color: white;
+}
+
+.background-badge {
+    font-size: 0.7rem;
+    animation: badge-rotate 2s linear infinite;
+}
+
+@keyframes badge-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================================================
+   Watch Name & URL Display
+   ============================================================================ */
+
+.watch-title {
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.15rem;
+}
+
+.watch-url {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+.meta-cell {
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+}
+
+.change-time {
+    color: var(--color-success);
+    font-weight: 500;
+}
+
+/* ============================================================================
+   Tags Display in Table
+   ============================================================================ */
+
+.tags-cell {
+    display: flex;
+    gap: var(--spacing-1);
+    flex-wrap: wrap;
+}
+
+.tag-badge {
+    padding: 0.15rem var(--spacing-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    color: var(--color-bg);
+    font-weight: 500;
+}
+
+.tag-more {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    padding: 0.15rem var(--spacing-1);
+}
+
+.tag-chip {
+    font-size: 0.625rem;
+    font-weight: 500;
+    padding: 0.125rem 0.5rem;
+    border-radius: 10px;
+    color: white;
+}
+
+/* ============================================================================
+   Table Cell Styles
+   ============================================================================ */
+
+.actions-cell {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.checkbox-cell {
+    text-align: center;
+    vertical-align: middle;
+}
+
+.checkbox-cell input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+/* ============================================================================
+   Button Styles for Table Actions
+   ============================================================================ */
+
+.btn-icon {
+    background: none;
+    border: none;
+    color: var(--color-text-light);
+    cursor: pointer;
+    padding: var(--spacing-1);
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+}
+
+.btn-icon:hover {
+    color: var(--color-text);
+    background-color: var(--color-border);
+}
+
+.btn-icon:hover:not(:disabled) {
+    background-color: var(--color-bg-secondary);
+}
+
+.btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-resume {
+    color: var(--color-success) !important;
+}
+
+.btn-cancel {
+    color: var(--color-error) !important;
+}
+
+/* ============================================================================
+   Bulk Operations Bar
+   ============================================================================ */
+
+.btn-cmd.active {
+    background-color: #667eea;
+    color: white;
+}
+
+.bulk-actions-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    margin: 0 1rem;
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.bulk-selection-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+}
+
+.bulk-selection-info input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.bulk-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.btn-bulk {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.75rem;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-bulk:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.btn-bulk:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-bulk .icon {
+    font-size: 0.9rem;
+}
+
+.btn-bulk-edit {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.btn-bulk-danger {
+    background: rgba(220, 53, 69, 0.3);
+    border-color: rgba(220, 53, 69, 0.5);
+}
+
+.btn-bulk-danger:hover:not(:disabled) {
+    background: rgba(220, 53, 69, 0.5);
+}
+
+.bulk-message {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    margin-left: auto;
+}
+
+.bulk-message.success {
+    background: rgba(40, 167, 69, 0.3);
+}
+
+.bulk-message.error {
+    background: rgba(220, 53, 69, 0.3);
+}
+
+.bulk-message .dismiss-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.bulk-message .dismiss-btn:hover {
+    opacity: 1;
+}
+
+/* ============================================================================
+   Bulk Edit Dialog / Modal
+   ============================================================================ */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.bulk-edit-dialog {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-4) var(--spacing-5);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.dialog-header h2 {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.dialog-close {
+    background: none;
+    border: none;
+    font-size: var(--font-size-xl);
+    cursor: pointer;
+    color: var(--color-text-muted);
+    padding: var(--spacing-1);
+    line-height: 1;
+}
+
+.dialog-close:hover {
+    color: var(--color-text);
+}
+
+.dialog-content {
+    padding: 1.25rem;
+}
+
+.dialog-content .form-group {
+    margin-bottom: 1.25rem;
+}
+
+.dialog-content .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.dialog-content label {
+    display: block;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-bottom: var(--spacing-2);
+    font-size: var(--font-size-sm);
+}
+
+.dialog-content .form-control {
+    width: 100%;
+    padding: 0.6rem var(--spacing-3);
+    border: 1px solid #d1d5db;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    transition: border-color 0.2s ease;
+}
+
+.dialog-content .form-control:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.dialog-content .form-hint {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    margin-top: 0.35rem;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+.checkbox-label.sub-option {
+    margin-top: 0.75rem;
+    margin-left: 1.5rem;
+    font-weight: 400;
+}
+
+.interval-input {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.interval-input .form-control {
+    width: 100px;
+}
+
+.interval-input span {
+    color: #6b7280;
+    font-size: 0.9rem;
+}
+
+.dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-3);
+    padding: var(--spacing-4) var(--spacing-5);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg-secondary);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* ============================================================================
+   Responsive Styles for Data Grid
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .data-grid th:nth-child(3),
+    .data-grid th:nth-child(4),
+    .data-grid th:nth-child(5),
+    .data-grid td:nth-child(3),
+    .data-grid td:nth-child(4),
+    .data-grid td:nth-child(5) {
+        display: none;
+    }
+
+    .bulk-actions-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+
+    .bulk-actions {
+        justify-content: center;
+    }
+
+    .bulk-message {
+        margin-left: 0;
+        justify-content: center;
+    }
+}
+
+/* ============================================================================
+   Dark Mode Styles for Data Grid
+   Uses design tokens which automatically switch in dark mode via [data-theme="dark"]
+   ============================================================================ */
+
+/* Dark mode overrides using the same selector as design-tokens.css */
+[data-theme="dark"] .grid-row.highlight-change {
+    background-color: rgba(var(--color-success-rgb), 0.1);
+}
+
+[data-theme="dark"] .grid-row.highlight-change:hover {
+    background-color: rgba(var(--color-success-rgb), 0.15);
+}
+
+[data-theme="dark"] .pending-setup-row {
+    background: linear-gradient(90deg, rgba(var(--color-warning-rgb), 0.15) 0%, var(--color-bg-secondary) 100%) !important;
+}
+
+[data-theme="dark"] .pending-setup-row:hover {
+    background: linear-gradient(90deg, rgba(var(--color-warning-rgb), 0.2) 0%, rgba(var(--color-warning-rgb), 0.1) 100%) !important;
+}
+
+[data-theme="dark"] .background-session-row {
+    background: linear-gradient(90deg, rgba(var(--color-info-rgb), 0.15) 0%, var(--color-bg-secondary) 100%) !important;
+}
+
+[data-theme="dark"] .background-session-row:hover {
+    background: linear-gradient(90deg, rgba(var(--color-info-rgb), 0.2) 0%, rgba(var(--color-info-rgb), 0.1) 100%) !important;
+}

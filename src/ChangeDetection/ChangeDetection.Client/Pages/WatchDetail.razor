@@ -1,5 +1,6 @@
 @page "/watches/{Id}"
 @rendermode InteractiveAuto
+@using ChangeDetection.Client.Components
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -552,9 +553,47 @@
                         <span>Captured: @watch.LatestSnapshot.CapturedAt.ToString("g")</span>
                         <span>Size: @FormatBytes(watch.LatestSnapshot.ContentLength)</span>
                     </div>
-                    <div class="snapshot-content">
-                        <pre>@TruncateContent(watch.LatestSnapshot.Content, 500)</pre>
-                    </div>
+                    
+                    @if (watch.SchemaEnabled && watch.Schema != null && watch.LatestSnapshot.ExtractedObjects?.Any() == true)
+                    {
+                        @* Display structured content from extraction schema *@
+                        <div class="extracted-objects">
+                            <div class="extracted-objects-header">
+                                <span class="item-count">@watch.LatestSnapshot.ExtractedObjects.Count items</span>
+                            </div>
+                            <div class="extracted-objects-grid">
+                                @foreach (var obj in watch.LatestSnapshot.ExtractedObjects.Take(10))
+                                {
+                                    <div class="extracted-object-card">
+                                        @foreach (var field in watch.Schema.Fields)
+                                        {
+                                            @if (obj.Fields.TryGetValue(field.Name, out var value) && !string.IsNullOrEmpty(value))
+                                            {
+                                                <div class="object-field @GetFieldTypeClass(field.Type)">
+                                                    <span class="field-label">@field.Name</span>
+                                                    <span class="field-value">@FormatFieldValue(value, field.Type)</span>
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            @if (watch.LatestSnapshot.ExtractedObjects.Count > 10)
+                            {
+                                <div class="extracted-objects-footer">
+                                    <span class="more-items">+@(watch.LatestSnapshot.ExtractedObjects.Count - 10) more items</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        @* Fall back to raw text content *@
+                        <div class="snapshot-content">
+                            <pre>@TruncateContent(watch.LatestSnapshot.Content, 500)</pre>
+                        </div>
+                    }
+                    
                     @if (!string.IsNullOrEmpty(watch.LatestSnapshot.ScreenshotPath))
                     {
                         <div class="snapshot-screenshot">
@@ -571,19 +610,14 @@
             </section>
         </div>
 
-        @if (showDeleteConfirm)
-        {
-            <div class="delete-backdrop" @onclick="HideDeleteConfirm">
-                <div class="delete-modal" @onclick:stopPropagation="true">
-                    <h3>Delete Watch?</h3>
-                    <p>Are you sure you want to delete this watch? This action cannot be undone.</p>
-                    <div class="delete-modal-actions">
-                        <button class="btn btn-outline" @onclick="HideDeleteConfirm">Cancel</button>
-                        <button class="btn btn-danger" @onclick="DeleteWatch">Delete</button>
-                    </div>
-                </div>
-            </div>
-        }
+        <ConfirmDialog IsVisible="@showDeleteConfirm"
+                       Title="Delete Watch?"
+                       Message="Are you sure you want to delete this watch? This action cannot be undone."
+                       ConfirmText="Delete"
+                       IsDanger="true"
+                       IsProcessing="@isDeleting"
+                       OnConfirm="DeleteWatch"
+                       OnCancel="HideDeleteConfirm" />
     }
 </div>
 
@@ -596,6 +630,7 @@
     private List<ChangeListItemDto> filteredChanges = new();
     private bool isLoading = true;
     private bool isChecking = false;
+    private bool isDeleting = false;
     private string? error;
     private bool showDeleteConfirm = false;
     
@@ -685,8 +720,19 @@
 
     private async Task DeleteWatch()
     {
-        await Http.DeleteAsync($"/api/watches/{Id}");
-        Navigation.NavigateTo("/");
+        isDeleting = true;
+        StateHasChanged();
+        
+        try
+        {
+            await Http.DeleteAsync($"/api/watches/{Id}");
+            Navigation.NavigateTo("/");
+        }
+        finally
+        {
+            isDeleting = false;
+            showDeleteConfirm = false;
+        }
     }
 
     private string GetHostFromUrl(string url)
@@ -742,6 +788,49 @@
     {
         if (!parameters.Any()) return "";
         return $"({string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}"))})";
+    }
+    
+    private static string GetFieldTypeClass(string fieldType)
+    {
+        return fieldType.ToLowerInvariant() switch
+        {
+            "currency" or "number" => "field-numeric",
+            "date" or "datetime" => "field-date",
+            "url" => "field-url",
+            "image" => "field-image",
+            _ => "field-text"
+        };
+    }
+    
+    private static string FormatFieldValue(string value, string fieldType)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        
+        return fieldType.ToLowerInvariant() switch
+        {
+            "currency" => FormatCurrency(value),
+            "date" or "datetime" => FormatDate(value),
+            _ => value.Length > 100 ? value[..100] + "..." : value
+        };
+    }
+    
+    private static string FormatCurrency(string value)
+    {
+        // Try to parse and format as currency
+        if (decimal.TryParse(value.Replace("$", "").Replace("€", "").Replace("£", "").Trim(), out var amount))
+        {
+            return amount.ToString("C");
+        }
+        return value;
+    }
+    
+    private static string FormatDate(string value)
+    {
+        if (DateTime.TryParse(value, out var date))
+        {
+            return date.ToString("MMM d, yyyy");
+        }
+        return value;
     }
     
     private void ApplyFilters()

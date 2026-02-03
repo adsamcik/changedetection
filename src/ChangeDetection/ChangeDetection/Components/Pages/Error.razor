@@ -1,28 +1,97 @@
 ﻿@page "/Error"
 @using System.Diagnostics
+@inject IHostEnvironment Environment
 
-<PageTitle>Error</PageTitle>
+<PageTitle>Error - Change Detection</PageTitle>
 
-<h1 class="text-danger">Error.</h1>
-<h2 class="text-danger">An error occurred while processing your request.</h2>
+<div class="error-page">
+    <div class="error-content">
+        <div class="error-icon">⚠️</div>
+        <h1>Something went wrong</h1>
+        <p class="error-message">We encountered an unexpected error while processing your request. Please try again.</p>
+        
+        <div class="error-actions">
+            <a href="/" class="btn btn-primary">← Back to Dashboard</a>
+            <button class="btn btn-outline" onclick="location.reload()">Retry</button>
+        </div>
 
-@if (ShowRequestId)
-{
-    <p>
-        <strong>Request ID:</strong> <code>@RequestId</code>
-    </p>
-}
+        @if (Environment.IsDevelopment())
+        {
+            <div class="error-details">
+                <h3>Development Information</h3>
+                
+                @if (ShowRequestId)
+                {
+                    <p>
+                        <strong>Request ID:</strong> <code>@RequestId</code>
+                    </p>
+                }
+                
+                <p class="dev-note">
+                    This detailed information is only shown in Development mode.
+                    Set <code>ASPNETCORE_ENVIRONMENT=Production</code> to hide these details.
+                </p>
+            </div>
+        }
+    </div>
+</div>
 
-<h3>Development Mode</h3>
-<p>
-    Swapping to <strong>Development</strong> environment will display more detailed information about the error that occurred.
-</p>
-<p>
-    <strong>The Development environment shouldn't be enabled for deployed applications.</strong>
-    It can result in displaying sensitive information from exceptions to end users.
-    For local debugging, enable the <strong>Development</strong> environment by setting the <strong>ASPNETCORE_ENVIRONMENT</strong> environment variable to <strong>Development</strong>
-    and restarting the app.
-</p>
+<style>
+    .error-page {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 60vh;
+        padding: 2rem;
+    }
+    
+    .error-content {
+        text-align: center;
+        max-width: 500px;
+    }
+    
+    .error-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+    
+    .error-content h1 {
+        color: var(--danger, #dc3545);
+        margin-bottom: 0.5rem;
+    }
+    
+    .error-message {
+        color: var(--text-muted, #6c757d);
+        margin-bottom: 2rem;
+    }
+    
+    .error-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        margin-bottom: 2rem;
+    }
+    
+    .error-details {
+        margin-top: 2rem;
+        padding: 1rem;
+        background: var(--bg-secondary, #f8f9fa);
+        border-radius: 8px;
+        text-align: left;
+    }
+    
+    .error-details h3 {
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+        color: var(--warning, #ffc107);
+    }
+    
+    .dev-note {
+        font-size: 0.875rem;
+        color: var(--text-muted, #6c757d);
+        margin-top: 1rem;
+    }
+</style>
 
 @code{
     [CascadingParameter]

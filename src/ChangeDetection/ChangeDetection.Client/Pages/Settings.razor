@@ -1,33 +1,83 @@
 @page "/settings"
 @rendermode InteractiveAuto
 @inject HttpClient Http
+@inject NavigationManager Navigation
+@inject LocalStorageService LocalStorage
 
 <PageTitle>Settings - Change Detection</PageTitle>
 
+<UnsavedChangesGuard IsDirty="@(isNotificationsDirty || isGeneralSettingsDirty)">
 <div class="settings-page">
     <header class="settings-header">
         <h1>Settings</h1>
         <p class="subtitle">Configure LLM providers, notifications, and application settings</p>
+        
+        <div class="search-container">
+            <div class="search-input-wrapper">
+                <label for="settings-search" class="visually-hidden">Search settings</label>
+                <span class="search-icon" aria-hidden="true">🔍</span>
+                <input type="text"
+                       id="settings-search"
+                       class="search-input" 
+                       placeholder="Search settings..." 
+                       @bind="searchQuery" 
+                       @bind:event="oninput"
+                       @bind:after="OnSearchChanged" />
+                @if (!string.IsNullOrEmpty(searchQuery))
+                {
+                    <button class="search-clear" @onclick="ClearSearch" type="button" aria-label="Clear search">
+                        <span aria-hidden="true">×</span>
+                    </button>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(searchQuery) && !matchingTabs.Any())
+            {
+                <div class="search-no-results">No results found for "@searchQuery"</div>
+            }
+        </div>
     </header>
 
-    <div class="settings-tabs">
-        <button class="tab @(activeTab == "providers" ? "active" : "")" @onclick="SetProvidersTab">
-            LLM Providers
+    <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button role="tab"
+                id="tab-providers"
+                aria-selected="@(activeTab == "providers")"
+                aria-controls="panel-providers"
+                class="tab @(activeTab == "providers" ? "active" : "") @GetTabDimmedClass("providers") @GetTabHighlightClass("providers")"
+                @onclick="HandleSetProvidersTab">
+            @GetHighlightedTabName("LLM Providers", "providers")
         </button>
-        <button class="tab @(activeTab == "logs" ? "active" : "")" @onclick="SetLogsTab">
-            LLM Logs
+        <button role="tab"
+                id="tab-logs"
+                aria-selected="@(activeTab == "logs")"
+                aria-controls="panel-logs"
+                class="tab @(activeTab == "logs" ? "active" : "") @GetTabDimmedClass("logs") @GetTabHighlightClass("logs")"
+                @onclick="HandleSetLogsTab">
+            @GetHighlightedTabName("LLM Logs", "logs")
         </button>
-        <button class="tab @(activeTab == "notifications" ? "active" : "")" @onclick="SetNotificationsTab">
-            Notifications
+        <button role="tab"
+                id="tab-notifications"
+                aria-selected="@(activeTab == "notifications")"
+                aria-controls="panel-notifications"
+                class="tab @(activeTab == "notifications" ? "active" : "") @GetTabDimmedClass("notifications") @GetTabHighlightClass("notifications")"
+                @onclick="HandleSetNotificationsTab">
+            @GetHighlightedTabName("Notifications", "notifications")
         </button>
-        <button class="tab @(activeTab == "general" ? "active" : "")" @onclick="SetGeneralTab">
-            General
+        <button role="tab"
+                id="tab-general"
+                aria-selected="@(activeTab == "general")"
+                aria-controls="panel-general"
+                class="tab @(activeTab == "general" ? "active" : "") @GetTabDimmedClass("general") @GetTabHighlightClass("general")"
+                @onclick="HandleSetGeneralTab">
+            @GetHighlightedTabName("General", "general")
         </button>
     </div>
 
     @if (activeTab == "providers")
     {
-        <section class="settings-section">
+        <section id="panel-providers"
+                 role="tabpanel"
+                 aria-labelledby="tab-providers"
+                 class="settings-section @GetSectionDimmedClass("providers")">
             <div class="section-header">
                 <div>
                     <h2>LLM Provider Configuration</h2>
@@ -55,15 +105,15 @@
                                     <span class="priority-badge">Priority @provider.Priority</span>
                                 </div>
                                 <div class="provider-actions">
-                                    <button class="btn-icon" title="Move up" @onclick="() => MoveProvider(provider, -1)" 
+                                    <button class="btn-icon" title="Move up" aria-label="Move provider up" @onclick="() => MoveProvider(provider, -1)" 
                                             disabled="@(provider.Priority <= 1)">⬆️</button>
-                                    <button class="btn-icon" title="Move down" @onclick="() => MoveProvider(provider, 1)">⬇️</button>
-                                    <button class="btn-icon" title="Edit" @onclick="() => EditProvider(provider)">✏️</button>
-                                    <button class="btn-icon" title="@(provider.IsEnabled ? "Disable" : "Enable")" 
+                                    <button class="btn-icon" title="Move down" aria-label="Move provider down" @onclick="() => MoveProvider(provider, 1)">⬇️</button>
+                                    <button class="btn-icon" title="Edit" aria-label="Edit provider" @onclick="() => EditProvider(provider)">✏️</button>
+                                    <button class="btn-icon" title="@(provider.IsEnabled ? "Disable" : "Enable")" aria-label="@(provider.IsEnabled ? "Disable provider" : "Enable provider")"
                                             @onclick="() => ToggleProvider(provider)">
                                         @(provider.IsEnabled ? "🔴" : "🟢")
                                     </button>
-                                    <button class="btn-icon danger" title="Delete" @onclick="() => DeleteProvider(provider)">🗑️</button>
+                                    <button class="btn-icon danger" title="Delete" aria-label="Delete provider" @onclick="() => DeleteProvider(provider)">🗑️</button>
                                 </div>
                             </div>
                             <div class="provider-details">
@@ -123,7 +173,10 @@
     }
     else if (activeTab == "logs")
     {
-        <section class="settings-section">
+        <section id="panel-logs"
+                 role="tabpanel"
+                 aria-labelledby="tab-logs"
+                 class="settings-section @GetSectionDimmedClass("logs")">
             <div class="section-header">
                 <div>
                     <h2>LLM Logs</h2>
@@ -181,87 +234,208 @@
                             <option value="Fallback">Fallbacks</option>
                         </select>
                     </div>
+                    <div class="filter-group">
+                        <label class="checkbox-label compact">
+                            <input type="checkbox" @bind="groupByRequest" />
+                            <span>Group request/response</span>
+                        </label>
+                    </div>
                     <span class="log-count">Showing @FilteredLogs.Count() of @llmLogs.Count logs</span>
                 </div>
 
                 <div class="logs-list">
-                    @foreach (var log in FilteredLogs)
+                    @if (groupByRequest)
                     {
-                        <div class="log-entry @GetLogLevelClass(log.Level)">
-                            <div class="log-header">
-                                <span class="log-level @GetLogLevelClass(log.Level)">@log.Level</span>
-                                <span class="log-category">@log.Category</span>
-                                <span class="log-provider">@log.ProviderName</span>
-                                @if (!string.IsNullOrEmpty(log.Model))
+                        @foreach (var group in GroupedLogs)
+                        {
+                            @if (group.IsGrouped)
+                            {
+                                <div class="log-entry log-group @group.StatusClass">
+                                    <div class="log-header">
+                                        <span class="log-level @group.StatusClass">@group.StatusLabel</span>
+                                        <span class="log-category">Request/Response</span>
+                                        <span class="log-provider">@group.ProviderName</span>
+                                        @if (!string.IsNullOrEmpty(group.Model))
+                                        {
+                                            <span class="log-model">@group.Model</span>
+                                        }
+                                        <span class="log-timestamp">@group.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                        @if (group.DurationMs.HasValue)
+                                        {
+                                            <span class="log-duration">@(group.DurationMs)ms</span>
+                                        }
+                                    </div>
+                                    
+                                    @if (group.HasError && group.Error != null)
+                                    {
+                                        <div class="log-error">
+                                            <strong>Error:</strong> @group.Error.ErrorMessage
+                                            @if (!string.IsNullOrEmpty(group.Error.ExceptionType))
+                                            {
+                                                <span class="exception-type">(@group.Error.ExceptionType)</span>
+                                            }
+                                        </div>
+                                    }
+                                    
+                                    @if (group.InputTokens.HasValue || group.OutputTokens.HasValue)
+                                    {
+                                        <div class="log-tokens">
+                                            @if (group.InputTokens.HasValue)
+                                            {
+                                                <span>Input: @group.InputTokens tokens</span>
+                                            }
+                                            @if (group.OutputTokens.HasValue)
+                                            {
+                                                <span>Output: @group.OutputTokens tokens</span>
+                                            }
+                                        </div>
+                                    }
+                                    
+                                    <div class="log-group-details">
+                                        @if (group.Request != null)
+                                        {
+                                            <details class="log-details">
+                                                <summary>📤 Request</summary>
+                                                <pre class="full-content">@group.Request.FullPrompt</pre>
+                                            </details>
+                                        }
+                                        @if (group.Response != null)
+                                        {
+                                            <details class="log-details">
+                                                <summary>📥 Response</summary>
+                                                <pre class="full-content">@group.Response.FullResponse</pre>
+                                            </details>
+                                        }
+                                        @if (group.Error?.StackTrace != null)
+                                        {
+                                            <details class="log-details">
+                                                <summary>Stack Trace</summary>
+                                                <pre class="stack-trace">@group.Error.StackTrace</pre>
+                                            </details>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            else if (group.Standalone != null)
+                            {
+                                var log = group.Standalone;
+                                <div class="log-entry @GetLogLevelClass(log.Level)">
+                                    <div class="log-header">
+                                        <span class="log-level @GetLogLevelClass(log.Level)">@log.Level</span>
+                                        <span class="log-category">@log.Category</span>
+                                        <span class="log-provider">@log.ProviderName</span>
+                                        @if (!string.IsNullOrEmpty(log.Model))
+                                        {
+                                            <span class="log-model">@log.Model</span>
+                                        }
+                                        <span class="log-timestamp">@log.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                        @if (log.DurationMs.HasValue)
+                                        {
+                                            <span class="log-duration">@(log.DurationMs)ms</span>
+                                        }
+                                    </div>
+                                    <div class="log-message">@log.Message</div>
+                                    @if (!string.IsNullOrEmpty(log.ErrorMessage))
+                                    {
+                                        <div class="log-error">
+                                            <strong>Error:</strong> @log.ErrorMessage
+                                            @if (!string.IsNullOrEmpty(log.ExceptionType))
+                                            {
+                                                <span class="exception-type">(@log.ExceptionType)</span>
+                                            }
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(log.StackTrace))
+                                    {
+                                        <details class="log-details">
+                                            <summary>Stack Trace</summary>
+                                            <pre class="stack-trace">@log.StackTrace</pre>
+                                        </details>
+                                    }
+                                </div>
+                            }
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var log in FilteredLogs)
+                        {
+                            <div class="log-entry @GetLogLevelClass(log.Level)">
+                                <div class="log-header">
+                                    <span class="log-level @GetLogLevelClass(log.Level)">@log.Level</span>
+                                    <span class="log-category">@log.Category</span>
+                                    <span class="log-provider">@log.ProviderName</span>
+                                    @if (!string.IsNullOrEmpty(log.Model))
+                                    {
+                                        <span class="log-model">@log.Model</span>
+                                    }
+                                    <span class="log-timestamp">@log.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                    @if (log.DurationMs.HasValue)
+                                    {
+                                        <span class="log-duration">@(log.DurationMs)ms</span>
+                                    }
+                                </div>
+                                <div class="log-message">@log.Message</div>
+                                @if (!string.IsNullOrEmpty(log.ErrorMessage))
                                 {
-                                    <span class="log-model">@log.Model</span>
+                                    <div class="log-error">
+                                        <strong>Error:</strong> @log.ErrorMessage
+                                        @if (!string.IsNullOrEmpty(log.ExceptionType))
+                                        {
+                                            <span class="exception-type">(@log.ExceptionType)</span>
+                                        }
+                                    </div>
                                 }
-                                <span class="log-timestamp">@log.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                @if (log.DurationMs.HasValue)
+                                @if (!string.IsNullOrEmpty(log.PromptPreview))
                                 {
-                                    <span class="log-duration">@(log.DurationMs)ms</span>
+                                    <details class="log-details">
+                                        <summary>Prompt Preview</summary>
+                                        <pre>@log.PromptPreview</pre>
+                                    </details>
+                                }
+                                @if (!string.IsNullOrEmpty(log.FullPrompt))
+                                {
+                                    <details class="log-details">
+                                        <summary>Full Prompt</summary>
+                                        <pre class="full-content">@log.FullPrompt</pre>
+                                    </details>
+                                }
+                                @if (!string.IsNullOrEmpty(log.ResponsePreview))
+                                {
+                                    <details class="log-details">
+                                        <summary>Response Preview</summary>
+                                        <pre>@log.ResponsePreview</pre>
+                                    </details>
+                                }
+                                @if (!string.IsNullOrEmpty(log.FullResponse))
+                                {
+                                    <details class="log-details">
+                                        <summary>Full Response</summary>
+                                        <pre class="full-content">@log.FullResponse</pre>
+                                    </details>
+                                }
+                                @if (!string.IsNullOrEmpty(log.StackTrace))
+                                {
+                                    <details class="log-details">
+                                        <summary>Stack Trace</summary>
+                                        <pre class="stack-trace">@log.StackTrace</pre>
+                                    </details>
+                                }
+                                @if (log.InputTokens.HasValue || log.OutputTokens.HasValue)
+                                {
+                                    <div class="log-tokens">
+                                        @if (log.InputTokens.HasValue)
+                                        {
+                                            <span>Input: @log.InputTokens tokens</span>
+                                        }
+                                        @if (log.OutputTokens.HasValue)
+                                        {
+                                            <span>Output: @log.OutputTokens tokens</span>
+                                        }
+                                    </div>
                                 }
                             </div>
-                            <div class="log-message">@log.Message</div>
-                            @if (!string.IsNullOrEmpty(log.ErrorMessage))
-                            {
-                                <div class="log-error">
-                                    <strong>Error:</strong> @log.ErrorMessage
-                                    @if (!string.IsNullOrEmpty(log.ExceptionType))
-                                    {
-                                        <span class="exception-type">(@log.ExceptionType)</span>
-                                    }
-                                </div>
-                            }
-                            @if (!string.IsNullOrEmpty(log.PromptPreview))
-                            {
-                                <details class="log-details">
-                                    <summary>Prompt Preview</summary>
-                                    <pre>@log.PromptPreview</pre>
-                                </details>
-                            }
-                            @if (!string.IsNullOrEmpty(log.FullPrompt))
-                            {
-                                <details class="log-details">
-                                    <summary>Full Prompt</summary>
-                                    <pre class="full-content">@log.FullPrompt</pre>
-                                </details>
-                            }
-                            @if (!string.IsNullOrEmpty(log.ResponsePreview))
-                            {
-                                <details class="log-details">
-                                    <summary>Response Preview</summary>
-                                    <pre>@log.ResponsePreview</pre>
-                                </details>
-                            }
-                            @if (!string.IsNullOrEmpty(log.FullResponse))
-                            {
-                                <details class="log-details">
-                                    <summary>Full Response</summary>
-                                    <pre class="full-content">@log.FullResponse</pre>
-                                </details>
-                            }
-                            @if (!string.IsNullOrEmpty(log.StackTrace))
-                            {
-                                <details class="log-details">
-                                    <summary>Stack Trace</summary>
-                                    <pre class="stack-trace">@log.StackTrace</pre>
-                                </details>
-                            }
-                            @if (log.InputTokens.HasValue || log.OutputTokens.HasValue)
-                            {
-                                <div class="log-tokens">
-                                    @if (log.InputTokens.HasValue)
-                                    {
-                                        <span>Input: @log.InputTokens tokens</span>
-                                    }
-                                    @if (log.OutputTokens.HasValue)
-                                    {
-                                        <span>Output: @log.OutputTokens tokens</span>
-                                    }
-                                </div>
-                            }
-                        </div>
+                        }
                     }
                 </div>
             }
@@ -269,13 +443,17 @@
     }
     else if (activeTab == "notifications")
     {
-        <section class="settings-section">
+        <section id="panel-notifications"
+                 role="tabpanel"
+                 aria-labelledby="tab-notifications"
+                 class="settings-section @GetSectionDimmedClass("notifications")"
+                 @oninput="MarkNotificationsDirty">
             <h2>Notification Settings</h2>
             <p class="section-description">Configure how you want to be notified when changes are detected.</p>
 
             <div class="form-group">
                 <label class="checkbox-label">
-                    <input type="checkbox" @bind="emailEnabled" />
+                    <input type="checkbox" @bind="emailEnabled" @bind:after="MarkNotificationsDirty" />
                     <span>Enable email notifications</span>
                 </label>
             </div>
@@ -293,7 +471,7 @@
                     </div>
                     <div class="form-group">
                         <label class="checkbox-label">
-                            <input type="checkbox" @bind="smtpUseSsl" />
+                            <input type="checkbox" @bind="smtpUseSsl" @bind:after="MarkNotificationsDirty" />
                             <span>Use SSL/TLS</span>
                         </label>
                     </div>
@@ -317,7 +495,11 @@
     }
     else if (activeTab == "general")
     {
-        <section class="settings-section">
+        <section id="panel-general"
+                 role="tabpanel"
+                 aria-labelledby="tab-general"
+                 class="settings-section @GetSectionDimmedClass("general")"
+                 @oninput="MarkGeneralSettingsDirty">
             <h2>General Settings</h2>
             
             @if (isLoadingGeneralSettings)
@@ -392,7 +574,7 @@
                     
                     <div class="form-group">
                         <label class="checkbox-label">
-                            <input type="checkbox" @bind="useLlmForSummaries" />
+                            <input type="checkbox" @bind="useLlmForSummaries" @bind:after="MarkGeneralSettingsDirty" />
                             <span>Use LLM for change summaries</span>
                         </label>
                         <p class="form-hint">Automatically generate AI summaries when changes are detected</p>
@@ -400,7 +582,7 @@
 
                     <div class="form-group">
                         <label class="checkbox-label">
-                            <input type="checkbox" @bind="enableLlmDebugLogging" />
+                            <input type="checkbox" @bind="enableLlmDebugLogging" @bind:after="MarkGeneralSettingsDirty" />
                             <span>Enable LLM debug logging</span>
                         </label>
                         <p class="form-hint">Log detailed LLM request/response information for debugging</p>
@@ -535,6 +717,7 @@
         </div>
     }
 </div>
+</UnsavedChangesGuard>
 
 @code {
     private string activeTab = "providers";
@@ -546,6 +729,20 @@
     private LlmProviderCreateDto providerForm = new();
     private string? providerModalError;
     private bool isSavingProvider = false;
+
+    // Search functionality
+    private string searchQuery = "";
+    private HashSet<string> matchingTabs = new();
+    
+    private static readonly SearchableSettingItem[] SearchableSettings =
+    [
+        new("providers", ["llm", "ai", "openai", "gemini", "provider", "model", "token", "api", "azure", "ollama", "claude", "anthropic", "cost", "priority"], "LLM Providers"),
+        new("logs", ["log", "history", "usage", "cost", "debug", "request", "response", "error", "circuit", "retry", "fallback"], "LLM Logs"),
+        new("notifications", ["email", "smtp", "webhook", "discord", "notification", "alert", "ssl", "tls", "template"], "Notifications"),
+        new("general", ["interval", "schedule", "backup", "export", "import", "theme", "retention", "timeout", "playwright", "browser", "user agent", "concurrent", "retry", "fetch"], "General"),
+    ];
+
+    private record SearchableSettingItem(string Tab, string[] Keywords, string DisplayName);
 
     // Notification settings
     private bool emailEnabled = false;
@@ -562,6 +759,7 @@
     private bool notificationSuccess = false;
     private List<PlaceholderInfoDto> placeholders = new();
     private string notificationSubTab = "smtp";
+    private bool isNotificationsDirty = false;
 
     // General settings
     private int defaultCheckInterval = 60;
@@ -579,6 +777,7 @@
     private bool isSavingGeneralSettings = false;
     private string? generalSettingsMessage;
     private bool generalSettingsSuccess = false;
+    private bool isGeneralSettingsDirty = false;
 
     // Notification templates
     private List<NotificationTemplateDto> templates = new();
@@ -594,15 +793,116 @@
     private bool isLoadingLogs = false;
     private string logLevelFilter = "";
     private string logCategoryFilter = "";
+    private bool groupByRequest = true;
 
     private IEnumerable<LlmLogEntryDto> FilteredLogs => llmLogs
         .Where(log => string.IsNullOrEmpty(logLevelFilter) || log.Level == logLevelFilter)
         .Where(log => string.IsNullOrEmpty(logCategoryFilter) || log.Category == logCategoryFilter);
 
+    /// <summary>
+    /// Groups logs by RequestId for paired request/response display.
+    /// Returns groups ordered by the most recent timestamp in each group.
+    /// </summary>
+    private IEnumerable<LlmLogGroup> GroupedLogs
+    {
+        get
+        {
+            var filtered = FilteredLogs.ToList();
+            
+            // Group logs that have a RequestId
+            var grouped = filtered
+                .Where(l => l.RequestId.HasValue)
+                .GroupBy(l => l.RequestId!.Value)
+                .Select(g => new LlmLogGroup
+                {
+                    RequestId = g.Key,
+                    Request = g.FirstOrDefault(l => l.Category == "Request"),
+                    Response = g.FirstOrDefault(l => l.Category == "Response"),
+                    Error = g.FirstOrDefault(l => l.Category == "Error"),
+                    Timestamp = g.Max(l => l.Timestamp)
+                })
+                .ToList();
+            
+            // Add ungrouped logs (circuit breaker, fallback, retry, etc.)
+            var ungrouped = filtered
+                .Where(l => !l.RequestId.HasValue)
+                .Select(l => new LlmLogGroup
+                {
+                    RequestId = null,
+                    Standalone = l,
+                    Timestamp = l.Timestamp
+                });
+            
+            return grouped.Concat(ungrouped).OrderByDescending(g => g.Timestamp);
+        }
+    }
+
+    /// <summary>
+    /// Represents a group of related LLM log entries (request + response/error).
+    /// </summary>
+    private class LlmLogGroup
+    {
+        public Guid? RequestId { get; set; }
+        public LlmLogEntryDto? Request { get; set; }
+        public LlmLogEntryDto? Response { get; set; }
+        public LlmLogEntryDto? Error { get; set; }
+        public LlmLogEntryDto? Standalone { get; set; }
+        public DateTime Timestamp { get; set; }
+        
+        public bool IsGrouped => RequestId.HasValue;
+        public bool HasResponse => Response != null;
+        public bool HasError => Error != null;
+        public string ProviderName => Request?.ProviderName ?? Response?.ProviderName ?? Error?.ProviderName ?? Standalone?.ProviderName ?? "Unknown";
+        public string? Model => Request?.Model ?? Response?.Model ?? Error?.Model ?? Standalone?.Model;
+        public long? DurationMs => Response?.DurationMs ?? Error?.DurationMs;
+        public int? InputTokens => Response?.InputTokens;
+        public int? OutputTokens => Response?.OutputTokens;
+        
+        public string StatusClass => HasError ? "level-error" : (HasResponse ? "level-info" : "level-debug");
+        public string StatusLabel => HasError ? "Error" : (HasResponse ? "Success" : "Pending");
+    }
+
+    // Valid tab values for localStorage validation
+    private static readonly HashSet<string> ValidTabs = ["providers", "logs", "notifications", "general"];
+
     protected override async Task OnInitializedAsync()
     {
         await LoadProviders();
         await LoadUsageStats();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Restore persisted tab from localStorage
+            var savedTab = await LocalStorage.GetItemAsync(LocalStorageKeys.SettingsTab);
+            if (!string.IsNullOrEmpty(savedTab) && ValidTabs.Contains(savedTab) && savedTab != activeTab)
+            {
+                // Set tab and trigger any associated data loading
+                switch (savedTab)
+                {
+                    case "providers":
+                        SetProvidersTab();
+                        break;
+                    case "logs":
+                        SetLogsTab();
+                        break;
+                    case "notifications":
+                        SetNotificationsTab();
+                        break;
+                    case "general":
+                        SetGeneralTab();
+                        break;
+                }
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task PersistTabAsync(string tab)
+    {
+        await LocalStorage.SetItemAsync(LocalStorageKeys.SettingsTab, tab);
     }
 
     private async Task LoadProviders()
@@ -754,15 +1054,26 @@
         _ => "model-name"
     };
 
-    private void SetProvidersTab() => activeTab = "providers";
+    private void HandleSetProvidersTab() => SetProvidersTab();
+    private void HandleSetLogsTab() => SetLogsTab();
+    private void HandleSetNotificationsTab() => SetNotificationsTab();
+    private void HandleSetGeneralTab() => SetGeneralTab();
+
+    private void SetProvidersTab()
+    {
+        activeTab = "providers";
+        _ = PersistTabAsync(activeTab);
+    }
     private void SetLogsTab()
     {
         activeTab = "logs";
+        _ = PersistTabAsync(activeTab);
         _ = LoadLogs();
     }
     private void SetGeneralTab()
     {
         activeTab = "general";
+        _ = PersistTabAsync(activeTab);
         _ = LoadGeneralSettings();
     }
 
@@ -819,6 +1130,7 @@
     private void SetNotificationsTab()
     {
         activeTab = "notifications";
+        _ = PersistTabAsync(activeTab);
         _ = LoadSmtpSettings();
     }
 
@@ -889,6 +1201,7 @@
                 notificationMessage = "SMTP settings saved successfully!";
                 notificationSuccess = true;
                 smtpPassword = ""; // Clear password field after save
+                isNotificationsDirty = false; // Reset dirty state
             }
             else
             {
@@ -1167,6 +1480,7 @@
             {
                 generalSettingsMessage = "Settings saved successfully!";
                 generalSettingsSuccess = true;
+                isGeneralSettingsDirty = false; // Reset dirty state
             }
             else
             {
@@ -1185,5 +1499,134 @@
             isSavingGeneralSettings = false;
             StateHasChanged();
         }
+    }
+
+    private void MarkNotificationsDirty()
+    {
+        if (!isNotificationsDirty)
+        {
+            isNotificationsDirty = true;
+        }
+    }
+
+    private void MarkGeneralSettingsDirty()
+    {
+        if (!isGeneralSettingsDirty)
+        {
+            isGeneralSettingsDirty = true;
+        }
+    }
+
+    // ========== Search Methods ==========
+    
+    private void OnSearchChanged()
+    {
+        UpdateMatchingTabs();
+        
+        // Auto-switch to first matching tab if current tab doesn't match
+        if (!string.IsNullOrWhiteSpace(searchQuery) && matchingTabs.Any() && !matchingTabs.Contains(activeTab))
+        {
+            var firstMatchingTab = matchingTabs.First();
+            switch (firstMatchingTab)
+            {
+                case "providers":
+                    SetProvidersTab();
+                    break;
+                case "logs":
+                    SetLogsTab();
+                    break;
+                case "notifications":
+                    SetNotificationsTab();
+                    break;
+                case "general":
+                    SetGeneralTab();
+                    break;
+            }
+        }
+    }
+
+    private void UpdateMatchingTabs()
+    {
+        matchingTabs.Clear();
+        
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return;
+        }
+
+        var query = searchQuery.Trim().ToLowerInvariant();
+        
+        foreach (var item in SearchableSettings)
+        {
+            // Check if display name contains search term
+            if (item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))
+            {
+                matchingTabs.Add(item.Tab);
+                continue;
+            }
+            
+            // Check keywords
+            if (item.Keywords.Any(k => k.Contains(query, StringComparison.OrdinalIgnoreCase)))
+            {
+                matchingTabs.Add(item.Tab);
+            }
+        }
+    }
+
+    private void ClearSearch()
+    {
+        searchQuery = "";
+        matchingTabs.Clear();
+    }
+
+    private string GetTabDimmedClass(string tab)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return "";
+        }
+        
+        return matchingTabs.Contains(tab) ? "" : "tab-dimmed";
+    }
+
+    private string GetTabHighlightClass(string tab)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return "";
+        }
+        
+        return matchingTabs.Contains(tab) ? "tab-highlighted" : "";
+    }
+
+    private string GetSectionDimmedClass(string tab)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return "";
+        }
+        
+        return matchingTabs.Contains(tab) ? "" : "section-dimmed";
+    }
+
+    private MarkupString GetHighlightedTabName(string displayName, string tab)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery) || !matchingTabs.Contains(tab))
+        {
+            return new MarkupString(displayName);
+        }
+
+        var query = searchQuery.Trim();
+        var index = displayName.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        
+        if (index >= 0)
+        {
+            var before = displayName[..index];
+            var match = displayName.Substring(index, query.Length);
+            var after = displayName[(index + query.Length)..];
+            return new MarkupString($"{before}<mark class=\"search-highlight\">{match}</mark>{after}");
+        }
+
+        return new MarkupString(displayName);
     }
 }
