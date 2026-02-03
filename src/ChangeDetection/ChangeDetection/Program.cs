@@ -9,6 +9,7 @@ using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Background;
 using ChangeDetection.Services.Content;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Services.Logging;
 using ChangeDetection.Services.Notifications;
 using ChangeDetection.Services.Persistence;
@@ -206,7 +207,16 @@ builder.Services.AddScoped<IRepository<PriceHistoryEntry>>(sp =>
 builder.Services.AddSingleton<PlaywrightFetcher>();
 builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<PlaywrightFetcher>());
 builder.Services.AddSingleton<ILlmLogService, LlmLogService>();
-builder.Services.AddScoped<IContentExtractor, ContentExtractor>();
+
+// LLM Kernel Factories for provider-specific kernel creation
+builder.Services.AddSingleton<ILlmKernelFactory, OllamaKernelFactory>();
+builder.Services.AddSingleton<ILlmKernelFactory, OpenAIKernelFactory>();
+builder.Services.AddSingleton<ILlmKernelFactory, AzureOpenAIKernelFactory>();
+builder.Services.AddSingleton<ILlmKernelFactory, GeminiKernelFactory>();
+builder.Services.AddSingleton<ILlmKernelFactory, ClaudeKernelFactory>();
+builder.Services.AddSingleton<ILlmKernelFactory, CopilotKernelFactory>();
+
+builder.Services.AddScoped<IContentExtractor, ContentExtractor>();;
 builder.Services.AddScoped<IDomCompactor, DomCompactor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();

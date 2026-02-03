@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Tests.Llm.Fixtures;
 using ChangeDetection.Tests.Llm.TestHelpers;
 using NSubstitute;
@@ -402,6 +403,14 @@ public class FixtureBasedLlmTests : TestBase
         var llmLogService = Substitute.For<ILlmLogService>();
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
 
+        IEnumerable<ILlmKernelFactory> factories = [
+            new OllamaKernelFactory(),
+            new OpenAIKernelFactory(),
+            new AzureOpenAIKernelFactory(),
+            new GeminiKernelFactory(),
+            new ClaudeKernelFactory()
+        ];
+
         // Configure a mock Ollama provider
         providerRepo.InsertAsync(new LlmProviderConfig
         {
@@ -422,6 +431,7 @@ public class FixtureBasedLlmTests : TestBase
             logger,
             serviceProvider,
             llmLogService,
+            factories,
             httpClientFactory);
 
         return (chain, mockHandler);

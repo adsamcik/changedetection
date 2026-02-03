@@ -193,9 +193,9 @@ public class ContentExtractorAdvancedTests
     }
 
     [Test]
-    public async Task ExtractText_WithDescendantSelector_NotSupportedByBasicConverter()
+    public async Task ExtractText_WithDescendantSelector_SelectsNestedElement()
     {
-        // Arrange - The basic CSS-to-XPath converter doesn't support complex descendant selectors
+        // Arrange
         var html = """
             <html>
             <body>
@@ -207,12 +207,32 @@ public class ContentExtractorAdvancedTests
             </html>
             """;
 
-        // Act - Complex selectors may not work with the basic converter
+        // Act
         var result = _sut.ExtractText(html, cssSelector: ".container .content");
 
-        // Assert - The basic converter may return empty for complex selectors
-        // This is a known limitation of the simple CSS-to-XPath conversion
-        result.ShouldNotBeNull();
+        // Assert
+        result.ShouldBe("Nested content");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ExtractText_WithSiblingAndChildCombinators_Works()
+    {
+        // Arrange - mirrors Hacker News structure (tr.athing + tr ... > a)
+        var html = """
+            <html><body>
+            <table id="hnmain">
+                <tr class="athing" id="1"><td><span class="titleline"><a href="item?id=1">AI story</a></span></td></tr>
+                <tr><td><span class="age"><a href="item?id=1">1 hour ago</a></span></td></tr>
+            </table>
+            </body></html>
+            """;
+
+        // Act
+        var result = _sut.ExtractText(html, cssSelector: "#hnmain tr.athing + tr span.age > a");
+
+        // Assert
+        result.ShouldBe("1 hour ago");
         await Task.CompletedTask;
     }
 

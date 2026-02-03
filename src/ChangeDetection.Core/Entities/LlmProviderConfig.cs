@@ -105,5 +105,6 @@ public enum LlmProviderType
     AzureOpenAI,
     Gemini,
     Claude,
+    Copilot,
     Custom
 }

@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
@@ -21,6 +22,7 @@ public class LlmProviderChainTests
     private readonly ILogger<LlmProviderChain> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILlmLogService _llmLogService;
+    private readonly IEnumerable<ILlmKernelFactory> _factories;
 
     public LlmProviderChainTests()
     {
@@ -29,6 +31,13 @@ public class LlmProviderChainTests
         _logger = Substitute.For<ILogger<LlmProviderChain>>();
         _serviceProvider = Substitute.For<IServiceProvider>();
         _llmLogService = Substitute.For<ILlmLogService>();
+        _factories = [
+            new OllamaKernelFactory(),
+            new OpenAIKernelFactory(),
+            new AzureOpenAIKernelFactory(),
+            new GeminiKernelFactory(),
+            new ClaudeKernelFactory()
+        ];
     }
 
     [Test]
@@ -42,7 +51,7 @@ public class LlmProviderChainTests
             .Returns(new List<LlmProviderConfig>());
 
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
-        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, httpClientFactory);
 
         // Act
         var result = await sut.ExecuteAsync("Say hello");
@@ -69,7 +78,7 @@ public class LlmProviderChainTests
             .Returns(providers);
 
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
-        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, httpClientFactory);
 
         var options = new LlmRequestOptions { ProviderName = "Provider2" };
 
@@ -96,7 +105,7 @@ public class LlmProviderChainTests
             .Returns(providers);
 
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
-        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, httpClientFactory);
 
         // Act
         var result = await sut.ExecuteAsync("Test prompt");

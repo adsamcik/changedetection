@@ -258,10 +258,81 @@ public class CachingLlmHttpHandler : DelegatingHandler
 
     private static HttpResponseMessage CreateResponse(string responseBody)
     {
+        // Detect SSE (Server-Sent Events) format used by streaming LLM responses
+        // SSE responses start with "data: " prefix
+        var trimmedBody = responseBody.TrimStart();
+        var isSSE = trimmedBody.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+        
+        if (isSSE)
+        {
+            // Filter SSE to remove problematic chunks that cause Semantic Kernel parsing issues
+            // The SK/OpenAI SDK streaming parser has bugs with certain SSE formats (GitHub issue #8286)
+            // Specifically, chunks with empty choices arrays or usage-only data cause NullReferenceException
+            var filteredSse = FilterSseResponse(responseBody);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(filteredSse, Encoding.UTF8, "text/event-stream")
+            };
+        }
+        
         return new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
         };
+    }
+
+    /// <summary>
+    /// Filters an SSE response to remove chunks that cause Semantic Kernel streaming parser issues.
+    /// Removes:
+    /// - Chunks with empty choices arrays (usage-only chunks)
+    /// - The [DONE] marker (causes issues with some parsers)
+    /// Keeps all content-bearing chunks intact.
+    /// </summary>
+    private static string FilterSseResponse(string sseBody)
+    {
+        var filteredLines = new StringBuilder();
+        
+        // Parse each SSE line
+        var lines = sseBody.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+            if (!trimmedLine.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                // Keep non-data lines (like empty lines between events)
+                filteredLines.AppendLine(line);
+                continue;
+            }
+                
+            var jsonPart = trimmedLine[5..].Trim(); // Remove "data: " prefix
+            
+            // Skip the [DONE] marker - causes issues with some SK versions
+            if (jsonPart.Equals("[DONE]", StringComparison.OrdinalIgnoreCase))
+                continue;
+            
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(jsonPart);
+                var root = doc.RootElement;
+                
+                // Skip chunks with empty choices arrays (usage-only chunks cause NullReferenceException)
+                if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() == 0)
+                    continue;
+                
+                // Keep this chunk - it has content
+                filteredLines.AppendLine(line);
+            }
+            catch
+            {
+                // Keep unparseable lines as-is (they might be important)
+                filteredLines.AppendLine(line);
+            }
+        }
+        
+        // Add back the [DONE] marker at the end (required for proper stream termination)
+        filteredLines.AppendLine("data: [DONE]");
+        
+        return filteredLines.ToString();
     }
 
     private void Log(string message)
