@@ -1,4 +1,5 @@
 using ChangeDetection.Client.Pages;
+using ChangeDetection.Client;
 using ChangeDetection.Components;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -233,6 +234,7 @@ builder.Services.AddScoped<ContentFetchingStage>();
 builder.Services.AddScoped<ContentAnalysisStage>();
 builder.Services.AddScoped<SelectorGenerationStage>();
 builder.Services.AddScoped<SelectorValidationStage>();
+builder.Services.AddScoped<SchemaDiscoveryStage>();
 builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
 
 // Pipeline queue for persistent, concurrent pipeline execution
@@ -263,9 +265,16 @@ builder.Services.AddScoped<IAlertThresholdEvaluator, AlertThresholdEvaluator>();
 builder.Services.AddScoped<INotificationTemplateEngine, NotificationTemplateEngine>();
 builder.Services.AddScoped<IPriceTrackingService, PriceTrackingService>();
 
+// Client-side services needed for Interactive Server mode
+builder.Services.AddScoped<ToastService>();
+builder.Services.AddScoped<LocalStorageService>();
+builder.Services.AddScoped<KeyboardShortcutService>();
+builder.Services.AddScoped<ThemeService>();
+
 // Startup/shutdown services (registered first so they stop last during shutdown)
 builder.Services.AddHostedService<GracefulShutdownService>();
 builder.Services.AddHostedService<WatchStatusRecoveryService>();
+builder.Services.AddHostedService<LlmProviderHealthRecoveryService>();
 
 // Background services
 builder.Services.AddHostedService<ChangeCheckBackgroundService>();

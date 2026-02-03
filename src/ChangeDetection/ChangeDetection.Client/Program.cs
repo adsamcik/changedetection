@@ -1,3 +1,4 @@
+using ChangeDetection.Client;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -7,5 +8,17 @@ builder.Services.AddScoped(sp => new HttpClient
 { 
     BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) 
 });
+
+// Register ToastService for global toast notifications
+builder.Services.AddScoped<ToastService>();
+
+// Register LocalStorageService for persisting UI state
+builder.Services.AddScoped<LocalStorageService>();
+
+// Register KeyboardShortcutService for global keyboard navigation
+builder.Services.AddScoped<KeyboardShortcutService>();
+
+// Register ThemeService for dark/light mode management
+builder.Services.AddScoped<ThemeService>();
 
 await builder.Build().RunAsync();
