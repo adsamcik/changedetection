@@ -1,0 +1,205 @@
+.shortcuts-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.shortcuts-modal-backdrop.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.shortcuts-modal {
+    width: 90%;
+    max-width: 480px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-color, #1e1e2e);
+    border: 1px solid var(--border-color, #313244);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    transform: scale(0.95) translateY(-10px);
+    transition: transform 0.2s ease;
+    overflow: hidden;
+}
+
+.shortcuts-modal-backdrop.visible .shortcuts-modal {
+    transform: scale(1) translateY(0);
+}
+
+.shortcuts-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color, #313244);
+}
+
+.shortcuts-modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-color, #cdd6f4);
+}
+
+.shortcuts-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted, #a6adc8);
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background 0.2s, color 0.2s;
+}
+
+.shortcuts-close-btn:hover {
+    background: var(--surface-hover, #313244);
+    color: var(--text-color, #cdd6f4);
+}
+
+.shortcuts-modal-content {
+    flex: 1;
+    padding: 16px 20px;
+    overflow-y: auto;
+}
+
+.shortcuts-section {
+    margin-bottom: 20px;
+}
+
+.shortcuts-section:last-child {
+    margin-bottom: 0;
+}
+
+.shortcuts-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--primary-color, #89b4fa);
+}
+
+.shortcuts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.shortcut-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--surface-hover, #313244);
+    border-radius: 8px;
+}
+
+.shortcut-keys {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.shortcut-keys kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 8px;
+    background: var(--surface-color, #1e1e2e);
+    border: 1px solid var(--border-color, #45475a);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-color, #cdd6f4);
+    box-shadow: 0 2px 0 var(--border-color, #45475a);
+}
+
+.shortcut-or {
+    margin: 0 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted, #a6adc8);
+}
+
+.key-plus {
+    margin: 0 2px;
+    color: var(--text-muted, #a6adc8);
+}
+
+.shortcut-description {
+    font-size: 0.9rem;
+    color: var(--text-color, #cdd6f4);
+}
+
+.shortcuts-tips {
+    margin: 0;
+    padding: 12px;
+    background: var(--surface-hover, #313244);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text-muted, #a6adc8);
+}
+
+.shortcuts-tips kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    margin: 0 2px;
+    background: var(--surface-color, #1e1e2e);
+    border: 1px solid var(--border-color, #45475a);
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-color, #cdd6f4);
+    box-shadow: 0 1px 0 var(--border-color, #45475a);
+    vertical-align: middle;
+}
+
+.shortcuts-modal-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color, #313244);
+    text-align: right;
+}
+
+.btn-close-shortcuts {
+    padding: 8px 16px;
+    background: var(--primary-color, #89b4fa);
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--surface-color, #1e1e2e);
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.btn-close-shortcuts:hover {
+    background: var(--primary-hover, #b4befe);
+}
+
+.btn-close-shortcuts:active {
+    transform: scale(0.98);
+}

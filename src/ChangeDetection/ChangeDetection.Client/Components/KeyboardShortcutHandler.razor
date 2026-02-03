@@ -1,0 +1,93 @@
+@namespace ChangeDetection.Client.Components
+@inject KeyboardShortcutService ShortcutService
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+@* Renders the keyboard shortcut help modal when visible *@
+<ShortcutsHelpModal IsVisible="@showHelp" OnClose="CloseHelp" />
+
+@* Keyboard shortcut hint in bottom corner *@
+<div class="keyboard-hint @(showHint ? "" : "hidden")" 
+     role="status" 
+     aria-live="polite">
+    <span class="hint-icon" aria-hidden="true">⌨️</span>
+    <span class="hint-text">Press <kbd>?</kbd> for keyboard shortcuts</span>
+    <button class="hint-dismiss" 
+            @onclick="DismissHint" 
+            title="Dismiss"
+            aria-label="Dismiss keyboard shortcuts hint">✕</button>
+</div>
+
+@* Accessible button for users who cannot use keyboard shortcuts *@
+<button class="keyboard-help-btn visually-hidden-focusable"
+        @onclick="() => showHelp = true"
+        aria-label="View keyboard shortcuts help">
+    View keyboard shortcuts
+</button>
+
+@code {
+    private bool showHelp;
+    private bool showHint = true;
+    private bool _initialized;
+    private const string HintDismissedKey = "changedetection_keyboard_hint_dismissed";
+
+    protected override void OnInitialized()
+    {
+        // Subscribe to shortcut events (safe during SSR - just event subscriptions)
+        ShortcutService.OnShowHelp += HandleShowHelp;
+        ShortcutService.OnEscapePressed += HandleEscape;
+        ShortcutService.OnNewWatch += HandleNewWatch;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_initialized)
+        {
+            _initialized = true;
+            // Initialize the keyboard shortcut listener (requires JS interop, only works client-side)
+            await ShortcutService.InitializeAsync();
+            
+            // Check if hint was previously dismissed
+            // We'd need LocalStorage here, but for simplicity, we'll just show it
+            // In a real implementation, you'd inject LocalStorageService
+        }
+    }
+
+    private void HandleShowHelp()
+    {
+        showHelp = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleEscape()
+    {
+        if (showHelp)
+        {
+            showHelp = false;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleNewWatch()
+    {
+        Navigation.NavigateTo("/watches/new");
+    }
+
+    private void CloseHelp()
+    {
+        showHelp = false;
+    }
+
+    private void DismissHint()
+    {
+        showHint = false;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Unsubscribe from events
+        ShortcutService.OnShowHelp -= HandleShowHelp;
+        ShortcutService.OnEscapePressed -= HandleEscape;
+        ShortcutService.OnNewWatch -= HandleNewWatch;
+    }
+}

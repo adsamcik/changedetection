@@ -1,0 +1,125 @@
+@namespace ChangeDetection.Client.Components
+@inject IJSRuntime JS
+
+<div class="shortcuts-modal-backdrop @(IsVisible ? "visible" : "")" 
+     @onclick="HandleBackdropClick"
+     role="presentation">
+    <div class="shortcuts-modal @(IsVisible ? "visible" : "")" 
+         @onclick:stopPropagation
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="shortcuts-modal-title"
+         @ref="_modalElement">
+        <div class="shortcuts-modal-header">
+            <h2 id="shortcuts-modal-title">⌨️ Keyboard Shortcuts</h2>
+            <button class="shortcuts-close-btn" 
+                    @onclick="Close" 
+                    title="Close (Esc)"
+                    aria-label="Close keyboard shortcuts help"
+                    @ref="_closeButton">✕</button>
+        </div>
+        
+        <div class="shortcuts-modal-content">
+            <section class="shortcuts-section" aria-labelledby="shortcuts-global-heading">
+                <h3 id="shortcuts-global-heading">Global</h3>
+                <div class="shortcuts-list" role="list">
+                    <div class="shortcut-item" role="listitem">
+                        <div class="shortcut-keys">
+                            <kbd>N</kbd>
+                        </div>
+                        <div class="shortcut-description">Create new watch</div>
+                    </div>
+                    <div class="shortcut-item" role="listitem">
+                        <div class="shortcut-keys">
+                            <kbd>?</kbd>
+                        </div>
+                        <div class="shortcut-description">Show this help</div>
+                    </div>
+                    <div class="shortcut-item" role="listitem">
+                        <div class="shortcut-keys">
+                            <kbd>Esc</kbd>
+                        </div>
+                        <div class="shortcut-description">Close modal / dialog</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="shortcuts-section" aria-labelledby="shortcuts-home-heading">
+                <h3 id="shortcuts-home-heading">Home Page</h3>
+                <div class="shortcuts-list" role="list">
+                    <div class="shortcut-item" role="listitem">
+                        <div class="shortcut-keys">
+                            <kbd>/</kbd>
+                            <span class="shortcut-or">or</span>
+                            <kbd>Ctrl</kbd><span class="key-plus">+</span><kbd>K</kbd>
+                        </div>
+                        <div class="shortcut-description">Focus search input</div>
+                    </div>
+                    <div class="shortcut-item" role="listitem">
+                        <div class="shortcut-keys">
+                            <kbd>R</kbd>
+                        </div>
+                        <div class="shortcut-description">Refresh watches</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="shortcuts-section" aria-labelledby="shortcuts-tips-heading">
+                <h3 id="shortcuts-tips-heading">Tips</h3>
+                <p class="shortcuts-tips">
+                    Keyboard shortcuts are disabled when typing in input fields.
+                    Press <kbd>Esc</kbd> to exit any field and re-enable shortcuts.
+                </p>
+            </section>
+        </div>
+
+        <div class="shortcuts-modal-footer">
+            <button class="btn-close-shortcuts" @onclick="Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private ElementReference _modalElement;
+    private ElementReference _closeButton;
+    private bool _previousVisibility;
+
+    /// <summary>
+    /// Whether the modal is visible.
+    /// </summary>
+    [Parameter]
+    public bool IsVisible { get; set; }
+
+    /// <summary>
+    /// Callback when the modal should be closed.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Focus the close button when modal becomes visible
+        if (IsVisible && !_previousVisibility)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("eval", "document.querySelector('.shortcuts-modal .shortcuts-close-btn')?.focus()");
+            }
+            catch (InvalidOperationException)
+            {
+                // Prerendering, ignore
+            }
+        }
+        _previousVisibility = IsVisible;
+    }
+
+    private void HandleBackdropClick()
+    {
+        Close();
+    }
+
+    private void Close()
+    {
+        OnClose.InvokeAsync();
+    }
+}
