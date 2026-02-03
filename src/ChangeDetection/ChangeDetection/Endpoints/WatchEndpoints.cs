@@ -211,9 +211,13 @@ public static class WatchEndpoints
                 UseJavaScript = dto.FetchSettings.UseJavaScript,
                 WaitForSelector = dto.FetchSettings.WaitForSelector,
                 WaitAfterLoadMs = dto.FetchSettings.WaitTimeMs,
-                CaptureScreenshot = dto.FetchSettings.CaptureScreenshot,
                 TimeoutSeconds = dto.FetchSettings.TimeoutSeconds,
-                Headers = dto.FetchSettings.CustomHeaders ?? new()
+                Headers = dto.FetchSettings.CustomHeaders ?? new(),
+                ViewportWidth = dto.FetchSettings.ViewportWidth,
+                ViewportHeight = dto.FetchSettings.ViewportHeight,
+                ProxyUrl = dto.FetchSettings.ProxyUrl,
+                UserAgent = dto.FetchSettings.UserAgent,
+                Screenshot = MapScreenshotSettingsFromDto(dto.FetchSettings.Screenshot)
             };
         }
 
@@ -284,8 +288,12 @@ public static class WatchEndpoints
             watch.FetchSettings.UseJavaScript = dto.FetchSettings.UseJavaScript;
             watch.FetchSettings.WaitForSelector = dto.FetchSettings.WaitForSelector;
             watch.FetchSettings.WaitAfterLoadMs = dto.FetchSettings.WaitTimeMs;
-            watch.FetchSettings.CaptureScreenshot = dto.FetchSettings.CaptureScreenshot;
             watch.FetchSettings.TimeoutSeconds = dto.FetchSettings.TimeoutSeconds;
+            watch.FetchSettings.ViewportWidth = dto.FetchSettings.ViewportWidth;
+            watch.FetchSettings.ViewportHeight = dto.FetchSettings.ViewportHeight;
+            watch.FetchSettings.ProxyUrl = dto.FetchSettings.ProxyUrl;
+            watch.FetchSettings.UserAgent = dto.FetchSettings.UserAgent;
+            watch.FetchSettings.Screenshot = MapScreenshotSettingsFromDto(dto.FetchSettings.Screenshot);
             if (dto.FetchSettings.CustomHeaders != null)
             {
                 watch.FetchSettings.Headers = dto.FetchSettings.CustomHeaders;
@@ -734,13 +742,14 @@ public static class WatchEndpoints
                 UseJavaScript = watch.FetchSettings.UseJavaScript,
                 WaitForSelector = watch.FetchSettings.WaitForSelector,
                 WaitTimeMs = watch.FetchSettings.WaitAfterLoadMs,
-                CaptureScreenshot = watch.FetchSettings.CaptureScreenshot,
+                CaptureScreenshot = watch.FetchSettings.Screenshot.IsEnabled,
                 TimeoutSeconds = watch.FetchSettings.TimeoutSeconds,
                 CustomHeaders = watch.FetchSettings.Headers,
                 ProxyUrl = watch.FetchSettings.ProxyUrl,
                 UserAgent = watch.FetchSettings.UserAgent,
                 ViewportWidth = watch.FetchSettings.ViewportWidth,
-                ViewportHeight = watch.FetchSettings.ViewportHeight
+                ViewportHeight = watch.FetchSettings.ViewportHeight,
+                Screenshot = MapScreenshotSettingsToDto(watch.FetchSettings.Screenshot)
             },
             NotificationSettings = new NotificationSettingsDto
             {
@@ -777,9 +786,52 @@ public static class WatchEndpoints
                 ContentLength = snapshot.Content.Length,
                 ContentHash = snapshot.ContentHash,
                 CapturedAt = snapshot.CapturedAt,
-                ScreenshotPath = snapshot.ScreenshotPath
+                ScreenshotPath = snapshot.ScreenshotPath,
+                ElementScreenshotPath = snapshot.ElementScreenshotPath,
+                ElementBoundingBox = ParseElementBoundingBox(snapshot.ElementBoundingBoxJson),
+                ExtractedObjects = DeserializeExtractedObjects(snapshot.ExtractedObjectsJson)
             } : null
         };
+    }
+
+    private static List<ExtractedObjectDto>? DeserializeExtractedObjects(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            var objects = System.Text.Json.JsonSerializer.Deserialize<List<ExtractedObject>>(json);
+            return objects?.Select(o => new ExtractedObjectDto
+            {
+                Identity = o.IdentityKey ?? "",
+                Fields = o.Fields.Where(f => f.Value != null).ToDictionary(f => f.Key, f => f.Value!),
+                Index = o.Index
+            }).ToList();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ElementBoundingBoxDto? ParseElementBoundingBox(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return new ElementBoundingBoxDto
+            {
+                X = root.GetProperty("x").GetDouble(),
+                Y = root.GetProperty("y").GetDouble(),
+                Width = root.GetProperty("width").GetDouble(),
+                Height = root.GetProperty("height").GetDouble()
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
     
     private static SelectorHistoryEntryDto MapSelectorHistoryToDto(SelectorHistoryEntry entry)
@@ -819,6 +871,47 @@ public static class WatchEndpoints
             MinInterval = dto.MinInterval,
             MaxInterval = dto.MaxInterval,
             FrequencyMultiplier = dto.FrequencyMultiplier
+        };
+    }
+
+    private static ScreenshotSettingsDto MapScreenshotSettingsToDto(ScreenshotSettings settings)
+    {
+        return new ScreenshotSettingsDto
+        {
+            Mode = settings.Mode.ToString(),
+            CaptureOnEveryCheck = settings.CaptureOnEveryCheck,
+            CaptureOnChange = settings.CaptureOnChange,
+            JpegQuality = settings.JpegQuality,
+            Format = settings.Format.ToString(),
+            Scale = settings.Scale,
+            ElementPadding = settings.ElementPadding,
+            HighlightElement = settings.HighlightElement,
+            HighlightColor = settings.HighlightColor,
+            HighlightBorderWidth = settings.HighlightBorderWidth,
+            MaxWidth = settings.MaxWidth,
+            MaxHeight = settings.MaxHeight
+        };
+    }
+
+    private static ScreenshotSettings MapScreenshotSettingsFromDto(ScreenshotSettingsDto? dto)
+    {
+        if (dto == null)
+            return new ScreenshotSettings();
+            
+        return new ScreenshotSettings
+        {
+            Mode = Enum.TryParse<ScreenshotMode>(dto.Mode, out var mode) ? mode : ScreenshotMode.None,
+            CaptureOnEveryCheck = dto.CaptureOnEveryCheck,
+            CaptureOnChange = dto.CaptureOnChange,
+            JpegQuality = dto.JpegQuality,
+            Format = Enum.TryParse<ScreenshotFormat>(dto.Format, out var format) ? format : ScreenshotFormat.Png,
+            Scale = dto.Scale,
+            ElementPadding = dto.ElementPadding,
+            HighlightElement = dto.HighlightElement,
+            HighlightColor = dto.HighlightColor,
+            HighlightBorderWidth = dto.HighlightBorderWidth,
+            MaxWidth = dto.MaxWidth,
+            MaxHeight = dto.MaxHeight
         };
     }
 

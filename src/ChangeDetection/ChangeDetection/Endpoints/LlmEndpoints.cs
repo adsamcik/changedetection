@@ -632,6 +632,7 @@ public static class LlmEndpoints
         var dtos = logs.Select(log => new LlmLogEntryDto
         {
             Id = log.Id,
+            RequestId = log.RequestId,
             Timestamp = log.Timestamp,
             Level = log.Level.ToString(),
             ProviderName = log.ProviderName,

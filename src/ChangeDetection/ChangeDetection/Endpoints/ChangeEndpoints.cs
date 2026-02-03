@@ -145,14 +145,18 @@ public static class ChangeEndpoints
                 Id = previousSnapshot.Id.ToString(),
                 CapturedAt = previousSnapshot.CapturedAt,
                 Content = previousSnapshot.Content,
-                ScreenshotPath = previousSnapshot.ScreenshotPath
+                ScreenshotPath = previousSnapshot.ScreenshotPath,
+                ElementScreenshotPath = previousSnapshot.ElementScreenshotPath,
+                ElementBoundingBox = ParseElementBoundingBox(previousSnapshot.ElementBoundingBoxJson)
             } : null,
             CurrentSnapshot = currentSnapshot != null ? new SnapshotInfoDto
             {
                 Id = currentSnapshot.Id.ToString(),
                 CapturedAt = currentSnapshot.CapturedAt,
                 Content = currentSnapshot.Content,
-                ScreenshotPath = currentSnapshot.ScreenshotPath
+                ScreenshotPath = currentSnapshot.ScreenshotPath,
+                ElementScreenshotPath = currentSnapshot.ElementScreenshotPath,
+                ElementBoundingBox = ParseElementBoundingBox(currentSnapshot.ElementBoundingBoxJson)
             } : null
         };
 
@@ -164,6 +168,27 @@ public static class ChangeEndpoints
         }
 
         return Results.Ok(dto);
+    }
+
+    private static ElementBoundingBoxDto? ParseElementBoundingBox(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return new ElementBoundingBoxDto
+            {
+                X = root.GetProperty("x").GetDouble(),
+                Y = root.GetProperty("y").GetDouble(),
+                Width = root.GetProperty("width").GetDouble(),
+                Height = root.GetProperty("height").GetDouble()
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task<IResult> GetFieldHistory(
