@@ -256,7 +256,7 @@ public class ConversationSessionManager : IConversationSessionManager, IDisposab
     public IReadOnlyList<ConversationSession> GetAllActiveSessions()
     {
         return _sessions.Values
-            .Where(s => !IsExpired(s) && (s.AwaitingUserInput || !string.IsNullOrEmpty(s.PendingInput) || !string.IsNullOrEmpty(s.DisplayName)))
+            .Where(s => !IsExpired(s) && !s.IsCompleted && (s.AwaitingUserInput || !string.IsNullOrEmpty(s.PendingInput) || !string.IsNullOrEmpty(s.DisplayName)))
             .OrderByDescending(s => s.LastActivityAt)
             .ToList();
     }

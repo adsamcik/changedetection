@@ -16,6 +16,7 @@ public class WatchSetupPipeline(
     ContentAnalysisStage contentAnalysis,
     SelectorGenerationStage selectorGeneration,
     SelectorValidationStage selectorValidation,
+    SchemaDiscoveryStage schemaDiscovery,
     ILlmProviderChain llmProvider,
     IPipelineEventService eventService,
     IUserContext userContext,
@@ -87,6 +88,19 @@ public class WatchSetupPipeline(
             }
             await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentAnalysis, 
                 $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}", ct);
+
+            // Stage 3.5: Schema Discovery (for list-type content)
+            if (session.ContentAnalysis != null && 
+                session.FetchedContent != null &&
+                SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
+            {
+                await RecordStageStartAsync(run.Id, PipelineStageNames.SchemaDiscovery, ct);
+                await ExecuteSchemaDiscoveryAsync(session, ct);
+                await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery, 
+                    session.DiscoveredSchema != null 
+                        ? $"Discovered schema with {session.DiscoveredSchema.Fields.Count} fields" 
+                        : "No schema discovered", ct);
+            }
 
             // Stage 4-5: Generate and Validate Selectors (with iteration loop)
             await RecordStageStartAsync(run.Id, PipelineStageNames.SelectorGeneration, ct);
@@ -323,6 +337,40 @@ public class WatchSetupPipeline(
             Details = $"Found {session.ContentAnalysis?.IdentifiedSections.Count ?? 0} sections",
             Session = session
         };
+
+        // Stage 3.5: Schema Discovery (for list-type content)
+        if (session.ContentAnalysis != null && 
+            session.FetchedContent != null &&
+            SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
+        {
+            await RecordStageStartAsync(run.Id, PipelineStageNames.SchemaDiscovery, ct);
+            yield return new PipelineProgress
+            {
+                Stage = PipelineStage.ContentAnalysis, // Use ContentAnalysis stage for UI grouping
+                Type = ProgressType.InProgress,
+                Summary = "Discovering extraction schema for structured content...",
+                Session = session
+            };
+
+            await ExecuteSchemaDiscoveryAsync(session, ct);
+
+            await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery,
+                session.DiscoveredSchema != null
+                    ? $"Discovered schema with {session.DiscoveredSchema.Fields.Count} fields"
+                    : "No schema discovered", ct);
+
+            if (session.DiscoveredSchema != null)
+            {
+                yield return new PipelineProgress
+                {
+                    Stage = PipelineStage.ContentAnalysis,
+                    Type = ProgressType.StageCompleted,
+                    Summary = $"Schema discovered: {session.DiscoveredSchema.Fields.Count} fields for {session.DiscoveredSchema.SampleItemCount} items",
+                    Details = session.DiscoveredSchema.Explanation,
+                    Session = session
+                };
+            }
+        }
 
         // Stage 4-5: Selector Generation and Validation
         error = null;
@@ -900,6 +948,37 @@ public class WatchSetupPipeline(
         }
     }
 
+    private async Task ExecuteSchemaDiscoveryAsync(
+        PipelineSession session,
+        CancellationToken ct)
+    {
+        logger.LogDebug("Stage 3.5: Schema Discovery");
+
+        if (session.FetchedContent == null || session.ContentAnalysis == null)
+            return;
+
+        if (!SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
+            return;
+
+        var discoveredSchema = await schemaDiscovery.DiscoverAsync(
+            session.FetchedContent,
+            session.ContentAnalysis,
+            ct);
+
+        if (discoveredSchema != null)
+        {
+            session.DiscoveredSchema = discoveredSchema;
+            session.SchemaEnabled = true;
+            session.IterationHistory.Add(
+                $"Schema: Discovered {discoveredSchema.Fields.Count} fields for {discoveredSchema.SampleItemCount} items");
+        }
+        else
+        {
+            session.SchemaEnabled = false;
+            session.IterationHistory.Add("Schema: Could not discover schema for this content");
+        }
+    }
+
     private async Task<PipelineResult?> ExecuteSelectorIterationAsync(
         PipelineSession session,
         PipelineOptions options,
@@ -1183,6 +1262,13 @@ public class WatchSetupPipeline(
             config.Tags.Add(session.ContentAnalysis.ContentType.ToString().ToLowerInvariant());
         }
 
+        // Map discovered schema to extraction schema
+        if (session.DiscoveredSchema != null && session.SchemaEnabled == true)
+        {
+            config.SchemaEnabled = true;
+            config.Schema = ConvertToExtractionSchema(session.DiscoveredSchema);
+        }
+
         var summary = BuildSummary(session, config);
 
         return new PipelineResult
@@ -1225,6 +1311,45 @@ public class WatchSetupPipeline(
             CurrentStage = stage,
             Session = session,
             ErrorMessage = error
+        };
+    }
+
+    private static ExtractionSchema ConvertToExtractionSchema(DiscoveredSchema discovered)
+    {
+        return new ExtractionSchema
+        {
+            ItemSelector = discovered.ItemSelector,
+            Fields = discovered.Fields.Select(f => new SchemaField
+            {
+                Name = f.Name,
+                Type = ParseFieldType(f.Type),
+                Selector = f.Selector,
+                IsRequired = f.IsRequired,
+                IsIdentityField = f.IsIdentityField,
+                SampleValue = f.SampleValues.FirstOrDefault(),
+                Confidence = f.Confidence
+            }).ToList(),
+            IdentityFieldNames = discovered.InferredIdentityFields.ToList(),
+            Version = 1,
+            DiscoveredAt = DateTime.UtcNow
+        };
+    }
+
+    private static FieldType ParseFieldType(string typeString)
+    {
+        return typeString?.ToLowerInvariant() switch
+        {
+            "date" => FieldType.Date,
+            "url" => FieldType.Url,
+            "number" => FieldType.Number,
+            "currency" => FieldType.Currency,
+            "image" => FieldType.Image,
+            "html" => FieldType.Html,
+            "percentage" => FieldType.Percentage,
+            "duration" => FieldType.Duration,
+            "boolean" => FieldType.Boolean,
+            "status" => FieldType.Status,
+            _ => FieldType.String
         };
     }
 
