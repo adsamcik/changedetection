@@ -1,6 +1,7 @@
 ﻿@inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Web
+@using ChangeDetection.Client.Components
 @inject IConfiguration Configuration
 @inject ILogger<MainLayout> Logger
 
@@ -28,6 +29,7 @@
                     </NotAuthorized>
                 </AuthorizeView>
             }
+            <ThemeToggle />
             <a href="/settings">Settings</a>
         </div>
 
@@ -48,6 +50,9 @@
         </article>
     </main>
 </div>
+
+@* Global keyboard shortcut handler *@
+<KeyboardShortcutHandler />
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.

@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Web
+@using ChangeDetection.Client.Components
 
 <ErrorBoundary @ref="_errorBoundary">
     <ChildContent>
@@ -45,3 +46,5 @@
         _errorBoundary?.Recover();
     }
 }
+
+<ToastContainer />
