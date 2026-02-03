@@ -1,0 +1,143 @@
+@using System.Collections.Concurrent
+@implements IDisposable
+@inject ToastService ToastService
+
+<div class="toast-container" role="region" aria-label="Notifications" aria-live="polite">
+    @foreach (var toast in GetToastsCopy())
+    {
+        <div class="toast toast-@toast.Type.ToString().ToLowerInvariant() @(IsDismissing(toast.Id) ? "toast-dismissing" : "")"
+             role="@(toast.Type == ToastType.Error || toast.Type == ToastType.Warning ? "alert" : "status")"
+             aria-live="@(toast.Type == ToastType.Error ? "assertive" : "polite")">
+            <div class="toast-icon">
+                @GetIcon(toast.Type)
+            </div>
+            <div class="toast-content">
+                @toast.Message
+            </div>
+            <button class="toast-dismiss" @onclick="() => DismissToast(toast.Id)" aria-label="Dismiss">
+                ✕
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly object _lock = new();
+    private readonly List<ToastMessage> _toasts = [];
+    private readonly HashSet<Guid> _dismissingToasts = [];
+    private readonly ConcurrentDictionary<Guid, Timer> _timers = new();
+    private bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        ToastService.OnShow += HandleToastShow;
+    }
+
+    private List<ToastMessage> GetToastsCopy()
+    {
+        lock (_lock)
+        {
+            return [.. _toasts];
+        }
+    }
+
+    private void HandleToastShow(ToastMessage toast)
+    {
+        if (_disposed) return;
+        
+        lock (_lock)
+        {
+            _toasts.Add(toast);
+        }
+        
+        // Set up auto-dismiss timer with safe callback
+        var timer = new Timer(async _ =>
+        {
+            if (_disposed) return;
+            try
+            {
+                await InvokeAsync(() => DismissToast(toast.Id));
+            }
+            catch (ObjectDisposedException)
+            {
+                // Component was disposed, ignore
+            }
+        }, null, toast.EffectiveDuration, Timeout.Infinite);
+        
+        _timers.TryAdd(toast.Id, timer);
+        
+        try
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Component was disposed, ignore
+        }
+    }
+
+    private async Task DismissToast(Guid id)
+    {
+        if (_disposed) return;
+        
+        lock (_lock)
+        {
+            if (_dismissingToasts.Contains(id))
+                return;
+
+            _dismissingToasts.Add(id);
+        }
+        
+        StateHasChanged();
+        
+        // Wait for animation to complete
+        await Task.Delay(300);
+        
+        if (_disposed) return;
+        
+        lock (_lock)
+        {
+            _toasts.RemoveAll(t => t.Id == id);
+            _dismissingToasts.Remove(id);
+        }
+        
+        if (_timers.TryRemove(id, out var timer))
+        {
+            await timer.DisposeAsync();
+        }
+        
+        if (!_disposed)
+        {
+            StateHasChanged();
+        }
+    }
+
+    private bool IsDismissing(Guid id)
+    {
+        lock (_lock)
+        {
+            return _dismissingToasts.Contains(id);
+        }
+    }
+
+    private static string GetIcon(ToastType type) => type switch
+    {
+        ToastType.Success => "✓",
+        ToastType.Error => "✕",
+        ToastType.Warning => "⚠",
+        ToastType.Info => "ℹ",
+        _ => "ℹ"
+    };
+
+    public void Dispose()
+    {
+        _disposed = true;
+        ToastService.OnShow -= HandleToastShow;
+        
+        foreach (var timer in _timers.Values)
+        {
+            timer.Dispose();
+        }
+        _timers.Clear();
+    }
+}
