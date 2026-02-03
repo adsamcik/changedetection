@@ -1,0 +1,281 @@
+/* =============================================================================
+   Health Grid Component Styles - Sentinel Theme
+   Distinctive health status cards for dashboard views
+   ============================================================================= */
+
+/* Health Status Grid Section */
+.health-grid-section {
+    padding: var(--spacing-6) var(--spacing-6);
+    background-color: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    position: relative;
+}
+
+/* Subtle grid pattern background */
+.health-grid-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: 
+        linear-gradient(rgba(13, 148, 136, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(13, 148, 136, 0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+}
+
+/* Grid Layout */
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: var(--spacing-4);
+    max-width: 1000px;
+    margin: 0 auto;
+    position: relative;
+}
+
+@media (max-width: 900px) {
+    .health-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .health-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Base Health Card */
+.health-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-5);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg);
+    cursor: pointer;
+    transition: all var(--transition-base);
+    min-height: 110px;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Hover state */
+.health-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+}
+
+/* Active/selected state */
+.health-card.active {
+    border-width: 2px;
+    transform: translateY(-2px);
+}
+
+/* Health Card Elements */
+.health-card-icon {
+    font-size: 1.25rem;
+    margin-bottom: var(--spacing-2);
+    opacity: 0.9;
+}
+
+.health-card-count {
+    font-size: 2.25rem;
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.health-card-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    font-weight: var(--font-weight-medium);
+    text-align: center;
+    margin-top: var(--spacing-1);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* =============================================================================
+   Health Card Variants
+   ============================================================================= */
+
+/* Total/All Watches */
+.health-card-total {
+    background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg) 100%);
+    border-color: var(--color-border);
+}
+
+.health-card-total .health-card-icon {
+    color: var(--color-text-muted);
+}
+
+.health-card-total .health-card-count {
+    color: var(--color-text);
+}
+
+.health-card-total.active {
+    border-color: var(--color-primary);
+    background: linear-gradient(135deg, var(--color-primary-light) 0%, var(--color-bg) 100%);
+    box-shadow: var(--shadow-glow);
+}
+
+.health-card-total.active .health-card-icon,
+.health-card-total.active .health-card-count {
+    color: var(--color-primary);
+}
+
+/* Healthy Status */
+.health-card-healthy {
+    background: linear-gradient(135deg, rgba(var(--color-success-rgb), 0.08) 0%, var(--color-bg) 100%);
+    border-color: rgba(var(--color-success-rgb), 0.3);
+}
+
+.health-card-healthy::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--color-success);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.health-card-healthy .health-card-icon {
+    color: var(--color-success);
+}
+
+.health-card-healthy .health-card-count {
+    color: var(--color-success);
+}
+
+.health-card-healthy:hover {
+    border-color: var(--color-success);
+}
+
+.health-card-healthy.active {
+    background: linear-gradient(135deg, var(--color-success-light) 0%, var(--color-bg) 100%);
+    border-color: var(--color-success);
+    box-shadow: 0 0 0 3px rgba(var(--color-success-rgb), 0.15), var(--shadow-md);
+}
+
+/* Checking Status */
+.health-card-checking {
+    background: linear-gradient(135deg, rgba(var(--color-warning-rgb), 0.08) 0%, var(--color-bg) 100%);
+    border-color: rgba(var(--color-warning-rgb), 0.3);
+}
+
+.health-card-checking::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--color-warning);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.health-card-checking .health-card-icon {
+    color: var(--color-warning);
+    animation: pulse-checking 1.5s ease-in-out infinite;
+}
+
+.health-card-checking .health-card-count {
+    color: var(--color-warning);
+}
+
+.health-card-checking:hover {
+    border-color: var(--color-warning);
+}
+
+.health-card-checking.active {
+    background: linear-gradient(135deg, var(--color-warning-light) 0%, var(--color-bg) 100%);
+    border-color: var(--color-warning);
+    box-shadow: 0 0 0 3px rgba(var(--color-warning-rgb), 0.15), var(--shadow-md);
+}
+
+/* Checking Animation */
+@keyframes pulse-checking {
+    0%, 100% { 
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% { 
+        opacity: 0.6;
+        transform: scale(1.1);
+    }
+}
+
+/* Error Status */
+.health-card-error {
+    background: linear-gradient(135deg, rgba(var(--color-error-rgb), 0.08) 0%, var(--color-bg) 100%);
+    border-color: rgba(var(--color-error-rgb), 0.3);
+}
+
+.health-card-error::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--color-error);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.health-card-error .health-card-icon {
+    color: var(--color-error);
+}
+
+.health-card-error .health-card-count {
+    color: var(--color-error);
+}
+
+.health-card-error:hover {
+    border-color: var(--color-error);
+}
+
+.health-card-error.active {
+    background: linear-gradient(135deg, var(--color-error-light) 0%, var(--color-bg) 100%);
+    border-color: var(--color-error);
+    box-shadow: 0 0 0 3px rgba(var(--color-error-rgb), 0.15), var(--shadow-md);
+}
+
+/* Paused Status */
+.health-card-paused {
+    background: linear-gradient(135deg, rgba(148, 163, 184, 0.08) 0%, var(--color-bg) 100%);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.health-card-paused::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--color-text-light);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.health-card-paused .health-card-icon {
+    color: var(--color-text-muted);
+}
+
+.health-card-paused .health-card-count {
+    color: var(--color-text-muted);
+}
+
+.health-card-paused:hover {
+    border-color: var(--color-text-light);
+}
+
+.health-card-paused.active {
+    background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg) 100%);
+    border-color: var(--color-text-muted);
+    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.15), var(--shadow-md);
+}

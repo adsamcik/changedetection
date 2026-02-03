@@ -1,0 +1,34 @@
+@import 'css/design-tokens.css';
+@import 'css/shared-components.css';
+@import 'css/activity-feed.css';
+@import 'css/health-grid.css';
+
+/* =============================================================================
+   ChangeDetection Client Styles
+   ============================================================================= */
+
+/* Base styles using design tokens */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

@@ -1,0 +1,48 @@
+@inject ThemeService ThemeService
+@implements IDisposable
+
+<button class="theme-toggle" 
+        @onclick="CycleTheme" 
+        title="@GetTooltip()"
+        aria-label="@GetTooltip()">
+    @GetIcon()
+</button>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        ThemeService.OnThemeChanged += OnThemeChanged;
+        await ThemeService.InitializeAsync();
+    }
+
+    private async Task CycleTheme()
+    {
+        await ThemeService.CycleThemeAsync();
+    }
+
+    private string GetIcon() => ThemeService.CurrentMode switch
+    {
+        ThemeMode.Light => "☀️",
+        ThemeMode.Dark => "🌙",
+        ThemeMode.System => "💻",
+        _ => "💻"
+    };
+
+    private string GetTooltip() => ThemeService.CurrentMode switch
+    {
+        ThemeMode.Light => "Light mode (click for dark)",
+        ThemeMode.Dark => "Dark mode (click for system)",
+        ThemeMode.System => $"System mode ({ThemeService.EffectiveTheme}) (click for light)",
+        _ => "Toggle theme"
+    };
+
+    private void OnThemeChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ThemeService.OnThemeChanged -= OnThemeChanged;
+    }
+}
