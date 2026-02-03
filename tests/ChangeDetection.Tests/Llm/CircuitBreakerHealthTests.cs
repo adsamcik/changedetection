@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
@@ -21,6 +22,7 @@ public class CircuitBreakerHealthTests
     private readonly ILogger<LlmProviderChain> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILlmLogService _llmLogService;
+    private readonly IEnumerable<ILlmKernelFactory> _factories;
     private readonly LlmProviderChain _sut;
 
     public CircuitBreakerHealthTests()
@@ -30,7 +32,14 @@ public class CircuitBreakerHealthTests
         _logger = Substitute.For<ILogger<LlmProviderChain>>();
         _serviceProvider = Substitute.For<IServiceProvider>();
         _llmLogService = Substitute.For<ILlmLogService>();
-        _sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService);
+        _factories = [
+            new OllamaKernelFactory(),
+            new OpenAIKernelFactory(),
+            new AzureOpenAIKernelFactory(),
+            new GeminiKernelFactory(),
+            new ClaudeKernelFactory()
+        ];
+        _sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories);
     }
 
     [Test]
@@ -148,7 +157,7 @@ public class CircuitBreakerHealthTests
             .Returns([provider]);
 
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
-        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, httpClientFactory);
 
         // Act - This will fail via mock handler
         var result = await sut.ExecuteAsync("Test prompt");
@@ -186,7 +195,7 @@ public class CircuitBreakerHealthTests
             .Returns([provider]);
 
         var httpClientFactory = new MockHttpClientFactory(mockHandler);
-        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, httpClientFactory);
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, httpClientFactory);
 
         // Act - Execute multiple times to potentially trigger circuit breaker
         for (var i = 0; i < 5; i++)

@@ -4,7 +4,6 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.Anthropic;
 using Polly;
 using Polly.CircuitBreaker;
 using Polly.Timeout;
@@ -22,6 +21,7 @@ public class LlmProviderChain : ILlmProviderChain
     private readonly IServiceProvider _serviceProvider;
     private readonly ILlmLogService _llmLog;
     private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly IReadOnlyDictionary<LlmProviderType, ILlmKernelFactory> _factories;
     private readonly Dictionary<Guid, ResiliencePipeline> _circuitBreakers = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -31,6 +31,7 @@ public class LlmProviderChain : ILlmProviderChain
         ILogger<LlmProviderChain> logger,
         IServiceProvider serviceProvider,
         ILlmLogService llmLogService,
+        IEnumerable<ILlmKernelFactory> factories,
         IHttpClientFactory? httpClientFactory = null)
     {
         _providerRepo = providerRepo;
@@ -38,6 +39,7 @@ public class LlmProviderChain : ILlmProviderChain
         _logger = logger;
         _serviceProvider = serviceProvider;
         _llmLog = llmLogService;
+        _factories = factories.ToDictionary(f => f.ProviderType);
         _httpClientFactory = httpClientFactory;
     }
 
@@ -508,8 +510,6 @@ public class LlmProviderChain : ILlmProviderChain
 
     private Kernel CreateKernelForProvider(LlmProviderConfig provider)
     {
-        var builder = Kernel.CreateBuilder();
-        
         // Create HttpClient with the provider's configured timeout
         // Default HttpClient has 100s timeout which is too short for some LLM operations
         // Use IHttpClientFactory if available (allows test mocking), otherwise create directly
@@ -527,61 +527,15 @@ public class LlmProviderChain : ILlmProviderChain
             };
         }
 
-        switch (provider.ProviderType)
+        // Use registered factory for the provider type
+        if (!_factories.TryGetValue(provider.ProviderType, out var factory))
         {
-            case LlmProviderType.OpenAI:
-                builder.AddOpenAIChatCompletion(
-                    modelId: provider.Model,
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("OpenAI API key is required"),
-                    httpClient: httpClient);
-                break;
-
-            case LlmProviderType.AzureOpenAI:
-                builder.AddAzureOpenAIChatCompletion(
-                    deploymentName: provider.Model,
-                    endpoint: provider.Endpoint ?? throw new InvalidOperationException("Azure OpenAI endpoint is required"),
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Azure OpenAI API key is required"),
-                    httpClient: httpClient);
-                break;
-
-            case LlmProviderType.Ollama:
-                // For Ollama, we use the OpenAI connector with custom endpoint
-                var endpoint = provider.Endpoint ?? "http://localhost:11434";
-#pragma warning disable SKEXP0010
-                builder.AddOpenAIChatCompletion(
-                    modelId: provider.Model,
-                    apiKey: "ollama", // Ollama doesn't require API key but SK requires non-null
-                    endpoint: new Uri($"{endpoint}/v1"),
-                    httpClient: httpClient);
-#pragma warning restore SKEXP0010
-                break;
-
-            case LlmProviderType.Gemini:
-#pragma warning disable SKEXP0070
-                builder.AddGoogleAIGeminiChatCompletion(
-                    modelId: provider.Model,
-                    apiKey: provider.ApiKey ?? throw new InvalidOperationException("Gemini API key is required"),
-                    httpClient: httpClient);
-#pragma warning restore SKEXP0070
-                break;
-
-            case LlmProviderType.Claude:
-                // Claude support via proper Anthropic connector
-#pragma warning disable SKEXP0070
-                builder.Services.AddKeyedSingleton<IChatCompletionService>(
-                    null,
-                    new AnthropicChatCompletionService(
-                        modelId: provider.Model,
-                        apiKey: provider.ApiKey ?? throw new InvalidOperationException("Claude API key is required"),
-                        httpClient: httpClient));
-#pragma warning restore SKEXP0070
-                break;
-
-            default:
-                throw new NotSupportedException($"Provider type {provider.ProviderType} is not supported");
+            throw new NotSupportedException(
+                $"Provider type {provider.ProviderType} is not supported. " +
+                $"Available factories: {string.Join(", ", _factories.Keys)}");
         }
 
-        return builder.Build();
+        return factory.CreateKernel(provider, httpClient);
     }
 
     private async Task<ResiliencePipeline> GetOrCreateCircuitBreakerAsync(LlmProviderConfig provider)

@@ -1,5 +1,6 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Tests.Llm.Cache;
 using ChangeDetection.Tests.Llm.TestHelpers;
 using Microsoft.Extensions.Logging;
@@ -270,6 +271,14 @@ public abstract class ExtractionTestBase
         HttpClientFactory = new CachingHttpClientFactory(cacheMode, Console.Out);
         TUnit.Core.TestContext.Current?.OutputWriter?.WriteLine($"=== LLM Cache Mode: {cacheMode} ===");
 
-        return new LlmProviderChain(providerRepo, usageRepo, logger, serviceProvider, llmLogService, HttpClientFactory);
+        IEnumerable<ILlmKernelFactory> factories = [
+            new OllamaKernelFactory(),
+            new OpenAIKernelFactory(),
+            new AzureOpenAIKernelFactory(),
+            new GeminiKernelFactory(),
+            new ClaudeKernelFactory()
+        ];
+
+        return new LlmProviderChain(providerRepo, usageRepo, logger, serviceProvider, llmLogService, factories, HttpClientFactory);
     }
 }

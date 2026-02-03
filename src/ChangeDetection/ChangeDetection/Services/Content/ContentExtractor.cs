@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using ChangeDetection.Core.Interfaces;
+using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 
 namespace ChangeDetection.Services.Content;
@@ -23,11 +24,18 @@ public partial class ContentExtractor : IContentExtractor
         {
             targetNode = doc.DocumentNode.SelectSingleNode(xpathSelector);
         }
-        // Apply CSS selector if provided (convert to XPath)
+        // Apply CSS selector if provided
         else if (!string.IsNullOrEmpty(cssSelector))
         {
-            var xpath = CssToXPath(cssSelector);
-            targetNode = doc.DocumentNode.SelectSingleNode(xpath);
+            try
+            {
+                // Use the same CSS selector engine as selector validation (supports >, +, etc.)
+                targetNode = doc.DocumentNode.QuerySelectorAll(cssSelector).FirstOrDefault();
+            }
+            catch
+            {
+                targetNode = null;
+            }
         }
 
         if (targetNode == null)
@@ -139,8 +147,14 @@ public partial class ContentExtractor : IContentExtractor
         }
         else if (!string.IsNullOrEmpty(cssSelector))
         {
-            var xpath = CssToXPath(cssSelector);
-            targetNode = doc.DocumentNode.SelectSingleNode(xpath);
+            try
+            {
+                targetNode = doc.DocumentNode.QuerySelectorAll(cssSelector).FirstOrDefault();
+            }
+            catch
+            {
+                targetNode = null;
+            }
         }
 
         return targetNode?.InnerHtml;

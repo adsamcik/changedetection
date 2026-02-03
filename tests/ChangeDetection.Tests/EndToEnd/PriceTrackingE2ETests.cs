@@ -2,6 +2,7 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services;
 using ChangeDetection.Services.LLM;
+using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Tests.Llm.Cache;
 using ChangeDetection.Tests.Llm.TestHelpers;
 using Microsoft.Extensions.Logging;
@@ -1042,8 +1043,16 @@ public class PriceTrackingE2ETests
         var cacheMode = CachedLlmKernelFactory.GetDefaultCacheMode();
         _httpClientFactory = new CachingHttpClientFactory(cacheMode, Console.Out);
         TestContext.Current?.OutputWriter?.WriteLine($"=== LLM Cache Mode: {cacheMode} ===");
+
+        IEnumerable<ILlmKernelFactory> factories = [
+            new OllamaKernelFactory(),
+            new OpenAIKernelFactory(),
+            new AzureOpenAIKernelFactory(),
+            new GeminiKernelFactory(),
+            new ClaudeKernelFactory()
+        ];
         
-        return new LlmProviderChain(providerRepo, usageRepo, logger, serviceProvider, llmLogService, _httpClientFactory);
+        return new LlmProviderChain(providerRepo, usageRepo, logger, serviceProvider, llmLogService, factories, _httpClientFactory);
     }
 
     #endregion
