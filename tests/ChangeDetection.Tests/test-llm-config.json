@@ -1,0 +1,8 @@
+{
+  "name": "Ollama Local",
+  "providerType": "ollama",
+  "endpoint": "http://localhost:11434",
+  "model": "ministral-3:14b",
+  "timeoutSeconds": 120,
+  "maxRetries": 3
+}
