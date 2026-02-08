@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "input-1", "type": "Input", "config": { "url": "https://example.com/blog" }, "position": 0 },
+    { "id": "nav-1", "type": "Navigate", "config": {}, "position": 1 },
+    { "id": "filter-1", "type": "Filter", "config": { "css": "article" }, "position": 2 },
+    { "id": "llm-extract-1", "type": "LlmExtract", "config": { "prompt": "Extract the key points and main topics from this article" }, "position": 3 },
+    { "id": "llm-eval-1", "type": "LlmEvaluate", "config": { "prompt": "Has the content changed in a meaningful way? Ignore minor formatting changes." }, "position": 4 },
+    { "id": "condition-1", "type": "Condition", "config": { "operator": "hasChanges" }, "position": 5 },
+    { "id": "notify-1", "type": "Notify", "config": { "channel": "email", "template": "Blog content has meaningful updates" }, "position": 6 },
+    { "id": "output-1", "type": "Output", "config": {}, "position": 7 }
+  ],
+  "connections": [
+    { "fromBlockId": "input-1", "fromPort": "url", "toBlockId": "nav-1", "toPort": "url" },
+    { "fromBlockId": "nav-1", "fromPort": "html", "toBlockId": "filter-1", "toPort": "html" },
+    { "fromBlockId": "filter-1", "fromPort": "html", "toBlockId": "llm-extract-1", "toPort": "html" },
+    { "fromBlockId": "llm-extract-1", "fromPort": "data", "toBlockId": "llm-eval-1", "toPort": "data" },
+    { "fromBlockId": "llm-eval-1", "fromPort": "result", "toBlockId": "condition-1", "toPort": "result" },
+    { "fromBlockId": "condition-1", "fromPort": "signal", "toBlockId": "notify-1", "toPort": "signal" },
+    { "fromBlockId": "llm-extract-1", "fromPort": "data", "toBlockId": "notify-1", "toPort": "data" },
+    { "fromBlockId": "llm-extract-1", "fromPort": "data", "toBlockId": "output-1", "toPort": "data" }
+  ],
+  "metadata": {
+    "displayTitle": "LLM Content Evaluation",
+    "userIntent": "Use AI to detect meaningful content changes on a blog",
+    "estimatedLlmCallsPerRun": 2,
+    "cardType": "content",
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}

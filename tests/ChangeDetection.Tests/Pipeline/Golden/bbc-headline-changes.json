@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "input-1", "type": "Input", "config": { "url": "https://www.bbc.com/news" }, "position": 0 },
+    { "id": "nav-1", "type": "Navigate", "config": {}, "position": 1 },
+    { "id": "wait-1", "type": "Wait", "config": { "selector": "h3", "timeoutMs": 5000 }, "position": 2 },
+    { "id": "extract-1", "type": "ExtractSchema", "config": { "schema": [{ "field": "headline", "selector": "h3", "type": "text" }], "listMode": true }, "position": 3 },
+    { "id": "listdiff-1", "type": "ListDiff", "config": { "keyField": "headline" }, "position": 4 },
+    { "id": "condition-1", "type": "Condition", "config": { "operator": "hasChanges" }, "position": 5 },
+    { "id": "notify-1", "type": "Notify", "config": { "channel": "email", "template": "BBC headlines changed" }, "position": 6 },
+    { "id": "output-1", "type": "Output", "config": {}, "position": 7 }
+  ],
+  "connections": [
+    { "fromBlockId": "input-1", "fromPort": "url", "toBlockId": "nav-1", "toPort": "url" },
+    { "fromBlockId": "nav-1", "fromPort": "page", "toBlockId": "wait-1", "toPort": "page" },
+    { "fromBlockId": "nav-1", "fromPort": "html", "toBlockId": "extract-1", "toPort": "html" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "listdiff-1", "toPort": "data" },
+    { "fromBlockId": "listdiff-1", "fromPort": "result", "toBlockId": "condition-1", "toPort": "result" },
+    { "fromBlockId": "condition-1", "fromPort": "signal", "toBlockId": "notify-1", "toPort": "signal" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "notify-1", "toPort": "data" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "output-1", "toPort": "data" }
+  ],
+  "metadata": {
+    "displayTitle": "BBC Headline Changes",
+    "userIntent": "Monitor BBC News for new or removed headlines",
+    "estimatedLlmCallsPerRun": 0,
+    "cardType": "list",
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}

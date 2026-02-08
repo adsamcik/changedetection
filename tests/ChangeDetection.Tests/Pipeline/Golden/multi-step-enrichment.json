@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "input-1", "type": "Input", "config": { "url": "https://example.com/products" }, "position": 0 },
+    { "id": "nav-1", "type": "Navigate", "config": {}, "position": 1 },
+    { "id": "extract-1", "type": "ExtractSchema", "config": { "schema": [{ "field": "title", "selector": ".product-title", "type": "text" }, { "field": "detailUrl", "selector": ".product-link", "type": "attribute", "attribute": "href" }] }, "position": 2 },
+    { "id": "enrich-1", "type": "Enrich", "config": { "urlField": "detailUrl", "extractFields": ["description", "availability"] }, "position": 3 },
+    { "id": "transform-1", "type": "Transform", "config": { "expression": "select title, description, availability" }, "position": 4 },
+    { "id": "hash-1", "type": "HashCompare", "config": {}, "position": 5 },
+    { "id": "condition-1", "type": "Condition", "config": { "operator": "hasChanges" }, "position": 6 },
+    { "id": "notify-1", "type": "Notify", "config": { "channel": "webhook", "url": "https://hooks.example.com/changes" }, "position": 7 },
+    { "id": "output-1", "type": "Output", "config": {}, "position": 8 }
+  ],
+  "connections": [
+    { "fromBlockId": "input-1", "fromPort": "url", "toBlockId": "nav-1", "toPort": "url" },
+    { "fromBlockId": "nav-1", "fromPort": "html", "toBlockId": "extract-1", "toPort": "html" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "enrich-1", "toPort": "data" },
+    { "fromBlockId": "enrich-1", "fromPort": "data", "toBlockId": "transform-1", "toPort": "data" },
+    { "fromBlockId": "transform-1", "fromPort": "data", "toBlockId": "hash-1", "toPort": "data" },
+    { "fromBlockId": "hash-1", "fromPort": "result", "toBlockId": "condition-1", "toPort": "result" },
+    { "fromBlockId": "condition-1", "fromPort": "signal", "toBlockId": "notify-1", "toPort": "signal" },
+    { "fromBlockId": "transform-1", "fromPort": "data", "toBlockId": "notify-1", "toPort": "data" },
+    { "fromBlockId": "transform-1", "fromPort": "data", "toBlockId": "output-1", "toPort": "data" }
+  ],
+  "metadata": {
+    "displayTitle": "Multi-Step Enrichment",
+    "userIntent": "Extract product listings, enrich with detail page data, and detect changes",
+    "estimatedLlmCallsPerRun": 0,
+    "cardType": "content",
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}

@@ -1,6 +1,7 @@
 using ChangeDetection.Core;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.OutputCaching;
 
@@ -98,6 +99,17 @@ public static class WatchEndpoints
         group.MapPost("/bulk/edit", BulkEdit)
             .WithName("BulkEditWatches")
             .Produces<BulkOperationResultDto>();
+
+        // Dev endpoints for pipeline testing
+        group.MapPut("/{id}/pipeline", SetPipelineDefinition)
+            .WithName("SetPipelineDefinition")
+            .Produces(204)
+            .Produces(404);
+
+        group.MapPost("/{id}/pipeline/execute", ExecutePipeline)
+            .WithName("ExecutePipeline")
+            .Produces<object>()
+            .Produces(404);
 
         return group;
     }
@@ -1217,5 +1229,88 @@ public static class WatchEndpoints
         await watchRepo.UpdateAsync(watch, ct);
 
         return Results.NoContent();
+    }
+
+    /// <summary>Set pipeline definition JSON on a watch (dev/testing endpoint).</summary>
+    private static async Task<IResult> SetPipelineDefinition(
+        string id,
+        HttpRequest request,
+        IWatchService watchService,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out var guidId))
+            return Results.BadRequest("Invalid ID");
+
+        var watch = await watchService.GetByIdAsync(guidId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        using var reader = new StreamReader(request.Body);
+        var json = await reader.ReadToEndAsync(ct);
+
+        // Validate the JSON is a valid pipeline
+        var definition = PipelineSerializer.Deserialize(json, logger);
+        if (definition is null)
+            return Results.BadRequest("Invalid pipeline definition JSON");
+
+        watch.PipelineDefinitionJson = json;
+        watch.UpdatedAt = DateTime.UtcNow;
+        await watchService.UpdateWatchAsync(watch, ct);
+
+        logger.LogInformation("Pipeline definition set for watch {WatchId}: {BlockCount} blocks",
+            guidId, definition.Blocks.Count);
+
+        return Results.NoContent();
+    }
+
+    /// <summary>Execute pipeline for a watch immediately (dev/testing endpoint).</summary>
+    private static async Task<IResult> ExecutePipeline(
+        string id,
+        IWatchService watchService,
+        IPipelineExecutor pipelineExecutor,
+        IBlockStateStore stateStore,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out var guidId))
+            return Results.BadRequest("Invalid ID");
+
+        var watch = await watchService.GetByIdAsync(guidId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        if (string.IsNullOrEmpty(watch.PipelineDefinitionJson))
+            return Results.BadRequest("Watch has no pipeline definition. Use PUT /api/watches/{id}/pipeline first.");
+
+        var definition = PipelineSerializer.Deserialize(watch.PipelineDefinitionJson, logger);
+        if (definition is null)
+            return Results.BadRequest("Failed to deserialize pipeline definition");
+
+        logger.LogInformation("Manually triggering pipeline execution for watch {WatchId} ({WatchName})",
+            guidId, watch.Name);
+
+        var result = await pipelineExecutor.ExecuteAsync(definition, guidId, stateStore, null, ct);
+
+        logger.LogInformation("Pipeline execution finished for watch {WatchId}: Success={Success}, Blocks={BlockCount}",
+            guidId, result.Success, result.BlockResults?.Count ?? 0);
+
+        return Results.Ok(new
+        {
+            result.Success,
+            result.WasBaseline,
+            result.IsDegraded,
+            result.Error,
+            result.ExecutionDurationMs,
+            SkippedBlocks = result.SkippedBlockIds,
+            BlockResults = result.BlockResults.Select(kv => new
+            {
+                BlockId = kv.Key,
+                kv.Value.Success,
+                kv.Value.Status,
+                HasOutput = kv.Value.Output is not null,
+                kv.Value.Error
+            })
+        });
     }
 }

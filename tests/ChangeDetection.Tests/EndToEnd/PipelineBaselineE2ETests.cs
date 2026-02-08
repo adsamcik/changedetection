@@ -37,7 +37,6 @@ public class PipelineBaselineE2ETests : TestBase, IAsyncDisposable
         _factory = new BaselineWebApplicationFactory();
         _client = _factory.CreateClient();
         _client.Timeout = TimeSpan.FromMinutes(5);
-        await _factory.EnsureProviderSeededAsync();
 
         Log($"=== LLM Cache Mode: {_factory.LlmCacheMode} ===");
         Log($"=== Content Cache Mode: {_factory.ContentCacheMode} ===");
@@ -340,7 +339,6 @@ public class PipelineBaselineE2ETests : TestBase, IAsyncDisposable
                 Log($"        - {field.Name} (Type={field.Type})");
                 Log($"          Selector: {field.Selector}");
                 Log($"          Required={field.IsRequired} Identity={field.IsIdentityField}");
-                Log($"          TrackHistory={field.TrackHistory} CurrencyCode={field.CurrencyCode ?? "null"}");
                 if (field.SampleValues.Count > 0)
                     Log($"          Samples: [{string.Join(", ", field.SampleValues.Take(3))}]");
             }

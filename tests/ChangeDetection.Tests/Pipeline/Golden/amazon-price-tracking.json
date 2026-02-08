@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "input-1", "type": "Input", "config": { "url": "https://www.amazon.com/dp/B0EXAMPLE" }, "position": 0 },
+    { "id": "nav-1", "type": "Navigate", "config": {}, "position": 1 },
+    { "id": "wait-1", "type": "Wait", "config": { "selector": ".a-price", "timeoutMs": 5000 }, "position": 2 },
+    { "id": "filter-1", "type": "Filter", "config": { "css": ".a-price .a-offscreen" }, "position": 3 },
+    { "id": "extract-1", "type": "ExtractSchema", "config": { "schema": [{ "field": "price", "selector": ".a-offscreen", "type": "number" }] }, "position": 4 },
+    { "id": "delta-1", "type": "NumericDelta", "config": { "field": "price" }, "position": 5 },
+    { "id": "condition-1", "type": "Condition", "config": { "operator": "below", "threshold": 500 }, "position": 6 },
+    { "id": "notify-1", "type": "Notify", "config": { "channel": "email", "template": "Price dropped to {{price}}" }, "position": 7 },
+    { "id": "output-1", "type": "Output", "config": {}, "position": 8 }
+  ],
+  "connections": [
+    { "fromBlockId": "input-1", "fromPort": "url", "toBlockId": "nav-1", "toPort": "url" },
+    { "fromBlockId": "nav-1", "fromPort": "page", "toBlockId": "wait-1", "toPort": "page" },
+    { "fromBlockId": "nav-1", "fromPort": "html", "toBlockId": "filter-1", "toPort": "html" },
+    { "fromBlockId": "filter-1", "fromPort": "html", "toBlockId": "extract-1", "toPort": "html" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "delta-1", "toPort": "data" },
+    { "fromBlockId": "delta-1", "fromPort": "result", "toBlockId": "condition-1", "toPort": "result" },
+    { "fromBlockId": "condition-1", "fromPort": "signal", "toBlockId": "notify-1", "toPort": "signal" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "notify-1", "toPort": "data" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "output-1", "toPort": "data" }
+  ],
+  "metadata": {
+    "displayTitle": "Amazon Price Tracking",
+    "userIntent": "Track price drops below $500 on Amazon product page",
+    "estimatedLlmCallsPerRun": 0,
+    "cardType": "price",
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}

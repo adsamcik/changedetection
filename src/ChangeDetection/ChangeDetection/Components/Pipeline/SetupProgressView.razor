@@ -1,0 +1,68 @@
+@using ChangeDetection.Core.Pipeline
+@using ChangeDetection.Core.Pipeline.Setup
+
+<div class="setup-progress">
+    @foreach (var entry in _progressEntries)
+    {
+        <div class="progress-entry mb-2">
+            <div class="d-flex align-items-center gap-2">
+                <span>@GetPhaseIcon(entry.Phase)</span>
+                <span class="@GetTypeClass(entry.Type)">@entry.Message</span>
+            </div>
+            @if (entry.Detail is not null)
+            {
+                <details class="ms-4 small text-muted">
+                    <summary>Details</summary>
+                    <pre class="mb-0">@entry.Detail</pre>
+                </details>
+            }
+            @if (entry.Error is not null)
+            {
+                <div class="ms-4 small text-danger">@entry.Error</div>
+            }
+        </div>
+    }
+
+    @if (_currentCheckpoint == 1 && _checkpointIntent is not null)
+    {
+        <div class="card mt-3 p-3">
+            <h6>Does this look right?</h6>
+            @if (_checkpointIntent.Summary is not null)
+            {
+                <p>@_checkpointIntent.Summary</p>
+            }
+            <p><strong>URL:</strong> @_checkpointIntent.Url</p>
+            <p><strong>Watching for:</strong> @_checkpointIntent.Intent</p>
+            <div class="d-flex gap-2">
+                <button class="btn btn-primary" @onclick="() => OnCheckpoint1Response.InvokeAsync(true)">Yes, continue</button>
+                <button class="btn btn-outline-secondary" @onclick="() => OnCheckpoint1Response.InvokeAsync(false)">Refine</button>
+            </div>
+        </div>
+    }
+
+    @if (_currentCheckpoint == 2 && _proposal is not null)
+    {
+        <div class="card mt-3 p-3">
+            <h6>Pipeline Ready</h6>
+            <p>@_proposal.HumanSummary</p>
+            <PipelineFlowDiagram Pipeline="@_proposal.Pipeline" />
+            @if (_proposal.DryRun?.Success == true)
+            {
+                <div class="alert alert-success mt-2 mb-0 py-1 px-2 small">Dry run successful</div>
+            }
+            @if (_proposal.QcValidation is { Valid: false })
+            {
+                <div class="alert alert-warning mt-2 mb-0 py-1 px-2 small">
+                    @foreach (var issue in _proposal.QcValidation.Issues)
+                    {
+                        <div>⚠️ @issue</div>
+                    }
+                </div>
+            }
+            <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-success" @onclick="() => OnCheckpoint2Response.InvokeAsync(true)">Save &amp; Start Monitoring</button>
+                <button class="btn btn-outline-secondary" @onclick="() => OnCheckpoint2Response.InvokeAsync(false)">Rebuild</button>
+            </div>
+        </div>
+    }
+</div>

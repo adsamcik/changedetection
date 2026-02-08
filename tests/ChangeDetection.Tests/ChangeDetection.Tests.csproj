@@ -24,6 +24,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Pipeline\Golden\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\ChangeDetection.Core\ChangeDetection.Core.csproj" />
     <ProjectReference Include="..\..\src\ChangeDetection.Shared\ChangeDetection.Shared.csproj" />
     <ProjectReference Include="..\..\src\ChangeDetection\ChangeDetection\ChangeDetection.csproj" />

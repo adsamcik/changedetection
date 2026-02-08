@@ -1,0 +1,27 @@
+@using ChangeDetection.Core.Pipeline
+
+<div class="pipeline-flow">
+    @if (Pipeline is not null)
+    {
+        var blocks = GetOrderedBlocks();
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var block = blocks[i];
+            <div class="pipeline-block-card @GetStatusClass(block.Id)" @onclick="() => OnBlockClicked.InvokeAsync(block.Id)">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="pipeline-block-icon">@GetBlockIcon(block.Type)</span>
+                    <span class="pipeline-block-label">@block.Type</span>
+                    <span class="pipeline-block-status ms-auto">@GetStatusBadge(block.Id)</span>
+                </div>
+            </div>
+            @if (i < blocks.Count - 1)
+            {
+                <div class="pipeline-arrow text-center text-muted">↓</div>
+            }
+        }
+    }
+    else
+    {
+        <div class="text-muted">No pipeline defined</div>
+    }
+</div>

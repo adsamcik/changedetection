@@ -16,7 +16,14 @@ using ChangeDetection.Services.Notifications;
 using ChangeDetection.Services.Persistence;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.Scraping;
+using ChangeDetection.Services.SetupPipeline;
+using ChangeDetection.Core.Pipeline;
+using ChangeDetection.Core.Pipeline.Setup;
+using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.AutoHealing;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Startup;
+using ChangeDetection.Core.Pipeline.AutoHealing;
 using Microsoft.AspNetCore.ResponseCompression;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
@@ -263,11 +270,33 @@ builder.Services.AddScoped<IInputAnchorValidator, InputAnchorValidator>();
 // Session cleanup service - cleans up hub dictionaries when sessions expire
 builder.Services.AddHostedService<SetupSessionCleanupService>();
 
+// URL validation for SSRF protection
+builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
+
+// Composable pipeline block system
+builder.Services.AddSingleton<IBlockRegistry>(sp =>
+{
+    var registry = new BlockRegistry();
+    BlockRegistry.RegisterCoreBlocks(registry);
+    return registry;
+});
+builder.Services.AddScoped<IPipelineValidator, PipelineValidator>();
+builder.Services.AddScoped<IPipelineExecutor, PipelineExecutor>();
+builder.Services.AddScoped<IBlockStateStore, LiteDbBlockStateStore>();
+builder.Services.AddScoped<ILlmCostTracker, LlmCostTracker>();
+
+// Composable setup pipeline (LLM-driven pipeline assembly from natural language)
+builder.Services.AddScoped<IComposableSetupPipeline, ComposableSetupPipeline>();
+
 // Object extraction and filtering services
 builder.Services.AddScoped<IObjectExtractionService, ObjectExtractionService>();
 builder.Services.AddScoped<IObjectDiffService, ObjectDiffService>();
 builder.Services.AddScoped<IFilterEvaluationService, FilterEvaluationService>();
 builder.Services.AddScoped<IErrorResolutionService, ErrorResolutionService>();
+
+// Auto-healing services
+builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();
+builder.Services.AddSingleton<IFailureTracker, FailureTracker>();
 
 // Price tracking services
 builder.Services.AddScoped<IPriceHistoryRepository, PriceHistoryRepository>();
@@ -361,6 +390,8 @@ app.MapGroup("/api/notifications")
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<SetupConversationHub>("/hubs/setup")
+    .RequireAuthenticationInSsoMode(builder.Configuration);
+app.MapHub<ComposableSetupHub>("/hubs/composable-setup")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 
 // Configure static files with aggressive caching (assets are fingerprinted for cache-busting)

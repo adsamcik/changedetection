@@ -1,0 +1,38 @@
+@using ChangeDetection.Core.Entities
+@using ChangeDetection.Core.Pipeline
+
+<div class="card watch-dashboard-card">
+    <div class="card-body">
+        <h5 class="card-title">@(Watch.Name ?? "Untitled Watch")</h5>
+        <p class="text-muted small mb-2 text-truncate">@Watch.Url</p>
+
+        @switch (GetCardType())
+        {
+            case CardType.Price:
+                <div class="d-flex align-items-baseline gap-2">
+                    <span class="display-6">@GetPrimaryValue()</span>
+                    <span class="badge @GetDeltaBadgeClass()">@GetDeltaText()</span>
+                </div>
+                break;
+            case CardType.List:
+                <div>
+                    <span class="fs-5">@GetListSummary()</span>
+                </div>
+                break;
+            case CardType.Content:
+                <div>
+                    <span>@GetContentSummary()</span>
+                </div>
+                break;
+            default:
+                <div>
+                    <span class="badge bg-secondary">@GetLastCheckStatus()</span>
+                </div>
+                break;
+        }
+
+        <div class="mt-2 text-muted small">
+            Last checked: @FormatLastChecked()
+        </div>
+    </div>
+</div>

@@ -121,6 +121,12 @@ public class WatchedSite : IOwnedEntity
     /// If null, uses global settings.
     /// </summary>
     public string? LlmProviderOverride { get; set; }
+
+    /// <summary>
+    /// Monthly LLM budget in USD. Null means unlimited.
+    /// When exceeded, LLM blocks are skipped with a degraded flag.
+    /// </summary>
+    public decimal? MonthlyLlmBudget { get; set; }
     
     /// <summary>
     /// When this watch was created.
@@ -208,6 +214,18 @@ public class WatchedSite : IOwnedEntity
     /// Used for relevance scoring of changes.
     /// </summary>
     public string? UserIntent { get; set; }
+
+    /// <summary>
+    /// JSON-serialized pipeline definition for the composable block system.
+    /// Null for legacy watches that haven't been migrated.
+    /// </summary>
+    public string? PipelineDefinitionJson { get; set; }
+
+    /// <summary>
+    /// HTML snapshot captured at setup time, used by Layer 2 auto-healing
+    /// to compare against current page structure.
+    /// </summary>
+    public string? SetupTimeHtml { get; set; }
 }
 
 /// <summary>

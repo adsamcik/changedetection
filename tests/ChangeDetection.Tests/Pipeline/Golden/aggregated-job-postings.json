@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "input-1", "type": "Input", "config": { "url": "https://example.com/careers" }, "position": 0 },
+    { "id": "nav-1", "type": "Navigate", "config": {}, "position": 1 },
+    { "id": "wait-1", "type": "Wait", "config": { "selector": ".job-listing", "timeoutMs": 5000 }, "position": 2 },
+    { "id": "extract-1", "type": "ExtractSchema", "config": { "schema": [{ "field": "title", "selector": ".job-title", "type": "text" }, { "field": "team", "selector": ".job-team", "type": "text" }, { "field": "location", "selector": ".job-location", "type": "text" }], "listMode": true }, "position": 3 },
+    { "id": "listdiff-1", "type": "ListDiff", "config": { "keyField": "title" }, "position": 4 },
+    { "id": "condition-1", "type": "Condition", "config": { "operator": "hasChanges" }, "position": 5 },
+    { "id": "aggregate-1", "type": "Aggregate", "config": { "groupBy": "team", "sortBy": "title" }, "position": 6 },
+    { "id": "notify-1", "type": "Notify", "config": { "channel": "email", "template": "New job postings detected" }, "position": 7 },
+    { "id": "output-1", "type": "Output", "config": {}, "position": 8 }
+  ],
+  "connections": [
+    { "fromBlockId": "input-1", "fromPort": "url", "toBlockId": "nav-1", "toPort": "url" },
+    { "fromBlockId": "nav-1", "fromPort": "page", "toBlockId": "wait-1", "toPort": "page" },
+    { "fromBlockId": "nav-1", "fromPort": "html", "toBlockId": "extract-1", "toPort": "html" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "listdiff-1", "toPort": "data" },
+    { "fromBlockId": "listdiff-1", "fromPort": "result", "toBlockId": "condition-1", "toPort": "result" },
+    { "fromBlockId": "extract-1", "fromPort": "data", "toBlockId": "aggregate-1", "toPort": "data" },
+    { "fromBlockId": "condition-1", "fromPort": "signal", "toBlockId": "notify-1", "toPort": "signal" },
+    { "fromBlockId": "aggregate-1", "fromPort": "data", "toBlockId": "notify-1", "toPort": "data" },
+    { "fromBlockId": "aggregate-1", "fromPort": "data", "toBlockId": "output-1", "toPort": "data" }
+  ],
+  "metadata": {
+    "displayTitle": "Aggregated Job Postings",
+    "userIntent": "Track new job postings grouped by team",
+    "estimatedLlmCallsPerRun": 0,
+    "cardType": "list",
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+}

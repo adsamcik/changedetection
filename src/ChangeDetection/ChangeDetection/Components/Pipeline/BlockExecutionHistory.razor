@@ -1,0 +1,35 @@
+@using ChangeDetection.Core.Pipeline
+
+<div class="block-history">
+    <h6>@BlockType — Execution History</h6>
+    @if (_loading)
+    {
+        <div class="spinner-border spinner-border-sm" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    }
+    else if (_entries.Count == 0)
+    {
+        <p class="text-muted">No execution history</p>
+    }
+    else
+    {
+        @foreach (var entry in _entries)
+        {
+            <div class="history-entry d-flex align-items-start gap-2 mb-2">
+                <span class="badge @GetEntryBadgeClass(entry)">@entry.Status</span>
+                <div>
+                    <div class="small text-muted">@entry.Timestamp.ToString("g")</div>
+                    @if (entry.DurationMs is not null)
+                    {
+                        <div class="small text-muted">@entry.DurationMs ms</div>
+                    }
+                    @if (entry.OutputPreview is not null)
+                    {
+                        <div class="small text-truncate" style="max-width: 300px;">@entry.OutputPreview</div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
