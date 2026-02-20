@@ -209,6 +209,10 @@
                 options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
             })
             .Build();
+        
+        // Match server-side ClientTimeoutInterval for long-running LLM pipeline stages
+        _hubConnection.ServerTimeout = TimeSpan.FromMinutes(5);
+        _hubConnection.KeepAliveInterval = TimeSpan.FromSeconds(15);
 
         _hubConnection.On<AgentStreamChunkDto>("ReceiveChunk", OnChunkReceived);
         _hubConnection.Reconnecting += _ =>

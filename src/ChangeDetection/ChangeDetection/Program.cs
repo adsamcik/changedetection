@@ -112,8 +112,11 @@ builder.Services.AddSignalR(options =>
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
     options.MaximumReceiveMessageSize = 64 * 1024; // 64KB - sufficient for most updates
     options.StreamBufferCapacity = 20;
+    // LLM pipeline stages can take up to 3-5 minutes per stage.
+    // Keep-alive must be frequent enough, and client timeout generous enough,
+    // to survive long-running operations without disconnecting.
     options.KeepAliveInterval = TimeSpan.FromSeconds(15);
-    options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+    options.ClientTimeoutInterval = TimeSpan.FromMinutes(5);
 })
 .AddJsonProtocol(options =>
 {
