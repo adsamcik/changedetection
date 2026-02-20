@@ -443,4 +443,84 @@ public class PipelineEventServiceTests
     }
 
     #endregion
+
+    #region Status Lifecycle Tests
+
+    [Test]
+    public async Task FullStatusLifecycle_Started_InProgress_Completed()
+    {
+        // Arrange — mirrors the real pipeline flow
+        var run = await _service.StartRunAsync(Guid.NewGuid(), "test input", Guid.NewGuid());
+        run.Status.ShouldBe(PipelineRunStatus.Started);
+
+        // Act — pipeline transitions to InProgress when processing begins
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+            PipelineStageNames.UrlExtraction);
+        var inProgress = await _service.GetRunByIdAsync(run.Id);
+        inProgress!.Status.ShouldBe(PipelineRunStatus.InProgress);
+        inProgress.CurrentStage.ShouldBe(PipelineStageNames.UrlExtraction);
+
+        // Record events along the way
+        await _service.RecordEventAsync(run.Id, PipelineStageNames.UrlExtraction, 
+            PipelineEventTypes.StageCompleted, "URL extracted");
+        await _service.RecordLlmCallAsync(run.Id, PipelineStageNames.ContentAnalysis,
+            "TestProvider", "test-model", 100, 50, 500);
+
+        // Transition to Completed
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.Completed, 
+            PipelineStageNames.Configuration);
+        var completed = await _service.GetRunByIdAsync(run.Id);
+        completed!.Status.ShouldBe(PipelineRunStatus.Completed);
+        completed.LlmCallCount.ShouldBe(1);
+        completed.TotalInputTokens.ShouldBe(100);
+        completed.TotalOutputTokens.ShouldBe(50);
+    }
+
+    [Test]
+    public async Task FullStatusLifecycle_Started_InProgress_Failed()
+    {
+        // Arrange
+        var run = await _service.StartRunAsync(Guid.NewGuid(), "test input", Guid.NewGuid());
+
+        // Act — pipeline transitions to InProgress then fails
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+            PipelineStageNames.ContentFetching);
+        await _service.RecordFailureAsync(run.Id, PipelineStageNames.ContentFetching, 
+            "Connection refused", "at System.Net...");
+        await _service.FailRunAsync(run.Id, "Connection refused");
+
+        // Assert
+        var failed = await _service.GetRunByIdAsync(run.Id);
+        failed!.Status.ShouldBe(PipelineRunStatus.Failed);
+        failed.ErrorMessage.ShouldBe("Connection refused");
+        failed.CompletedAt.ShouldNotBeNull();
+
+        var events = await _service.GetEventsForRunAsync(run.Id);
+        events.ShouldContain(e => e.EventType == PipelineEventTypes.StageFailed);
+    }
+
+    [Test]
+    public async Task FullStatusLifecycle_AwaitingUserInput_ResumeToCompleted()
+    {
+        // Arrange — pipeline pauses for user input then completes
+        var run = await _service.StartRunAsync(Guid.NewGuid(), "test input", Guid.NewGuid());
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+            PipelineStageNames.SelectorGeneration);
+
+        // Transition to AwaitingUserInput
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.AwaitingUserInput, 
+            PipelineStageNames.SelectorGeneration);
+        var awaiting = await _service.GetRunByIdAsync(run.Id);
+        awaiting!.Status.ShouldBe(PipelineRunStatus.AwaitingUserInput);
+
+        // User responds — back to InProgress then Completed
+        await _service.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+            PipelineStageNames.SelectorGeneration);
+        await _service.CompleteRunAsync(run.Id, Guid.NewGuid());
+
+        var completed = await _service.GetRunByIdAsync(run.Id);
+        completed!.Status.ShouldBe(PipelineRunStatus.Completed);
+    }
+
+    #endregion
 }

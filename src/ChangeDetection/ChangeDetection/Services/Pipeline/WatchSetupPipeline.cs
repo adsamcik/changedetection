@@ -55,6 +55,10 @@ public class WatchSetupPipeline(
 
         try
         {
+            // Transition to InProgress
+            await eventService.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+                PipelineStageNames.UrlExtraction, ct);
+            
             // Stage 1: Extract URLs
             await RecordStageStartAsync(run.Id, PipelineStageNames.UrlExtraction, ct);
             var result = await ExecuteUrlExtractionAsync(session, ct);
@@ -165,6 +169,10 @@ public class WatchSetupPipeline(
         PipelineResult? result = null;
         Exception? error = null;
 
+        // Transition to InProgress
+        await eventService.UpdateRunStatusAsync(run.Id, PipelineRunStatus.InProgress, 
+            PipelineStageNames.UrlExtraction, ct);
+        
         // Stage 1: URL Extraction
         await RecordStageStartAsync(run.Id, PipelineStageNames.UrlExtraction, ct);
         yield return new PipelineProgress
@@ -1721,7 +1729,7 @@ public class WatchSetupPipeline(
         }
         else if (result.IsSuccess && result.FinalConfiguration != null)
         {
-            // Pipeline completed successfully - the watch creation will call CompleteRunAsync
+            // Pipeline completed successfully - record config and mark as completed
             var configJson = JsonSerializer.Serialize(result.FinalConfiguration);
             await eventService.RecordEventAsync(
                 runId,
@@ -1730,6 +1738,9 @@ public class WatchSetupPipeline(
                 $"Configuration built for {result.FinalConfiguration.Url}",
                 dataJson: configJson,
                 ct: ct);
+            // Mark completed — watchId will be set later when the watch is actually created
+            await eventService.UpdateRunStatusAsync(runId, PipelineRunStatus.Completed, 
+                PipelineStageNames.Configuration, ct);
         }
         else if (!result.IsSuccess)
         {

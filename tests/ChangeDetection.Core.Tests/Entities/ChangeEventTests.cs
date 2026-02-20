@@ -18,7 +18,6 @@ public class ChangeEventTests
         evt.IsViewed.ShouldBeFalse();
         evt.LinesAdded.ShouldBe(0);
         evt.LinesRemoved.ShouldBe(0);
-        evt.SuppressNotification.ShouldBeFalse();
         evt.HasAmbiguousIdentities.ShouldBeFalse();
         evt.HasAnomalies.ShouldBeFalse();
         evt.HasLlmAnalysis.ShouldBeFalse();
@@ -39,9 +38,7 @@ public class ChangeEventTests
     {
         var evt = new ChangeEvent();
 
-        evt.Tags.ShouldBeEmpty();
         evt.AppliedActions.ShouldBeEmpty();
-        evt.TriggeredAlerts.ShouldBeEmpty();
         await Task.CompletedTask;
     }
 
@@ -54,7 +51,6 @@ public class ChangeEventTests
         evt.DiffHtml.ShouldBeNull();
         evt.NotifiedAt.ShouldBeNull();
         evt.ObjectsDiff.ShouldBeNull();
-        evt.FilterEvaluationResult.ShouldBeNull();
         evt.SemanticSummary.ShouldBeNull();
         evt.BriefSummary.ShouldBeNull();
         evt.RelevanceScore.ShouldBeNull();

@@ -10,6 +10,11 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.6.28" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ChangeDetection.Core\ChangeDetection.Core.csproj" />
   </ItemGroup>
 
 </Project>
