@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -88,7 +89,16 @@ public class RealEndpointTests : IAsyncDisposable
         };
 
         // Act - pass cancellation token to enable cooperative cancellation
-        var response = await _client.PostAsJsonAsync("/api/llm/process-input", request, cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/process-input", request, cancellationToken);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request timed out in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return;
+        }
         
         // Assert
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");
@@ -132,7 +142,16 @@ public class RealEndpointTests : IAsyncDisposable
         };
 
         // Act - pass cancellation token to enable cooperative cancellation
-        var response = await _client.PostAsJsonAsync("/api/llm/process-input", request, cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/process-input", request, cancellationToken);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request timed out in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return;
+        }
         
         // Assert
         response.IsSuccessStatusCode.ShouldBeTrue();
@@ -199,7 +218,16 @@ public class RealEndpointTests : IAsyncDisposable
 
         // Act - pass cancellation token to enable cooperative cancellation
         // Note: TUnit class-level timeout (5min) controls cancellation, not HttpClient.Timeout
-        var response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request, cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request, cancellationToken);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request timed out in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return;
+        }
         
         // Assert
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");

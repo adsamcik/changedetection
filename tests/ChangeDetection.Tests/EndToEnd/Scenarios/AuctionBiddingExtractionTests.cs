@@ -148,7 +148,7 @@ public class AuctionBiddingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var title = result.GetString("title");
         title.ShouldContain("Rolex", Case.Insensitive);
@@ -177,7 +177,7 @@ public class AuctionBiddingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var title = result.GetString("propertyTitle");
         title.ShouldContain("Tahoe", Case.Insensitive);
@@ -207,7 +207,7 @@ public class AuctionBiddingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var artist = result.GetString("artist");
         artist.ShouldContain("Vasquez", Case.Insensitive);

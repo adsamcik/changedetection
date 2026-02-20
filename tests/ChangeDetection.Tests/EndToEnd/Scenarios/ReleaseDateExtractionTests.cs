@@ -141,7 +141,7 @@ public class ReleaseDateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var title = result.GetString("title");
         title.ShouldContain("Elden Ring", Case.Insensitive);
@@ -169,7 +169,7 @@ public class ReleaseDateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var title = result.GetString("title");
         title.ShouldContain("Dune", Case.Insensitive);
@@ -198,7 +198,7 @@ public class ReleaseDateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var name = result.GetString("productName");
         name.ShouldContain("Visual Studio", Case.Insensitive);

@@ -169,7 +169,7 @@ public class AppointmentSlotExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Raw response: {result.RawResponse}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
         result.Data.ShouldNotBeNull();
 
         // Log extracted keys for debugging
@@ -204,7 +204,7 @@ public class AppointmentSlotExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
         result.Data.ShouldNotBeNull();
 
         var clinicName = result.GetString("clinicName");
@@ -233,7 +233,7 @@ public class AppointmentSlotExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
         result.Data.ShouldNotBeNull();
 
         var restaurantName = result.GetString("restaurantName");

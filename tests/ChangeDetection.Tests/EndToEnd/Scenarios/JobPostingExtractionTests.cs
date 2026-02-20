@@ -137,7 +137,7 @@ public class JobPostingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var company = result.GetString("company");
         company.ShouldContain("Google", Case.Insensitive);
@@ -164,7 +164,7 @@ public class JobPostingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
     }
 
     [Test]
@@ -189,7 +189,7 @@ public class JobPostingExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var company = result.GetString("company");
         company.ShouldContain("Notion", Case.Insensitive);

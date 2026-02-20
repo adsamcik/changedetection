@@ -136,7 +136,7 @@ public class ProductVariantExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var productName = result.GetString("productName");
         productName.ShouldContain("Air Max", Case.Insensitive);
@@ -164,7 +164,7 @@ public class ProductVariantExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var productName = result.GetString("productName");
         productName.ShouldContain("iPhone", Case.Insensitive);
@@ -192,7 +192,7 @@ public class ProductVariantExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var productName = result.GetString("productName");
         productName.ShouldContain("Jordan", Case.Insensitive);

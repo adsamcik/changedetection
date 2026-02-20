@@ -194,10 +194,11 @@ public class LttStorePipelineTests : TestBase
     #region Stage 3.5: Schema Discovery (2-Turn LLM-Driven)
 
     [Test]
-    public async Task SchemaDiscovery_Turn1ClassifiesSingleItem()
+    public async Task SchemaDiscovery_PriceInfoSingleProduct_ReturnsNull()
     {
-        // Turn 1 should classify the product page as "single" structure
-        // Turn 2 should discover fields
+        // PriceInfo is not a list content type — schema discovery only runs for list content
+        // (EventList, ProductListing, NewsList, Table, Feed, Calendar).
+        // Single product pages use ContentAnalysis sections instead.
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             Turn1SingleClassification,
             Turn2FieldDiscovery
@@ -210,20 +211,8 @@ public class LttStorePipelineTests : TestBase
         var schema = await stage.DiscoverAsync(GetLttStoreProductContent(), analysis);
 
         // Assert
-        schema.ShouldNotBeNull("LLM classified as 'single' — should produce a schema");
-        Log($"Schema: {schema.Fields.Count} fields, {schema.SampleItemCount} items");
-        Log($"ItemSelector: {schema.ItemSelector}");
-        Log($"Confidence: {schema.Confidence:P0}");
-        Log($"Explanation: {schema.Explanation}");
-        foreach (var f in schema.Fields)
-            Log($"  {f.Name} ({f.Type}) -> {f.Selector} [sample: {f.SampleValues.FirstOrDefault()}]");
-
-        schema.SampleItemCount.ShouldBe(1);
-        schema.Fields.Count.ShouldBeGreaterThanOrEqualTo(3);
-        schema.Fields.ShouldContain(f => f.Name.Contains("Price", StringComparison.OrdinalIgnoreCase));
-        schema.Fields.ShouldContain(f => f.Name.Contains("Stock", StringComparison.OrdinalIgnoreCase) ||
-                                         f.Name.Contains("Availab", StringComparison.OrdinalIgnoreCase));
-        schema.ItemSelector.ShouldNotBeNullOrWhiteSpace();
+        schema.ShouldBeNull("PriceInfo is not a list type — schema discovery only runs for list content");
+        Log("Correctly returned null for PriceInfo (single product page)");
 
         await Task.CompletedTask;
     }
@@ -260,10 +249,10 @@ public class LttStorePipelineTests : TestBase
     {
         // When Turn 1 classifies as "list", schema should have container selector and item count
         var llmChain = CreateMockLlmChainWithStreamingResponses([
-            // Turn 1: list classification
-            """{"st":"list","cs":".product-card","ic":24,"ef":["Name","Price","Rating"],"c":0.9,"r":"24 product cards in grid"}""",
-            // Turn 2: field discovery (with relative selectors)
-            """[{"n":"Name","t":"String","s":".product-card__title","r":true,"id":true,"v":"Product A"},{"n":"Price","t":"Currency","s":".product-card__price","r":true,"id":false,"v":"$19.99 USD"},{"n":"Rating","t":"Number","s":".rating","r":false,"id":false,"v":"4.5"}]"""
+            // Turn 1: list classification with full property names matching ItemContainerDto
+            """{"selector":".product-card","itemCount":24}""",
+            // Turn 2: field discovery with full property names matching FieldDto
+            """[{"name":"Name","type":"String","selector":".product-card__title","isRequired":true,"isIdentity":true,"sampleValue":"Product A"},{"name":"Price","type":"Currency","selector":".product-card__price","isRequired":true,"isIdentity":false,"sampleValue":"$19.99 USD"},{"name":"Rating","type":"Number","selector":".rating","isRequired":false,"isIdentity":false,"sampleValue":"4.5"}]"""
         ]);
 
         var stage = new SchemaDiscoveryStage(llmChain, CreateLogger<SchemaDiscoveryStage>());
@@ -297,20 +286,15 @@ public class LttStorePipelineTests : TestBase
     [Test]
     public async Task FullPipeline_ProductPage_DiscoversPriceFields()
     {
-        // Arrange: mock all LLM calls in sequence
-        // Content analysis: 3 calls (classification, intent, sections)
-        // Schema discovery: 2 calls (Turn 1 classification, Turn 2 field discovery)
+        // Arrange: mock LLM calls for content analysis (3 calls)
+        // Schema discovery is skipped for PriceInfo (not a list type)
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             // Content analysis: classification
             "PriceInfo",
             // Content analysis: intent extraction
             "Track USB-C cable price and stock availability",
             // Content analysis: section identification
-            """[{"name":"Price","selector":".product__price","isTarget":true,"description":"Product price $29.99 CAD"},{"name":"Stock Status","selector":".product-form__buttons","isTarget":true,"description":"Availability: out of stock"}]""",
-            // Schema discovery Turn 1: structure classification
-            Turn1SingleClassification,
-            // Schema discovery Turn 2: field discovery
-            Turn2FieldDiscovery
+            """[{"name":"Price","selector":".product__price","isTarget":true,"description":"Product price $29.99 CAD"},{"name":"Stock Status","selector":".product-form__buttons","isTarget":true,"description":"Availability: out of stock"}]"""
         ]);
 
         var analysisStage = new ContentAnalysisStage(llmChain, CreateLogger<ContentAnalysisStage>());
@@ -328,26 +312,17 @@ public class LttStorePipelineTests : TestBase
         foreach (var s in analysis.IdentifiedSections)
             Log($"  {(s.IsLikelyTarget ? "★" : "○")} {s.Name} -> {s.SuggestedSelector}");
 
-        // Stage 3.5: Schema discovery (2-turn LLM-driven — always runs)
+        // Stage 3.5: Schema discovery — PriceInfo is not a list type, so schema is null
         var schema = await schemaStage.DiscoverAsync(content, analysis);
-        schema.ShouldNotBeNull("Schema should be discovered for product pages");
+        schema.ShouldBeNull("PriceInfo is not a list type — schema discovery only runs for list content");
 
-        Log($"[Stage 3.5 Turn 1] Structure classified as: single");
-        Log($"[Stage 3.5 Turn 2] Fields discovered: {schema.Fields.Count}");
-        foreach (var f in schema.Fields)
-            Log($"  {f.Name} ({f.Type}) = {f.SampleValues.FirstOrDefault()}");
+        Log("[Stage 3.5] Schema correctly null for PriceInfo (single product page)");
 
-        Log($"[Stage 3.5] Confidence: {schema.Confidence:P0}");
-        Log($"[Stage 3.5] Identity fields: {string.Join(", ", schema.InferredIdentityFields)}");
-
-        // Assertions
+        // Assertions on content analysis
         analysis.ContentType.ShouldBe(ContentType.PriceInfo);
-        schema.SampleItemCount.ShouldBe(1);
-        schema.Fields.Count.ShouldBeGreaterThanOrEqualTo(3);
-        schema.Fields.ShouldContain(f => f.Name == "Price");
-        schema.Fields.ShouldContain(f => f.Name == "Stock Status");
-
-        schema.InferredIdentityFields.ShouldContain("Product Name");
+        analysis.UserIntent.ShouldNotBeNullOrWhiteSpace();
+        analysis.IdentifiedSections.ShouldNotBeEmpty();
+        analysis.IdentifiedSections.Any(s => s.IsLikelyTarget).ShouldBeTrue();
     }
 
     #endregion

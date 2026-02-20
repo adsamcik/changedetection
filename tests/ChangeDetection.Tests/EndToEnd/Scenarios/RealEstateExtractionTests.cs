@@ -125,7 +125,7 @@ public class RealEstateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var address = result.GetString("address");
         address.ShouldContain("Oak", Case.Insensitive);
@@ -153,7 +153,7 @@ public class RealEstateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var address = result.GetString("address");
         address.ShouldContain("Pine", Case.Insensitive);
@@ -181,7 +181,7 @@ public class RealEstateExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var name = result.GetString("propertyName");
         name.ShouldContain("Metropolitan", Case.Insensitive);

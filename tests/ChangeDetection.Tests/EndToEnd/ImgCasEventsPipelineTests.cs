@@ -3,6 +3,7 @@ using System.Reflection;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
@@ -184,7 +185,16 @@ public class ImgCasEventsPipelineTests : IAsyncDisposable
         TestContext.Current?.OutputWriter?.WriteLine($"  Input: \"{UserInput}\"");
 
         var request = new ProcessInputRequest { Input = UserInput };
-        var response = await _client.PostAsJsonAsync("/api/llm/process-input", request);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/process-input", request);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request timed out in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return;
+        }
 
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");
         TestContext.Current?.OutputWriter?.WriteLine($"  ✓ HTTP {(int)response.StatusCode} {response.StatusCode}");
@@ -388,7 +398,16 @@ public class ImgCasEventsPipelineTests : IAsyncDisposable
         TestContext.Current?.OutputWriter?.WriteLine("▶ Running pipeline...");
         
         var request = new RunPipelineRequest { Input = UserInput };
-        var response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request timed out in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return;
+        }
 
         response.IsSuccessStatusCode.ShouldBeTrue($"HTTP request failed: {response.StatusCode}");
 
@@ -561,7 +580,16 @@ public class ImgCasEventsPipelineTests : IAsyncDisposable
 
         // Run pipeline to get selector
         var request = new RunPipelineRequest { Input = UserInput };
-        var response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _client.PostAsJsonAsync("/api/llm/run-pipeline", request);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException && (CacheSkipHelper.IsLlmCacheOnly || CacheSkipHelper.IsContentCacheOnly))
+        {
+            Skip.Test($"Pipeline request failed in CacheOnly mode: {ex.GetType().Name}. Run with -IncludeOllama -IncludeInternet to populate caches.");
+            return; // unreachable but satisfies compiler
+        }
         
         response.IsSuccessStatusCode.ShouldBeTrue();
         var result = await response.Content.ReadFromJsonAsync<RunPipelineResponse>();

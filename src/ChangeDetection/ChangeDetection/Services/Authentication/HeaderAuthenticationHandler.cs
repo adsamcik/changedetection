@@ -198,11 +198,11 @@ public partial class HeaderAuthenticationHandler(
     }
 
     /// <summary>
-    /// Sanitizes a header value by checking for and rejecting control characters and null bytes.
-    /// Returns null if the value contains prohibited characters, otherwise returns the trimmed value.
+    /// Sanitizes a header value by rejecting null bytes and stripping other control characters.
+    /// Returns null if the value contains null bytes or is empty after sanitization.
     /// </summary>
     /// <param name="value">The raw header value to sanitize.</param>
-    /// <returns>The sanitized value, or null if the value contains prohibited characters.</returns>
+    /// <returns>The sanitized value, or null if the value is invalid.</returns>
     private static string? SanitizeHeaderValue(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -216,18 +216,15 @@ public partial class HeaderAuthenticationHandler(
             return null;
         }
         
-        // Check for control characters (ASCII 0-31 except tab, and DEL 127)
-        // Tab (9), LF (10), CR (13) are sometimes legitimately in headers but we reject them
-        // to be conservative for authentication headers
-        foreach (var c in value)
+        // Strip control characters (CR, LF, tab, etc.) rather than rejecting
+        var sanitized = new string(value.Where(c => !char.IsControl(c)).ToArray());
+        
+        if (string.IsNullOrWhiteSpace(sanitized))
         {
-            if (char.IsControl(c))
-            {
-                return null;
-            }
+            return null;
         }
         
-        return value.Trim();
+        return sanitized.Trim();
     }
 }
 

@@ -136,7 +136,7 @@ public class ContentChangeExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var headline = result.GetString("headline");
         headline.ShouldContain("Acquisition", Case.Insensitive);
@@ -164,7 +164,7 @@ public class ContentChangeExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var title = result.GetString("title");
         title.ShouldContain("Terms", Case.Insensitive);
@@ -193,7 +193,7 @@ public class ContentChangeExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var agency = result.GetString("agency");
         agency.ShouldContain("Springfield", Case.Insensitive);

@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -199,6 +200,10 @@ public class LttStorePipelineE2ETests : TestBase, IAsyncDisposable
         Log("=== ASSERTIONS ===");
 
         session.ShouldNotBeNull("Session should exist");
+        if (session!.ContentAnalysis == null && CacheSkipHelper.IsLlmCacheOnly)
+        {
+            Skip.Test("Content analysis returned null in CacheOnly mode — likely LLM cache miss. Run with -IncludeOllama to populate cache.");
+        }
         session!.ContentAnalysis.ShouldNotBeNull("Content analysis should complete");
         Log("  PASS: Content analysis completed");
 

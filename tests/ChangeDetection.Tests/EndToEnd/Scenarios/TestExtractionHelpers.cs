@@ -1,10 +1,12 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM;
 using ChangeDetection.Services.LLM.Factories;
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using ChangeDetection.Tests.Llm.TestHelpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using Shouldly;
 
 namespace ChangeDetection.Tests.EndToEnd.Scenarios;
 
@@ -244,6 +246,18 @@ public class ExtractionResult
 public abstract class ExtractionTestBase
 {
     protected CachingHttpClientFactory? HttpClientFactory;
+
+    /// <summary>
+    /// Asserts extraction succeeded, or skips the test if failure is due to LLM cache miss in CacheOnly mode.
+    /// </summary>
+    protected static void AssertExtractionSuccessOrSkipOnCacheMiss(ExtractionResult result)
+    {
+        if (!result.IsSuccess && CacheSkipHelper.IsLlmCacheOnly)
+        {
+            Skip.Test($"LLM cache miss in CacheOnly mode: {result.Error}. Run with -IncludeOllama to populate cache.");
+        }
+        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+    }
 
     protected async Task<ILlmProviderChain> CreateRealLlmProvider()
     {

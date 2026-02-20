@@ -1,3 +1,4 @@
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -92,12 +93,19 @@ public class CachedLlmExampleTests : TestBase
             """);
 
         // Act
-        var response = await chat.GetChatMessageContentAsync(history);
+        try
+        {
+            var response = await chat.GetChatMessageContentAsync(history);
 
-        // Assert
-        response.Content.ShouldNotBeNullOrEmpty();
-        response.Content.ShouldContain("29.99");
-        Log($"Price extraction: {response.Content}");
+            // Assert
+            response.Content.ShouldNotBeNullOrEmpty();
+            response.Content.ShouldContain("29.99");
+            Log($"Price extraction: {response.Content}");
+        }
+        catch (CacheMissException ex)
+        {
+            CacheSkipHelper.SkipOnCacheMiss(ex);
+        }
     }
 
     [Test]
@@ -123,12 +131,19 @@ public class CachedLlmExampleTests : TestBase
             """);
 
         // Act
-        var response = await chat.GetChatMessageContentAsync(history);
+        try
+        {
+            var response = await chat.GetChatMessageContentAsync(history);
 
-        // Assert
-        response.Content.ShouldNotBeNullOrEmpty();
-        response.Content!.ToLowerInvariant().ShouldContain("product");
-        Log($"Classification: {response.Content}");
+            // Assert
+            response.Content.ShouldNotBeNullOrEmpty();
+            response.Content!.ToLowerInvariant().ShouldContain("product");
+            Log($"Classification: {response.Content}");
+        }
+        catch (CacheMissException ex)
+        {
+            CacheSkipHelper.SkipOnCacheMiss(ex);
+        }
     }
 
     /// <summary>

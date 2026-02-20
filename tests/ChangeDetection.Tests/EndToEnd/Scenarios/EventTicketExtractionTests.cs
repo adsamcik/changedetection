@@ -151,7 +151,7 @@ public class EventTicketExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var artist = result.GetString("artist");
         artist.ShouldContain("Taylor Swift", Case.Insensitive);
@@ -180,7 +180,7 @@ public class EventTicketExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var homeTeam = result.GetString("homeTeam");
         homeTeam.ShouldContain("Lakers", Case.Insensitive);
@@ -208,7 +208,7 @@ public class EventTicketExtractionTests : ExtractionTestBase
         TestContext.Current?.OutputWriter?.WriteLine($"Extraction result: {result.Data}");
 
         result.ShouldNotBeNull();
-        result.IsSuccess.ShouldBeTrue($"Extraction failed: {result.Error}");
+        AssertExtractionSuccessOrSkipOnCacheMiss(result);
 
         var showTitle = result.GetString("showTitle");
         showTitle.ShouldContain("Hamilton", Case.Insensitive);

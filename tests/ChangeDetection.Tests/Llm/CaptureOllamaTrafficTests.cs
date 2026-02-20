@@ -1,3 +1,4 @@
+using ChangeDetection.Tests.Infrastructure;
 using ChangeDetection.Tests.Llm.Cache;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Shouldly;
@@ -23,6 +24,12 @@ namespace ChangeDetection.Tests.Llm;
 [Category("RequiresOllama")]
 public class CaptureOllamaTrafficTests : TestBase
 {
+    [Before(Test)]
+    public void SkipIfOllamaUnavailable()
+    {
+        CacheSkipHelper.SkipIfOllamaUnavailable();
+    }
+
     /// <summary>
     /// Creates a cached kernel with optional logging output.
     /// </summary>
