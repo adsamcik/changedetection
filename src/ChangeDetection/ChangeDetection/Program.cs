@@ -415,6 +415,11 @@ app.MapGroup("/api/notifications")
     .RequireAdminInSsoMode(builder.Configuration)
     .MapNotificationEndpoints();
 
+// Pipeline debug endpoints for inspecting runs, events, and LLM logs
+app.MapGroup("/api/debug/pipeline")
+    .RequireAdminInSsoMode(builder.Configuration)
+    .MapPipelineDebugEndpoints();
+
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
     .RequireAuthenticationInSsoMode(builder.Configuration);

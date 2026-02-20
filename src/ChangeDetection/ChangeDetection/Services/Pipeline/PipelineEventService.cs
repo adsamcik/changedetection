@@ -11,11 +11,28 @@ namespace ChangeDetection.Services.Pipeline;
 /// </summary>
 public class PipelineEventService(LiteDbContext context, ILogger<PipelineEventService> logger) : IPipelineEventService
 {
-    private readonly ILiteCollection<PipelineRun> _runs = context.Database.GetCollection<PipelineRun>("pipeline_runs");
-    private readonly ILiteCollection<PipelineEvent> _events = context.Database.GetCollection<PipelineEvent>("pipeline_events");
+    private readonly ILiteCollection<PipelineRun> _runs = InitRuns(context);
+    private readonly ILiteCollection<PipelineEvent> _events = InitEvents(context);
     
     private readonly object _sequenceLock = new();
     private readonly Dictionary<Guid, int> _sequenceCounters = new();
+
+    private static ILiteCollection<PipelineRun> InitRuns(LiteDbContext context)
+    {
+        var collection = context.Database.GetCollection<PipelineRun>("pipeline_runs");
+        collection.EnsureIndex(x => x.SessionId);
+        collection.EnsureIndex(x => x.Status);
+        collection.EnsureIndex(x => x.StartedAt);
+        return collection;
+    }
+
+    private static ILiteCollection<PipelineEvent> InitEvents(LiteDbContext context)
+    {
+        var collection = context.Database.GetCollection<PipelineEvent>("pipeline_events");
+        collection.EnsureIndex(x => x.PipelineRunId);
+        collection.EnsureIndex(x => x.Timestamp);
+        return collection;
+    }
 
     /// <inheritdoc />
     public async Task<PipelineRun> StartRunAsync(
