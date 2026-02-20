@@ -878,10 +878,14 @@ public class WatchSetupPipeline(
         string? currentStep = null;
         var thinkingBuffer = new System.Text.StringBuilder();
         
+        // Stage-level timeout for content analysis (3 LLM calls)
+        using var stageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stageCts.CancelAfter(TimeSpan.FromMinutes(3));
+        
         await foreach (var progress in contentAnalysis.AnalyzeStreamingAsync(
             session.FetchedContent,
             intentToAnalyze,
-            ct))
+            stageCts.Token))
         {
             // Track step transitions
             if (progress.Step != currentStep && progress.Status == "Starting")
@@ -968,22 +972,35 @@ public class WatchSetupPipeline(
         if (!SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
             return;
 
-        var discoveredSchema = await schemaDiscovery.DiscoverAsync(
-            session.FetchedContent,
-            session.ContentAnalysis,
-            ct);
+        // Stage-level timeout to prevent hanging on slow LLM calls
+        using var stageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stageCts.CancelAfter(TimeSpan.FromMinutes(3));
 
-        if (discoveredSchema != null)
+        try
         {
-            session.DiscoveredSchema = discoveredSchema;
-            session.SchemaEnabled = true;
-            session.IterationHistory.Add(
-                $"Schema: Discovered {discoveredSchema.Fields.Count} fields for {discoveredSchema.SampleItemCount} items");
+            var discoveredSchema = await schemaDiscovery.DiscoverAsync(
+                session.FetchedContent,
+                session.ContentAnalysis,
+                stageCts.Token);
+
+            if (discoveredSchema != null)
+            {
+                session.DiscoveredSchema = discoveredSchema;
+                session.SchemaEnabled = true;
+                session.IterationHistory.Add(
+                    $"Schema: Discovered {discoveredSchema.Fields.Count} fields for {discoveredSchema.SampleItemCount} items");
+            }
+            else
+            {
+                session.SchemaEnabled = false;
+                session.IterationHistory.Add("Schema: Could not discover schema for this content");
+            }
         }
-        else
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            logger.LogWarning("Schema discovery timed out after 3 minutes, continuing without schema");
             session.SchemaEnabled = false;
-            session.IterationHistory.Add("Schema: Could not discover schema for this content");
+            session.IterationHistory.Add("Schema: Discovery timed out, continuing without schema");
         }
     }
 
@@ -996,6 +1013,10 @@ public class WatchSetupPipeline(
 
         if (session.FetchedContent == null || session.ContentAnalysis == null)
             return CreateFailedResult(session, PipelineStage.SelectorGeneration, "Missing content or analysis");
+
+        // Stage-level timeout for selector generation (may involve multiple LLM iterations)
+        using var stageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stageCts.CancelAfter(TimeSpan.FromMinutes(5));
 
         var maxIterations = options.MaxIterations > 0 ? options.MaxIterations : DefaultMaxIterations;
         var minConfidence = options.MinConfidence > 0 ? options.MinConfidence : DefaultMinConfidence;
@@ -1012,7 +1033,7 @@ public class WatchSetupPipeline(
                 selectors = await selectorGeneration.GenerateSelectorsAsync(
                     session.FetchedContent,
                     session.ContentAnalysis,
-                    ct);
+                    stageCts.Token);
             }
             else
             {
@@ -1021,7 +1042,7 @@ public class WatchSetupPipeline(
                     session.FetchedContent,
                     session.ContentAnalysis,
                     session.ValidationResults,
-                    ct);
+                    stageCts.Token);
             }
 
             if (selectors.Count == 0)

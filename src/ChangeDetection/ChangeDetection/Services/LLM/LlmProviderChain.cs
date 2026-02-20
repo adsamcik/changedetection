@@ -280,7 +280,17 @@ public class LlmProviderChain : ILlmProviderChain
                 yield return chunk;
             }
 
-            await streamTask;
+            // Await completion with timeout to prevent hanging if the stream task is stuck
+            using var streamCompletionCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                await streamTask.WaitAsync(streamCompletionCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning("Stream task for provider {Provider} did not complete within 30s after channel closed", 
+                    provider.Name);
+            }
 
             if (streamingSuccess)
             {
@@ -449,7 +459,7 @@ public class LlmProviderChain : ILlmProviderChain
                 Priority = 999,
                 IsEnabled = true,
                 IsHealthy = true,
-                TimeoutSeconds = 300, // 5 minutes for local models
+                TimeoutSeconds = 120, // 2 minutes per request for local models
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
