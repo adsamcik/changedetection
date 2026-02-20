@@ -59,6 +59,12 @@ public static class ServiceConstants
     /// <summary>How often the snapshot cleanup service runs.</summary>
     public static readonly TimeSpan SnapshotCleanupInterval = TimeSpan.FromHours(1);
 
+    /// <summary>How often the database backup service runs.</summary>
+    public static readonly TimeSpan DatabaseBackupInterval = TimeSpan.FromHours(24);
+
+    /// <summary>Number of database backups to retain during cleanup.</summary>
+    public const int DatabaseBackupRetainCount = 7;
+
     /// <summary>How often the notification outbox processor runs.</summary>
     public static readonly TimeSpan NotificationProcessingInterval = TimeSpan.FromSeconds(10);
 

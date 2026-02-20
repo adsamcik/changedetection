@@ -11,6 +11,7 @@ namespace ChangeDetection.Services.Persistence;
 public class NotificationOutboxRepository(LiteDbContext context) : INotificationOutboxRepository
 {
     private readonly ILiteCollection<NotificationOutboxEntry> _collection = InitializeCollection(context);
+    private readonly object _claimLock = new();
 
     private static ILiteCollection<NotificationOutboxEntry> InitializeCollection(LiteDbContext context)
     {
@@ -68,19 +69,22 @@ public class NotificationOutboxRepository(LiteDbContext context) : INotification
     {
         ct.ThrowIfCancellationRequested();
         
-        var entry = _collection.FindById(entryId);
-        if (entry == null)
-            return Task.FromResult(false);
-        
-        // Only claim if still in a claimable state
-        if (entry.Status != NotificationStatus.Pending && entry.Status != NotificationStatus.RetryPending)
-            return Task.FromResult(false);
-        
-        entry.Status = NotificationStatus.Processing;
-        entry.ProcessingStartedAt = DateTime.UtcNow;
-        _collection.Update(entry);
-        
-        return Task.FromResult(true);
+        lock (_claimLock)
+        {
+            var entry = _collection.FindById(entryId);
+            if (entry == null)
+                return Task.FromResult(false);
+            
+            // Only claim if still in a claimable state
+            if (entry.Status != NotificationStatus.Pending && entry.Status != NotificationStatus.RetryPending)
+                return Task.FromResult(false);
+            
+            entry.Status = NotificationStatus.Processing;
+            entry.ProcessingStartedAt = DateTime.UtcNow;
+            _collection.Update(entry);
+            
+            return Task.FromResult(true);
+        }
     }
 
     public Task MarkSentAsync(Guid entryId, CancellationToken ct = default)
@@ -147,20 +151,23 @@ public class NotificationOutboxRepository(LiteDbContext context) : INotification
     {
         ct.ThrowIfCancellationRequested();
         
-        var cutoff = DateTime.UtcNow - processingTimeout;
-        var staleEntries = _collection.Query()
-            .Where(x => x.Status == NotificationStatus.Processing && x.ProcessingStartedAt < cutoff)
-            .ToList();
-        
-        foreach (var entry in staleEntries)
+        lock (_claimLock)
         {
-            entry.Status = NotificationStatus.RetryPending;
-            entry.LastError = "Processing timed out - recovered after restart";
-            entry.NextRetryAt = DateTime.UtcNow;
-            _collection.Update(entry);
+            var cutoff = DateTime.UtcNow - processingTimeout;
+            var staleEntries = _collection.Query()
+                .Where(x => x.Status == NotificationStatus.Processing && x.ProcessingStartedAt < cutoff)
+                .ToList();
+            
+            foreach (var entry in staleEntries)
+            {
+                entry.Status = NotificationStatus.RetryPending;
+                entry.LastError = "Processing timed out - recovered after restart";
+                entry.NextRetryAt = DateTime.UtcNow;
+                _collection.Update(entry);
+            }
+            
+            return Task.FromResult(staleEntries.Count);
         }
-        
-        return Task.FromResult(staleEntries.Count);
     }
 
     public Task<NotificationOutboxEntry?> GetByIdAsync(Guid entryId, CancellationToken ct = default)

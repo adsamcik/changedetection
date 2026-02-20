@@ -17,6 +17,10 @@ public class ServerWatchServiceTests
     private readonly IRepository<WatchedSite> _watchRepo;
     private readonly IRepository<ChangeSnapshot> _snapshotRepo;
     private readonly IRepository<ChangeEvent> _eventRepo;
+    private readonly IRepository<FieldValueHistory> _fieldValueHistoryRepo;
+    private readonly IRepository<NotificationOutboxEntry> _notificationOutboxRepo;
+    private readonly IRepository<BlockExecutionSnapshotEntity> _blockSnapshotRepo;
+    private readonly IPriceHistoryRepository _priceHistoryRepo;
     private readonly IContentFetcher _contentFetcher;
     private readonly IContentExtractor _contentExtractor;
     private readonly IDiffService _diffService;
@@ -38,6 +42,10 @@ public class ServerWatchServiceTests
         _watchRepo = Substitute.For<IRepository<WatchedSite>>();
         _snapshotRepo = Substitute.For<IRepository<ChangeSnapshot>>();
         _eventRepo = Substitute.For<IRepository<ChangeEvent>>();
+        _fieldValueHistoryRepo = Substitute.For<IRepository<FieldValueHistory>>();
+        _notificationOutboxRepo = Substitute.For<IRepository<NotificationOutboxEntry>>();
+        _blockSnapshotRepo = Substitute.For<IRepository<BlockExecutionSnapshotEntity>>();
+        _priceHistoryRepo = Substitute.For<IPriceHistoryRepository>();
         _contentFetcher = Substitute.For<IContentFetcher>();
         _contentExtractor = Substitute.For<IContentExtractor>();
         _diffService = Substitute.For<IDiffService>();
@@ -55,6 +63,10 @@ public class ServerWatchServiceTests
             _watchRepo,
             _snapshotRepo,
             _eventRepo,
+            _fieldValueHistoryRepo,
+            _notificationOutboxRepo,
+            _blockSnapshotRepo,
+            _priceHistoryRepo,
             _contentFetcher,
             _contentExtractor,
             _diffService,

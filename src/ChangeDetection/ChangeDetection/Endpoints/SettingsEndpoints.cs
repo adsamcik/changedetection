@@ -19,6 +19,22 @@ public static class SettingsEndpoints
             .WithName("UpdateGeneralSettings")
             .Produces<GeneralSettingsDto>();
 
+        group.MapPost("/backup", CreateBackup)
+            .WithName("CreateBackup")
+            .Produces<BackupInfoDto>();
+
+        group.MapGet("/backup", ListBackups)
+            .WithName("ListBackups")
+            .Produces<List<BackupInfoDto>>();
+
+        group.MapGet("/backup/{fileName}", DownloadBackup)
+            .WithName("DownloadBackup")
+            .Produces<IResult>();
+
+        group.MapDelete("/backup/{fileName}", DeleteBackup)
+            .WithName("DeleteBackup")
+            .Produces(StatusCodes.Status204NoContent);
+
         return group;
     }
 
@@ -113,4 +129,54 @@ public static class SettingsEndpoints
 
         return Results.Ok(dto);
     }
+
+    private static async Task<IResult> CreateBackup(
+        IDatabaseBackupService backupService,
+        CancellationToken ct)
+    {
+        var path = await backupService.CreateBackupAsync(ct);
+        var fileInfo = new FileInfo(path);
+
+        return Results.Ok(new BackupInfoDto(fileInfo.Name, fileInfo.Length, fileInfo.CreationTimeUtc));
+    }
+
+    private static async Task<IResult> ListBackups(
+        IDatabaseBackupService backupService,
+        CancellationToken ct)
+    {
+        var backups = await backupService.GetBackupsAsync(ct);
+        var dtos = backups.Select(b => new BackupInfoDto(b.FileName, b.SizeBytes, b.CreatedAt)).ToList();
+
+        return Results.Ok(dtos);
+    }
+
+    private static async Task<IResult> DownloadBackup(
+        string fileName,
+        IDatabaseBackupService backupService,
+        CancellationToken ct)
+    {
+        var path = await backupService.GetBackupPathAsync(fileName, ct);
+        if (path is null)
+            return Results.NotFound();
+
+        return Results.File(path, "application/octet-stream", Path.GetFileName(path));
+    }
+
+    private static async Task<IResult> DeleteBackup(
+        string fileName,
+        IDatabaseBackupService backupService,
+        CancellationToken ct)
+    {
+        var path = await backupService.GetBackupPathAsync(fileName, ct);
+        if (path is null)
+            return Results.NotFound();
+
+        File.Delete(path);
+        return Results.NoContent();
+    }
 }
+
+/// <summary>
+/// DTO for backup information returned by API endpoints.
+/// </summary>
+public record BackupInfoDto(string FileName, long SizeBytes, DateTime CreatedAt);

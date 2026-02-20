@@ -14,6 +14,10 @@ public class ServerWatchService : IWatchService
     private readonly IRepository<WatchedSite> _watchRepo;
     private readonly IRepository<ChangeSnapshot> _snapshotRepo;
     private readonly IRepository<ChangeEvent> _eventRepo;
+    private readonly IRepository<FieldValueHistory> _fieldValueHistoryRepo;
+    private readonly IRepository<NotificationOutboxEntry> _notificationOutboxRepo;
+    private readonly IRepository<BlockExecutionSnapshotEntity> _blockSnapshotRepo;
+    private readonly IPriceHistoryRepository _priceHistoryRepo;
     private readonly IContentFetcher _fetcher;
     private readonly IContentExtractor _extractor;
     private readonly IDiffService _diffService;
@@ -31,6 +35,10 @@ public class ServerWatchService : IWatchService
         IRepository<WatchedSite> watchRepo,
         IRepository<ChangeSnapshot> snapshotRepo,
         IRepository<ChangeEvent> eventRepo,
+        IRepository<FieldValueHistory> fieldValueHistoryRepo,
+        IRepository<NotificationOutboxEntry> notificationOutboxRepo,
+        IRepository<BlockExecutionSnapshotEntity> blockSnapshotRepo,
+        IPriceHistoryRepository priceHistoryRepo,
         IContentFetcher fetcher,
         IContentExtractor extractor,
         IDiffService diffService,
@@ -47,6 +55,10 @@ public class ServerWatchService : IWatchService
         _watchRepo = watchRepo;
         _snapshotRepo = snapshotRepo;
         _eventRepo = eventRepo;
+        _fieldValueHistoryRepo = fieldValueHistoryRepo;
+        _notificationOutboxRepo = notificationOutboxRepo;
+        _blockSnapshotRepo = blockSnapshotRepo;
+        _priceHistoryRepo = priceHistoryRepo;
         _fetcher = fetcher;
         _extractor = extractor;
         _diffService = diffService;
@@ -143,14 +155,27 @@ public class ServerWatchService : IWatchService
 
     public async Task DeleteWatchAsync(Guid id, CancellationToken ct = default)
     {
+        // Collect screenshot paths before deleting snapshots (file I/O happens after commit)
+        var snapshots = await _snapshotRepo.FindAsync(s => s.WatchedSiteId == id, ct);
+        var screenshotPaths = snapshots
+            .SelectMany(s => new[] { s.ScreenshotPath, s.ElementScreenshotPath })
+            .Where(p => !string.IsNullOrEmpty(p))
+            .ToList();
+
+        var watchIdString = id.ToString();
+
         // Use a transaction to ensure all deletions succeed or fail together
         // This prevents inconsistent state if watch deletion fails after snapshots/events are deleted
         _dbContext.Database.BeginTrans();
         try
         {
-            // Delete associated snapshots and events
+            // Delete associated data
             await _snapshotRepo.DeleteManyAsync(s => s.WatchedSiteId == id, ct);
             await _eventRepo.DeleteManyAsync(e => e.WatchedSiteId == id, ct);
+            await _priceHistoryRepo.DeleteForWatchAsync(id, ct);
+            await _fieldValueHistoryRepo.DeleteManyAsync(f => f.WatchedSiteId == id, ct);
+            await _notificationOutboxRepo.DeleteManyAsync(n => n.WatchedSiteId == id, ct);
+            await _blockSnapshotRepo.DeleteManyAsync(b => b.WatchId == watchIdString, ct);
             await _watchRepo.DeleteAsync(id, ct);
             
             _dbContext.Database.Commit();
@@ -160,6 +185,20 @@ public class ServerWatchService : IWatchService
         {
             _dbContext.Database.Rollback();
             throw;
+        }
+
+        // Delete screenshot files outside transaction (file I/O can't be rolled back)
+        foreach (var path in screenshotPaths)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path!);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete screenshot file {Path}", path);
+            }
         }
     }
 
