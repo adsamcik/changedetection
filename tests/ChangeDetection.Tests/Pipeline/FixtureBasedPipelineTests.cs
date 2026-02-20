@@ -98,6 +98,7 @@ public class FixtureBasedPipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor new events and seminars on the page",
+            "[]",
             """[{"name":"Event Cards","selector":".shadow.bg-white","isTarget":true,"description":"Event cards"}]"""
         ]);
         
@@ -127,6 +128,7 @@ public class FixtureBasedPipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor new events and seminars on the page",
+            "[]",
             """[{"name":"Events","selector":".event","isTarget":true,"description":"Events section"}]"""
         ]);
         
@@ -158,6 +160,7 @@ public class FixtureBasedPipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor new events",
+            "[]",
             """[{"name":"Event Cards","selector":".shadow.bg-white","isTarget":true,"description":"Event cards"},{"name":"Event Titles","selector":"h3","isTarget":false,"description":"Titles"}]"""
         ]);
         
@@ -280,10 +283,11 @@ public class FixtureBasedPipelineTests : TestBase
         var content = GetSampleEventPageContent();
         var userIntent = "I want to watch for the events on that page";
         
-        // Content analysis needs 3 responses (classification, intent, sections)
+        // Content analysis needs 4 responses (classification, intent, filter keywords, sections)
         var analysisChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor new events and seminars",
+            "[]",
             """[{"name":"Event Cards","selector":".shadow.bg-white","isTarget":true,"description":"Event cards"}]"""
         ]);
         
@@ -346,6 +350,7 @@ public class FixtureBasedPipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor events",
+            "[]",
             """[{"name":"Events","selector":".event","isTarget":true,"description":"Events"}]"""
         ]);
         
@@ -367,6 +372,8 @@ public class FixtureBasedPipelineTests : TestBase
         progressSteps.ShouldContain("ContentClassification:Completed");
         progressSteps.ShouldContain("IntentExtraction:Starting");
         progressSteps.ShouldContain("IntentExtraction:Completed");
+        progressSteps.ShouldContain("FilterKeywordExtraction:Starting");
+        progressSteps.ShouldContain("FilterKeywordExtraction:Completed");
         progressSteps.ShouldContain("SectionIdentification:Starting");
         progressSteps.ShouldContain("SectionIdentification:Completed");
         progressSteps.ShouldContain("Complete:Completed");
@@ -390,6 +397,7 @@ public class FixtureBasedPipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "EventList",
             "Monitor new events",
+            "[]",
             "Not valid JSON at all"
         ]);
         

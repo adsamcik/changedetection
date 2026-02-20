@@ -166,6 +166,7 @@ public class LttStorePipelineTests : TestBase
         var llmChain = CreateMockLlmChainWithStreamingResponses([
             "PriceInfo",
             "Track USB-C cable price and stock availability",
+            "[]",
             """[{"name":"Product Price","selector":".product__price","isTarget":true,"description":"Product price section showing $29.99 CAD"},{"name":"Product Availability","selector":".product-form__buttons","isTarget":true,"description":"Stock status and add-to-cart button"}]"""
         ]);
         var stage = new ContentAnalysisStage(llmChain, CreateLogger<ContentAnalysisStage>());
@@ -293,6 +294,8 @@ public class LttStorePipelineTests : TestBase
             "PriceInfo",
             // Content analysis: intent extraction
             "Track USB-C cable price and stock availability",
+            // Content analysis: filter keyword extraction
+            "[]",
             // Content analysis: section identification
             """[{"name":"Price","selector":".product__price","isTarget":true,"description":"Product price $29.99 CAD"},{"name":"Stock Status","selector":".product-form__buttons","isTarget":true,"description":"Availability: out of stock"}]"""
         ]);

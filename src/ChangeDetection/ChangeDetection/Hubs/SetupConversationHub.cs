@@ -538,7 +538,9 @@ public class SetupConversationHub(
                                 UseJavaScript = recoveryResult.Session.FetchedContent?.UsedJavaScript ?? false
                             },
                             SchemaEnabled = recoveryResult.FinalConfiguration.SchemaEnabled,
-                            Schema = recoveryResult.FinalConfiguration.Schema
+                            Schema = recoveryResult.FinalConfiguration.Schema,
+                            FilterRules = recoveryResult.FinalConfiguration.FilterRules.Count > 0
+                                ? recoveryResult.FinalConfiguration.FilterRules : null
                         };
                         
                         createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
@@ -684,7 +686,9 @@ public class SetupConversationHub(
                         UseJavaScript = finalResult.Session.FetchedContent?.UsedJavaScript ?? false
                     },
                     SchemaEnabled = finalResult.FinalConfiguration.SchemaEnabled,
-                    Schema = finalResult.FinalConfiguration.Schema
+                    Schema = finalResult.FinalConfiguration.Schema,
+                    FilterRules = finalResult.FinalConfiguration.FilterRules.Count > 0
+                        ? finalResult.FinalConfiguration.FilterRules : null
                 };
                 
                 createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
@@ -876,7 +880,8 @@ public class SetupConversationHub(
                 SchemaEnabled = pipelineSession.SchemaEnabled ?? false,
                 Schema = pipelineSession.DiscoveredSchema != null
                     ? ConvertToExtractionSchema(pipelineSession.DiscoveredSchema)
-                    : null
+                    : null,
+                FilterRules = BuildFilterRulesFromSession(pipelineSession)
             };
             
             var createdWatch = await watchService.CreateWatchAsync(createRequest, ct);
@@ -1005,6 +1010,51 @@ public class SetupConversationHub(
             "status" => FieldType.Status,
             _ => FieldType.String
         };
+    }
+
+    /// <summary>
+    /// Builds filter rules from a pipeline session's content analysis keywords.
+    /// Used in the ConfirmSetup path where we don't have a FinalConfiguration.
+    /// </summary>
+    private static List<FilterRule>? BuildFilterRulesFromSession(PipelineSession session)
+    {
+        var keywords = session.ContentAnalysis?.FilterKeywords ?? [];
+        if (keywords.Count == 0)
+            return null;
+
+        var rules = new List<FilterRule>();
+        foreach (var keyword in keywords)
+        {
+            rules.Add(new FilterRule
+            {
+                Name = $"Match: {keyword}",
+                Description = $"Notify when content contains '{keyword}' (from user intent: {session.ContentAnalysis?.UserIntent})",
+                Conditions =
+                [
+                    new FilterCondition
+                    {
+                        FieldName = "$content",
+                        Operator = FilterOperator.Contains,
+                        Value = keyword
+                    }
+                ],
+                Actions =
+                [
+                    new FilterAction
+                    {
+                        Type = FilterActionType.ImmediateNotify,
+                        Parameters = new Dictionary<string, string>
+                        {
+                            ["reason"] = $"Content matches filter keyword: {keyword}"
+                        }
+                    }
+                ],
+                Priority = 100,
+                IsEnabled = true
+            });
+        }
+
+        return rules;
     }
 }
 

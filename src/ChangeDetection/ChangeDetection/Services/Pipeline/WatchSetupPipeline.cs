@@ -1298,6 +1298,9 @@ public class WatchSetupPipeline(
             config.Schema = ConvertToExtractionSchema(session.DiscoveredSchema);
         }
 
+        // Create filter rules from user intent
+        config.FilterRules = BuildFilterRulesFromIntent(session);
+
         var summary = BuildSummary(session, config);
 
         return new PipelineResult
@@ -1330,6 +1333,103 @@ public class WatchSetupPipeline(
         parts.Add($"checking every {config.CheckInterval?.TotalMinutes ?? 60} minutes");
 
         return string.Join(", ", parts) + ".";
+    }
+
+    /// <summary>
+    /// Creates filter rules from the LLM-extracted filter keywords and discovered schema.
+    /// For schema-enabled watches: creates field-level conditions against schema fields.
+    /// For text-only watches: creates a content-contains condition.
+    /// </summary>
+    private static List<FilterRule> BuildFilterRulesFromIntent(PipelineSession session)
+    {
+        var keywords = session.ContentAnalysis?.FilterKeywords ?? [];
+        if (keywords.Count == 0)
+            return [];
+
+        var rules = new List<FilterRule>();
+
+        if (session.SchemaEnabled == true && session.DiscoveredSchema?.Fields.Count > 0)
+        {
+            // Schema-enabled: create a rule that checks extracted object fields for keywords
+            var textFields = session.DiscoveredSchema.Fields
+                .Where(f => f.Type is "string" or "text")
+                .Select(f => f.Name)
+                .ToList();
+
+            if (textFields.Count == 0)
+            {
+                // No text fields in schema — fall back to checking all fields
+                textFields = session.DiscoveredSchema.Fields.Select(f => f.Name).ToList();
+            }
+
+            foreach (var keyword in keywords)
+            {
+                var conditions = textFields.Select(field => new FilterCondition
+                {
+                    FieldName = field,
+                    Operator = FilterOperator.Contains,
+                    Value = keyword
+                }).ToList();
+
+                rules.Add(new FilterRule
+                {
+                    Name = $"Match: {keyword}",
+                    Description = $"Notify when any field contains '{keyword}' (from user intent: {session.ContentAnalysis?.UserIntent})",
+                    Logic = FilterLogic.Or,
+                    Conditions = conditions,
+                    Actions =
+                    [
+                        new FilterAction
+                        {
+                            Type = FilterActionType.ImmediateNotify,
+                            Parameters = new Dictionary<string, string>
+                            {
+                                ["reason"] = $"Content matches filter keyword: {keyword}"
+                            }
+                        }
+                    ],
+                    Priority = 100,
+                    IsEnabled = true
+                });
+            }
+        }
+        else
+        {
+            // Text-only watch: create a rule that checks raw content changes
+            // Use $content special field which matches against the full text diff
+            foreach (var keyword in keywords)
+            {
+                rules.Add(new FilterRule
+                {
+                    Name = $"Match: {keyword}",
+                    Description = $"Notify when content contains '{keyword}' (from user intent: {session.ContentAnalysis?.UserIntent})",
+                    Conditions =
+                    [
+                        new FilterCondition
+                        {
+                            FieldName = "$content",
+                            Operator = FilterOperator.Contains,
+                            Value = keyword
+                        }
+                    ],
+                    Actions =
+                    [
+                        new FilterAction
+                        {
+                            Type = FilterActionType.ImmediateNotify,
+                            Parameters = new Dictionary<string, string>
+                            {
+                                ["reason"] = $"Content matches filter keyword: {keyword}"
+                            }
+                        }
+                    ],
+                    Priority = 100,
+                    IsEnabled = true
+                });
+            }
+        }
+
+        return rules;
     }
 
     private static PipelineResult CreateFailedResult(PipelineSession session, PipelineStage stage, string error)

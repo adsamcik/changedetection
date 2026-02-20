@@ -346,6 +346,12 @@ public class ContentAnalysis
     /// Confidence in the analysis (0-1).
     /// </summary>
     public float Confidence { get; set; }
+    
+    /// <summary>
+    /// Keywords extracted by LLM from user intent for creating filter rules.
+    /// E.g., for "notify when tour comes to Prague" → ["Prague"].
+    /// </summary>
+    public List<string> FilterKeywords { get; set; } = [];
 }
 
 /// <summary>
@@ -464,4 +470,9 @@ public class WatchConfiguration
     /// Schema for extracting structured objects from the page.
     /// </summary>
     public ExtractionSchema? Schema { get; set; }
+    
+    /// <summary>
+    /// Filter rules derived from user intent (e.g., "notify when Prague appears").
+    /// </summary>
+    public List<FilterRule> FilterRules { get; set; } = [];
 }

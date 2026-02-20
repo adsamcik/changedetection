@@ -94,6 +94,28 @@ public class ContentAnalysisStage(
         }
         yield return new ContentAnalysisProgress { Step = "IntentExtraction", Status = "Completed" };
         
+        // Step 2.5: Extract filter keywords from user intent
+        yield return new ContentAnalysisProgress { Step = "FilterKeywordExtraction", Status = "Starting" };
+        
+        List<string> filterKeywords = [];
+        await foreach (var chunk in ExtractFilterKeywordsStreamingAsync(userIntent, content.Title, ct))
+        {
+            if (chunk.IsThinking)
+            {
+                yield return new ContentAnalysisProgress
+                {
+                    Step = "FilterKeywordExtraction",
+                    Status = "Thinking",
+                    ThinkingContent = chunk.Content
+                };
+            }
+            else if (chunk.Result != null)
+            {
+                filterKeywords = chunk.Result;
+            }
+        }
+        yield return new ContentAnalysisProgress { Step = "FilterKeywordExtraction", Status = "Completed" };
+        
         // Step 3: Identify page sections relevant to the intent
         yield return new ContentAnalysisProgress { Step = "SectionIdentification", Status = "Starting" };
         
@@ -131,7 +153,8 @@ public class ContentAnalysisStage(
                 ContentType = contentType,
                 IdentifiedSections = sections,
                 RecommendedApproach = approach,
-                Confidence = confidence
+                Confidence = confidence,
+                FilterKeywords = filterKeywords
             }
         };
     }
@@ -233,6 +256,76 @@ public class ContentAnalysisStage(
         { 
             Result = string.IsNullOrEmpty(intent) ? "Monitor for any changes" : intent 
         };
+    }
+
+    private async IAsyncEnumerable<StreamingResult<List<string>>> ExtractFilterKeywordsStreamingAsync(
+        string userInput,
+        string? pageTitle,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var prompt = $"""
+            Extract 0-5 specific filter keywords from this monitoring request.
+            These are concrete values the user wants to match in page content changes.
+            
+            User request: "{userInput}"
+            Page: "{pageTitle ?? "Unknown"}"
+            
+            Rules:
+            - Only include specific nouns, names, places, numbers, or values
+            - Do NOT include generic words like "change", "monitor", "notify", "alert", "update"
+            - If the user wants to track ANY change (no specific filter), return empty: []
+            - Return JSON array of strings only: ["keyword1", "keyword2"]
+            
+            Examples:
+            - "alert when tour comes to Prague" → ["Prague"]
+            - "notify when price drops below $20" → ["20"]
+            - "let me know about any changes" → []
+            - "watch for new feature X commits" → ["feature X"]
+            
+            Keywords:
+            """;
+
+        var fullContent = new System.Text.StringBuilder();
+
+        await foreach (var chunk in llmChain.ExecuteStreamingAsync(prompt, new LlmRequestOptions
+        {
+            Temperature = 0.1f,
+            MaxTokens = 100,
+            UsageType = LlmUsageType.ContentAnalysis,
+            ExpectJson = true
+        }, ct))
+        {
+            if (chunk.Type == LlmStreamChunkType.Content && !string.IsNullOrEmpty(chunk.Text))
+            {
+                fullContent.Append(chunk.Text);
+                yield return new StreamingResult<List<string>> { IsThinking = true, Content = chunk.Text };
+            }
+        }
+
+        var keywords = ParseKeywordsJson(fullContent.ToString());
+        logger.LogDebug("Extracted {Count} filter keywords: {Keywords}", keywords.Count, string.Join(", ", keywords));
+        yield return new StreamingResult<List<string>> { Result = keywords };
+    }
+
+    private List<string> ParseKeywordsJson(string responseContent)
+    {
+        if (string.IsNullOrEmpty(responseContent))
+            return [];
+
+        try
+        {
+            var json = CleanJsonResponse(responseContent);
+            var keywords = JsonSerializer.Deserialize<List<string>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            return keywords?.Where(k => !string.IsNullOrWhiteSpace(k)).ToList() ?? [];
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Failed to parse filter keywords JSON: {Content}", responseContent);
+            return [];
+        }
     }
 
     private async IAsyncEnumerable<StreamingResult<List<PageSection>>> IdentifyPageSectionsStreamingAsync(
