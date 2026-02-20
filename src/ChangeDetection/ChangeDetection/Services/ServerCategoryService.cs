@@ -54,8 +54,9 @@ public class ServerCategoryService(
     {
         // Get max sort order
         var categories = await categoryRepo.GetAllAsync(ct);
-        var maxSortOrder = categories.Any() 
-            ? categories.Where(c => !c.IsDefault).Max(c => c.SortOrder) 
+        var nonDefaultCategories = categories.Where(c => !c.IsDefault).ToList();
+        var maxSortOrder = nonDefaultCategories.Count > 0 
+            ? nonDefaultCategories.Max(c => c.SortOrder) 
             : 0;
         
         var category = new Category

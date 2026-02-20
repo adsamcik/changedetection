@@ -24,6 +24,8 @@ using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Startup;
 using ChangeDetection.Core.Pipeline.AutoHealing;
+using ChangeDetection.Services.Persistence;
+using ChangeDetection.Services.Persistence.Migrations;
 using Microsoft.AspNetCore.ResponseCompression;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
@@ -176,6 +178,8 @@ builder.Services.AddScoped(sp =>
     new LiteDbRepository<Category>(sp.GetRequiredService<LiteDbContext>(), "categories"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
+builder.Services.AddScoped(sp => 
+    new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<LiteDbContext>(), "notification_outbox"));
 
 // Register tenant-scoped repository wrappers for owned entities
 builder.Services.AddScoped<IRepository<WatchedSite>>(sp => 
@@ -198,6 +202,10 @@ builder.Services.AddScoped<IRepository<View>>(sp =>
     new TenantRepository<View>(
         sp.GetRequiredService<LiteDbRepository<View>>(),
         sp.GetRequiredService<IUserContext>()));
+builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
+    new TenantRepository<NotificationOutboxEntry>(
+        sp.GetRequiredService<LiteDbRepository<NotificationOutboxEntry>>(),
+        sp.GetRequiredService<IUserContext>()));
 
 // Register global repositories (not tenant-scoped)
 builder.Services.AddScoped<IRepository<LlmProviderConfig>>(sp => 
@@ -210,6 +218,10 @@ builder.Services.AddScoped<IRepository<NotificationTemplate>>(sp =>
     new LiteDbRepository<NotificationTemplate>(sp.GetRequiredService<LiteDbContext>(), "notification_templates"));
 builder.Services.AddScoped<IRepository<PriceHistoryEntry>>(sp => 
     new LiteDbRepository<PriceHistoryEntry>(sp.GetRequiredService<LiteDbContext>(), "price_history"));
+builder.Services.AddScoped<IRepository<FieldValueHistory>>(sp => 
+    new LiteDbRepository<FieldValueHistory>(sp.GetRequiredService<LiteDbContext>(), "field_history"));
+builder.Services.AddScoped<IRepository<BlockExecutionSnapshotEntity>>(sp => 
+    new LiteDbRepository<BlockExecutionSnapshotEntity>(sp.GetRequiredService<LiteDbContext>(), "blockexecutionsnapshots"));
 
 // Register services
 builder.Services.AddSingleton<PlaywrightFetcher>();
@@ -303,6 +315,7 @@ builder.Services.AddScoped<IPriceHistoryRepository, PriceHistoryRepository>();
 builder.Services.AddScoped<IAlertThresholdEvaluator, AlertThresholdEvaluator>();
 builder.Services.AddScoped<INotificationTemplateEngine, NotificationTemplateEngine>();
 builder.Services.AddScoped<IPriceTrackingService, PriceTrackingService>();
+builder.Services.AddScoped<IFieldHistoryService, FieldHistoryService>();
 
 // Client-side services needed for Interactive Server mode
 builder.Services.AddScoped<ToastService>();
@@ -310,20 +323,34 @@ builder.Services.AddScoped<LocalStorageService>();
 builder.Services.AddScoped<KeyboardShortcutService>();
 builder.Services.AddScoped<ThemeService>();
 
+// Database migrations (must run before any other hosted services)
+builder.Services.AddSingleton<IDatabaseMigration, V001_InitialSchema>();
+builder.Services.AddHostedService<DatabaseMigrationRunner>();
+
 // Startup/shutdown services (registered first so they stop last during shutdown)
 builder.Services.AddHostedService<GracefulShutdownService>();
 builder.Services.AddHostedService<WatchStatusRecoveryService>();
 builder.Services.AddHostedService<LlmProviderHealthRecoveryService>();
+builder.Services.AddHostedService<LlmProviderConfigSyncService>();
 
 // Background services
 builder.Services.AddHostedService<ChangeCheckBackgroundService>();
 builder.Services.AddHostedService<NotificationOutboxProcessor>();
+
+// Database backup service
+builder.Services.AddSingleton<IDatabaseBackupService, DatabaseBackupService>();
+builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
+builder.Services.AddHostedService<SnapshotCleanupService>();
 
 // Graceful shutdown for Playwright
 builder.Services.AddHostedService<PlaywrightShutdownService>();
 
 // Default LLM provider seeder - auto-detects Ollama and seeds best available model
 builder.Services.AddHostedService<DefaultProviderSeeder>();
+
+// Health checks
+builder.Services.AddHealthChecks()
+    .AddCheck<LiteDbHealthCheck>("litedb");
 
 var app = builder.Build();
 
@@ -355,6 +382,8 @@ app.UseChangeDetectionAuthentication(builder.Configuration);
 app.UseOutputCache();
 
 app.UseAntiforgery();
+
+app.MapHealthChecks("/health");
 
 // Map API endpoints with appropriate authorization
 // User-owned data endpoints require authentication in SSO mode
