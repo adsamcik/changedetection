@@ -14,7 +14,7 @@ public class PaginateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoPage_ReturnsSinglePage()
     {
-        var pipeline = CreatePipeline("paginate-1", new { nextSelector = "a.next", maxPages = 3 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("paginate-1", "Paginate", new { nextSelector = "a.next", maxPages = 3 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("paginate-1")
@@ -33,7 +33,7 @@ public class PaginateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoSelector_ReturnsSinglePage()
     {
-        var pipeline = CreatePipeline("paginate-1", new { maxPages = 3 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("paginate-1", "Paginate", new { maxPages = 3 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("paginate-1")
@@ -93,19 +93,4 @@ public class PaginateBlockTests : TestBase
         _sut.OutputPorts[0].Type.ShouldBe(PortType.ExtractedObjects);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Paginate",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

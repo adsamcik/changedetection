@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
 using Microsoft.Playwright;
@@ -50,7 +49,7 @@ public class ScrollBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("scroll-1", new { times = 3, delay = 0 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("scroll-1", "Scroll", new { times = 3, delay = 0 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("scroll-1")
@@ -70,7 +69,7 @@ public class ScrollBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("scroll-1", new { direction = "up", delay = 0 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("scroll-1", "Scroll", new { direction = "up", delay = 0 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("scroll-1")
@@ -93,18 +92,4 @@ public class ScrollBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Scroll",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

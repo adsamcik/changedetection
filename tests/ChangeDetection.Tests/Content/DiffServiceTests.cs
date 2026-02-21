@@ -118,6 +118,9 @@ public class DiffServiceTests
 
         // Assert
         html.ShouldNotBeNullOrEmpty();
+        html.ShouldContain("diff-container");
+        html.ShouldContain("class=\"diff-line");
+        html.ShouldContain("<span class=\"content\">");
         await Task.CompletedTask;
     }
 
@@ -134,6 +137,7 @@ public class DiffServiceTests
 
         // Assert
         summary.ShouldNotBeNullOrEmpty();
+        summary.ShouldContain("added");
         await Task.CompletedTask;
     }
 

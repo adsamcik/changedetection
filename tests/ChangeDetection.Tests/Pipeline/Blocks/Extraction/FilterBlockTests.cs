@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Extraction;
@@ -29,7 +28,7 @@ public class FilterBlockTests : TestBase
 
         _extractor.ExtractHtml(inputHtml, cssSelector: "div.content").Returns(filteredHtml);
 
-        var pipeline = CreatePipeline("filter-1", new { css = "div.content" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("filter-1", "Filter", new { css = "div.content" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("filter-1")
             .WithInput("html", (object)inputHtml)
@@ -55,7 +54,7 @@ public class FilterBlockTests : TestBase
 
         _extractor.ExtractHtml(inputHtml, xpathSelector: "//div[@id='main']").Returns(filteredHtml);
 
-        var pipeline = CreatePipeline("filter-1", new { xpath = "//div[@id='main']" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("filter-1", "Filter", new { xpath = "//div[@id='main']" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("filter-1")
             .WithInput("html", (object)inputHtml)
@@ -76,7 +75,7 @@ public class FilterBlockTests : TestBase
     {
         const string inputHtml = "<html><body>Price: $29.99 today</body></html>";
 
-        var pipeline = CreatePipeline("filter-1", new { regex = @"\$\d+\.\d{2}" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("filter-1", "Filter", new { regex = @"\$\d+\.\d{2}" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("filter-1")
             .WithInput("html", (object)inputHtml)
@@ -95,7 +94,7 @@ public class FilterBlockTests : TestBase
     {
         const string inputHtml = "<html><body>Unchanged</body></html>";
 
-        var pipeline = CreatePipeline("filter-1", new { });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("filter-1", "Filter", new { });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("filter-1")
             .WithInput("html", (object)inputHtml)
@@ -118,7 +117,7 @@ public class FilterBlockTests : TestBase
 
         _extractor.ExtractHtml(inputHtml, cssSelector: ".nonexistent").Returns((string?)null);
 
-        var pipeline = CreatePipeline("filter-1", new { css = ".nonexistent" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("filter-1", "Filter", new { css = ".nonexistent" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("filter-1")
             .WithInput("html", (object)inputHtml)
@@ -158,19 +157,4 @@ public class FilterBlockTests : TestBase
         _sut.OutputPorts[0].Type.ShouldBe(PortType.HtmlContent);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Filter",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

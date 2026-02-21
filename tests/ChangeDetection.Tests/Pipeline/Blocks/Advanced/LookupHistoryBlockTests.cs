@@ -15,7 +15,7 @@ public class LookupHistoryBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_FirstRun_ReturnsCurrentWithEmptyHistory()
     {
-        var pipeline = CreatePipeline("history-1", new { field = "price", period = "7d" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("history-1", "LookupHistory", new { field = "price", period = "7d" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("history-1")
@@ -35,7 +35,7 @@ public class LookupHistoryBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_WithHistory_AccumulatesValues()
     {
-        var pipeline = CreatePipeline("history-1", new { field = "price", period = "7d" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("history-1", "LookupHistory", new { field = "price", period = "7d" });
 
         var previousHistory = JsonSerializer.SerializeToElement(new
         {
@@ -65,7 +65,7 @@ public class LookupHistoryBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_PeriodFilter_DropsOldEntries()
     {
-        var pipeline = CreatePipeline("history-1", new { field = "price", period = "7d" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("history-1", "LookupHistory", new { field = "price", period = "7d" });
 
         var previousHistory = JsonSerializer.SerializeToElement(new
         {
@@ -96,7 +96,7 @@ public class LookupHistoryBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MissingFieldConfig_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("history-1", new { period = "7d" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("history-1", "LookupHistory", new { period = "7d" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("history-1")
@@ -142,19 +142,4 @@ public class LookupHistoryBlockTests : TestBase
         _sut.CriticalityTier.ShouldBe(BlockCriticalityTier.Analysis);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "LookupHistory",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

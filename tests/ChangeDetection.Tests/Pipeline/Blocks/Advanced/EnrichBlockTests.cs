@@ -16,7 +16,7 @@ public class EnrichBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_FetchesAndEnriches()
     {
-        var pipeline = CreatePipeline("enrich-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("enrich-1", "Enrich", new
         {
             urlField = "detailUrl",
             extractFields = new[] { "description" }
@@ -55,7 +55,7 @@ public class EnrichBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_FetchFailure_AddsEnrichError()
     {
-        var pipeline = CreatePipeline("enrich-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("enrich-1", "Enrich", new
         {
             urlField = "detailUrl",
             extractFields = new[] { "description" }
@@ -89,7 +89,7 @@ public class EnrichBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MissingUrlFieldConfig_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("enrich-1", new { extractFields = new[] { "desc" } });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("enrich-1", "Enrich", new { extractFields = new[] { "desc" } });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("enrich-1")
@@ -106,7 +106,7 @@ public class EnrichBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MissingUrlInData_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("enrich-1", new { urlField = "detailUrl" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("enrich-1", "Enrich", new { urlField = "detailUrl" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("enrich-1")
@@ -153,18 +153,4 @@ public class EnrichBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Enrich",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

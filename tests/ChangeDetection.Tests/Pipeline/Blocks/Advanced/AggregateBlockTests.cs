@@ -14,7 +14,7 @@ public class AggregateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_GroupsAndSummarizes()
     {
-        var pipeline = CreatePipeline("agg-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("agg-1", "Aggregate", new
         {
             groupBy = "category",
             summarize = new Dictionary<string, string>
@@ -49,7 +49,7 @@ public class AggregateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_SingleObject_WrapsInArray()
     {
-        var pipeline = CreatePipeline("agg-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("agg-1", "Aggregate", new
         {
             groupBy = "type",
             summarize = new Dictionary<string, string> { ["count"] = "count" }
@@ -72,7 +72,7 @@ public class AggregateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MissingGroupByConfig_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("agg-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("agg-1", "Aggregate", new
         {
             summarize = new Dictionary<string, string> { ["count"] = "count" }
         });
@@ -92,7 +92,7 @@ public class AggregateBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MinMaxAvg_ComputesCorrectly()
     {
-        var pipeline = CreatePipeline("agg-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("agg-1", "Aggregate", new
         {
             groupBy = "group",
             summarize = new Dictionary<string, string>
@@ -145,19 +145,4 @@ public class AggregateBlockTests : TestBase
         _sut.CriticalityTier.ShouldBe(BlockCriticalityTier.Analysis);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Aggregate",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

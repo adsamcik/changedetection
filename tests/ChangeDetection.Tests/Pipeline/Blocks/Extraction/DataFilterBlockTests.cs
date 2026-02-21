@@ -219,7 +219,7 @@ public class DataFilterBlockTests : TestBase
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("df-1")
             .WithInput("data", (object)"just a string")
-            .WithPipelineDefinition(CreatePipeline("df-1", new { conditions = new[] { new { field = "x", @operator = "eq", value = 1 } } }))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("df-1", "DataFilter", new { conditions = new[] { new { field = "x", @operator = "eq", value = 1 } } }))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -345,21 +345,6 @@ public class DataFilterBlockTests : TestBase
         new BlockContextBuilder()
             .WithBlockInstanceId(blockId)
             .WithInput("data", data)
-            .WithPipelineDefinition(CreatePipeline(blockId, config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline(blockId, "DataFilter", config))
             .Build();
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "DataFilter",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

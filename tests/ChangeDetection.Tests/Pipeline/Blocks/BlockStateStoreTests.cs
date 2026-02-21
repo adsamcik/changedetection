@@ -67,10 +67,12 @@ public class BlockStateStoreTests : TestBase
         var watchId = "watch-1";
         var blockId = "block-1";
 
+        // Delays required: GetPreviousOutputAsync orders by DateTime.UtcNow-based Timestamp,
+        // so each save must have a distinct timestamp. 200ms ensures timer resolution safety.
         await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { value = 1 }));
-        await Task.Delay(50);
+        await Task.Delay(200);
         await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { value = 2 }));
-        await Task.Delay(50);
+        await Task.Delay(200);
         await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { value = 3 }));
 
         var result = await _store.GetPreviousOutputAsync(watchId, blockId);
@@ -85,10 +87,12 @@ public class BlockStateStoreTests : TestBase
         var watchId = "watch-1";
         var blockId = "block-1";
 
+        // Delays required: GetHistoryAsync orders by DateTime.UtcNow-based Timestamp,
+        // so each save must have a distinct timestamp. 200ms ensures timer resolution safety.
         for (var i = 1; i <= 5; i++)
         {
             await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { value = i }));
-            await Task.Delay(50);
+            if (i < 5) await Task.Delay(200);
         }
 
         var history = await _store.GetHistoryAsync(watchId, blockId);
@@ -107,10 +111,12 @@ public class BlockStateStoreTests : TestBase
         var watchId = "watch-1";
         var blockId = "block-1";
 
+        // Delays required: GetHistoryAsync orders by DateTime.UtcNow-based Timestamp,
+        // so each save must have a distinct timestamp. 200ms ensures timer resolution safety.
         for (var i = 1; i <= 20; i++)
         {
             await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { value = i }));
-            await Task.Delay(10);
+            if (i < 20) await Task.Delay(200);
         }
 
         var history = await _store.GetHistoryAsync(watchId, blockId, maxResults: 5);

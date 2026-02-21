@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Extraction;
@@ -38,7 +37,7 @@ public class ExtractSchemaBlockTests : TestBase
             }
         };
 
-        var pipeline = CreatePipeline("extract-1", config);
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("extract-1", "ExtractSchema", config);
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("extract-1")
             .WithInput("html", (object)inputHtml)
@@ -78,7 +77,7 @@ public class ExtractSchemaBlockTests : TestBase
             }
         };
 
-        var pipeline = CreatePipeline("extract-1", config);
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("extract-1", "ExtractSchema", config);
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("extract-1")
             .WithInput("html", (object)inputHtml)
@@ -100,7 +99,7 @@ public class ExtractSchemaBlockTests : TestBase
     {
         const string inputHtml = "<html><body>Hello</body></html>";
 
-        var pipeline = CreatePipeline("extract-1", new { });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("extract-1", "ExtractSchema", new { });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("extract-1")
             .WithInput("html", (object)inputHtml)
@@ -126,7 +125,7 @@ public class ExtractSchemaBlockTests : TestBase
             }
         };
 
-        var pipeline = CreatePipeline("extract-1", config);
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("extract-1", "ExtractSchema", config);
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("extract-1")
             .WithInput("html", (object)"")
@@ -165,19 +164,4 @@ public class ExtractSchemaBlockTests : TestBase
         _sut.OutputPorts[0].Type.ShouldBe(PortType.ExtractedObjects);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "ExtractSchema",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

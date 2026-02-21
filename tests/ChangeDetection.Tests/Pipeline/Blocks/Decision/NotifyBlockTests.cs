@@ -15,7 +15,7 @@ public class NotifyBlockTests : TestBase
     public async Task ExecuteAsync_SignalTrue_SendsNotification()
     {
         var signal = JsonSerializer.SerializeToElement(new { signal = true });
-        var pipeline = CreatePipeline("notify-1", new { channel = "email", template = "Price dropped!" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("notify-1", "Notify", new { channel = "email", template = "Price dropped!" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("notify-1")
@@ -111,19 +111,4 @@ public class NotifyBlockTests : TestBase
         _sut.OutputPorts[0].Type.ShouldBe(PortType.Notification);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Notify",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

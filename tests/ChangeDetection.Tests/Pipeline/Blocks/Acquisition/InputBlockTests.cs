@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
 using Shouldly;
@@ -14,7 +13,7 @@ public class InputBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_WithValidConfig_ReturnsUrl()
     {
-        var pipeline = CreatePipeline("input-1", new { url = "https://example.com" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("input-1", "Input", new { url = "https://example.com" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("input-1")
             .WithPipelineDefinition(pipeline)
@@ -31,7 +30,7 @@ public class InputBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_WithMissingUrl_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("input-1", new { checkInterval = "6h" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("input-1", "Input", new { checkInterval = "6h" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("input-1")
             .WithPipelineDefinition(pipeline)
@@ -47,7 +46,7 @@ public class InputBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_WithMetadata_IncludesInOutput()
     {
-        var pipeline = CreatePipeline("input-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("input-1", "Input", new
         {
             url = "https://example.com",
             checkInterval = "6h",
@@ -83,12 +82,7 @@ public class InputBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_WithNoConfig_ReturnsFailed()
     {
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks = [new BlockDefinition { Id = "input-1", Type = "Input" }],
-            Connections = []
-        };
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("input-1", "Input");
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("input-1")
             .WithPipelineDefinition(pipeline)
@@ -126,18 +120,4 @@ public class InputBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Input",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

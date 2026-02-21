@@ -1,7 +1,6 @@
 using System.Text.Json;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Advanced;
-using NSubstitute;
 using Shouldly;
 using TUnit.Core;
 
@@ -15,7 +14,7 @@ public class ThrottleBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoPreviousState_PassesThrough()
     {
-        var pipeline = CreatePipeline("throttle-1", new { cooldown = "1h" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("throttle-1", "Throttle", new { cooldown = "1h" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("throttle-1")
@@ -33,7 +32,7 @@ public class ThrottleBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_CooldownNotElapsed_ReturnsSkip()
     {
-        var pipeline = CreatePipeline("throttle-1", new { cooldown = "1h" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("throttle-1", "Throttle", new { cooldown = "1h" });
 
         // Last pass-through was 30 minutes ago
         var previousOutput = JsonSerializer.SerializeToElement(new
@@ -57,7 +56,7 @@ public class ThrottleBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_CooldownElapsed_PassesThrough()
     {
-        var pipeline = CreatePipeline("throttle-1", new { cooldown = "1h" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("throttle-1", "Throttle", new { cooldown = "1h" });
 
         // Last pass-through was 2 hours ago
         var previousOutput = JsonSerializer.SerializeToElement(new
@@ -82,7 +81,7 @@ public class ThrottleBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MissingDataInput_ReturnsFailed()
     {
-        var pipeline = CreatePipeline("throttle-1", new { cooldown = "1h" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("throttle-1", "Throttle", new { cooldown = "1h" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("throttle-1")
@@ -98,7 +97,7 @@ public class ThrottleBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoCooldownConfig_DefaultsToOneHour()
     {
-        var pipeline = CreatePipeline("throttle-1", new { });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("throttle-1", "Throttle", new { });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("throttle-1")
@@ -133,18 +132,4 @@ public class ThrottleBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Throttle",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

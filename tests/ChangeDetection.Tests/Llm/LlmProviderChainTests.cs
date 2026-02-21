@@ -111,6 +111,7 @@ public class LlmProviderChainTests
         var result = await sut.ExecuteAsync("Test prompt");
 
         // Assert
+        // Mock responds instantly so DurationMs may be 0; verify timing was recorded (not negative/unset)
         result.DurationMs.ShouldBeGreaterThanOrEqualTo(0);
     }
 }

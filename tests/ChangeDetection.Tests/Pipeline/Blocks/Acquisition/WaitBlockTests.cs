@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
 using Microsoft.Playwright;
@@ -18,7 +17,7 @@ public class WaitBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("wait-1", new { forTime = 10 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("wait-1", "Wait", new { forTime = 10 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("wait-1")
@@ -54,7 +53,7 @@ public class WaitBlockTests : TestBase
         mockPage.WaitForSelectorAsync(Arg.Any<string>(), Arg.Any<PageWaitForSelectorOptions>())
             .Returns((IElementHandle?)null);
 
-        var pipeline = CreatePipeline("wait-1", new { forSelector = "#content" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("wait-1", "Wait", new { forSelector = "#content" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("wait-1")
@@ -91,19 +90,4 @@ public class WaitBlockTests : TestBase
         _sut.CriticalityTier.ShouldBe(BlockCriticalityTier.Infrastructure);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Wait",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

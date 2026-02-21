@@ -20,7 +20,7 @@ public class ListDiffBlockTests : TestBase
             new { url = "https://example.com/2", title = "Item 2" }
         });
 
-        var pipeline = CreatePipeline("list-1", new { identityKey = "url", mode = "all_changes" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("list-1", "ListDiff", new { identityKey = "url", mode = "all_changes" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("list-1")
             .WithInput("data", items)
@@ -50,7 +50,7 @@ public class ListDiffBlockTests : TestBase
             new { url = "https://example.com/2", title = "Item 2" }
         });
 
-        var pipeline = CreatePipeline("list-1", new { identityKey = "url", mode = "all_changes" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("list-1", "ListDiff", new { identityKey = "url", mode = "all_changes" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("list-1")
             .WithInput("data", currentItems)
@@ -85,7 +85,7 @@ public class ListDiffBlockTests : TestBase
             new { url = "https://example.com/1", title = "Item 1" }
         });
 
-        var pipeline = CreatePipeline("list-1", new { identityKey = "url", mode = "all_changes" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("list-1", "ListDiff", new { identityKey = "url", mode = "all_changes" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("list-1")
             .WithInput("data", currentItems)
@@ -120,7 +120,7 @@ public class ListDiffBlockTests : TestBase
             new { url = "https://example.com/3", title = "Item 3" }
         });
 
-        var pipeline = CreatePipeline("list-1", new { identityKey = "url", mode = "additions_only" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("list-1", "ListDiff", new { identityKey = "url", mode = "additions_only" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("list-1")
             .WithInput("data", currentItems)
@@ -170,18 +170,4 @@ public class ListDiffBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "ListDiff",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

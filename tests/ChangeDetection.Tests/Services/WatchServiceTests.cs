@@ -94,6 +94,24 @@ public class ServerWatchServiceTests
         // Assert
         result.ShouldNotBeNull();
         result.Id.ShouldBe(watchId);
+        await _watchRepo.Received(1).GetByIdAsync(
+            Arg.Is<Guid>(id => id == watchId), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetByIdAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        var watchId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _watchRepo.GetByIdAsync(watchId, token).Returns((WatchedSite?)null);
+
+        // Act
+        await _sut.GetByIdAsync(watchId, token);
+
+        // Assert
+        await _watchRepo.Received(1).GetByIdAsync(watchId, token);
     }
 
     [Test]
@@ -108,6 +126,8 @@ public class ServerWatchServiceTests
 
         // Assert
         result.ShouldBeNull();
+        await _watchRepo.Received(1).GetByIdAsync(
+            Arg.Is<Guid>(id => id == watchId), Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -126,6 +146,22 @@ public class ServerWatchServiceTests
 
         // Assert
         result.Count().ShouldBe(2);
+        await _watchRepo.Received(1).GetAllAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetAllAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _watchRepo.GetAllAsync(token).Returns(Enumerable.Empty<WatchedSite>());
+
+        // Act
+        await _sut.GetAllAsync(token);
+
+        // Assert
+        await _watchRepo.Received(1).GetAllAsync(token);
     }
 
     [Test]
@@ -139,6 +175,15 @@ public class ServerWatchServiceTests
             CheckInterval = TimeSpan.FromHours(1)
         };
 
+        // Capture the WatchedSite passed to InsertAsync
+        WatchedSite? capturedWatch = null;
+        await _watchRepo.InsertAsync(
+            Arg.Do<WatchedSite>(w => capturedWatch = w), Arg.Any<CancellationToken>());
+
+        // Stub CheckForChangesAsync dependencies (called after insert)
+        _watchRepo.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((WatchedSite?)null); // Return null so initial check short-circuits
+
         // Act
         var result = await _sut.CreateWatchAsync(request);
 
@@ -147,6 +192,17 @@ public class ServerWatchServiceTests
         result.Url.ShouldBe("https://example.com");
         result.Name.ShouldBe("Test Watch");
         await _watchRepo.Received(1).InsertAsync(Arg.Any<WatchedSite>(), Arg.Any<CancellationToken>());
+
+        // Verify computed properties on the captured entity
+        capturedWatch.ShouldNotBeNull();
+        capturedWatch!.Id.ShouldNotBe(Guid.Empty);
+        capturedWatch.CheckInterval.ShouldBe(TimeSpan.FromHours(1));
+        capturedWatch.ScheduleSettings.ShouldNotBeNull();
+        capturedWatch.ScheduleSettings.Mode.ShouldBe(CheckScheduleMode.Fixed);
+        capturedWatch.ScheduleSettings.BaseInterval.ShouldBe(TimeSpan.FromHours(1));
+        capturedWatch.Tags.ShouldBeEmpty();
+        capturedWatch.IgnorePatterns.ShouldBeEmpty();
+        capturedWatch.FetchSettings.ShouldNotBeNull();
     }
 
     [Test]
@@ -164,11 +220,25 @@ public class ServerWatchServiceTests
             }
         };
 
+        // Capture the WatchedSite passed to InsertAsync
+        WatchedSite? capturedWatch = null;
+        await _watchRepo.InsertAsync(
+            Arg.Do<WatchedSite>(w => capturedWatch = w), Arg.Any<CancellationToken>());
+
+        // Stub CheckForChangesAsync dependencies
+        _watchRepo.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((WatchedSite?)null);
+
         // Act
         var result = await _sut.CreateWatchAsync(request);
 
         // Assert
         result.FetchSettings.UseJavaScript.ShouldBeTrue();
+
+        // Verify the persisted entity received the explicit FetchSettings
+        capturedWatch.ShouldNotBeNull();
+        capturedWatch!.FetchSettings.UseJavaScript.ShouldBeTrue();
+        capturedWatch.FetchSettings.TimeoutSeconds.ShouldBe(60);
     }
 
     [Test]
@@ -176,12 +246,16 @@ public class ServerWatchServiceTests
     {
         // Arrange
         var watch = new WatchedSite { Url = "https://example.com" };
+        var beforeUpdate = watch.UpdatedAt;
 
         // Act
         await _sut.UpdateWatchAsync(watch);
 
-        // Assert
-        await _watchRepo.Received(1).UpdateAsync(watch, Arg.Any<CancellationToken>());
+        // Assert — verifies the exact same watch object was passed through
+        await _watchRepo.Received(1).UpdateAsync(
+            Arg.Is<WatchedSite>(w => w == watch), Arg.Any<CancellationToken>());
+        // Verify UpdatedAt was set by the service
+        watch.UpdatedAt.ShouldBeGreaterThan(beforeUpdate);
     }
 
     [Test]
@@ -189,12 +263,22 @@ public class ServerWatchServiceTests
     {
         // Arrange
         var watchId = Guid.NewGuid();
+        _snapshotRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(Enumerable.Empty<ChangeSnapshot>());
+        _mockDatabase.BeginTrans().Returns(true);
+        _mockDatabase.Commit().Returns(true);
 
         // Act
         await _sut.DeleteWatchAsync(watchId);
 
-        // Assert
-        await _watchRepo.Received(1).DeleteAsync(watchId, Arg.Any<CancellationToken>());
+        // Assert — verify the exact watchId was forwarded to delete
+        await _watchRepo.Received(1).DeleteAsync(
+            Arg.Is<Guid>(id => id == watchId), Arg.Any<CancellationToken>());
+        // Verify cascading deletes also happened
+        await _snapshotRepo.Received(1).DeleteManyAsync(
+            Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>());
+        await _eventRepo.Received(1).DeleteManyAsync(
+            Arg.Any<System.Linq.Expressions.Expression<Func<ChangeEvent, bool>>>(), Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -291,6 +375,13 @@ public class ServerWatchServiceTests
             LinesAdded = 5, 
             LinesRemoved = 2 
         });
+        _diffService.GenerateSummary(Arg.Any<DiffResult>()).Returns("5 lines added, 2 removed");
+        _diffService.GenerateDiffHtml(Arg.Any<DiffResult>()).Returns("<diff>html</diff>");
+
+        // Capture the ChangeEvent passed to InsertAsync
+        ChangeEvent? capturedEvent = null;
+        await _eventRepo.InsertAsync(
+            Arg.Do<ChangeEvent>(e => capturedEvent = e), Arg.Any<CancellationToken>());
 
         // Act
         var result = await _sut.CheckForChangesAsync(watchId);
@@ -298,6 +389,16 @@ public class ServerWatchServiceTests
         // Assert
         await _eventRepo.Received(1).InsertAsync(Arg.Any<ChangeEvent>(), Arg.Any<CancellationToken>());
         result.ShouldNotBeNull();
+
+        // Verify captured ChangeEvent properties
+        capturedEvent.ShouldNotBeNull();
+        capturedEvent!.WatchedSiteId.ShouldBe(watchId);
+        capturedEvent.PreviousSnapshotId.ShouldBe(previousSnapshot.Id);
+        capturedEvent.LinesAdded.ShouldBe(5);
+        capturedEvent.LinesRemoved.ShouldBe(2);
+        capturedEvent.DiffSummary.ShouldBe("5 lines added, 2 removed");
+        capturedEvent.DiffHtml.ShouldBe("<diff>html</diff>");
+        capturedEvent.ChangeType.ShouldNotBe(default);
     }
 
     [Test]

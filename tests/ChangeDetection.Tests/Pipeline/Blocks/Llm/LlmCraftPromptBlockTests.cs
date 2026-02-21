@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Llm;
@@ -21,21 +20,6 @@ public class LlmCraftPromptBlockTests : TestBase
         return (llmChain, sp);
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "LlmCraftPrompt",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
-
     [Test]
     public async Task ExecuteAsync_WithInstructions_GeneratesPrompt()
     {
@@ -50,7 +34,7 @@ public class LlmCraftPromptBlockTests : TestBase
             .WithBlockInstanceId("llm-craft-1")
             .WithInput("data", new { topic = "cybersecurity", articles = new[] { "Breach at Company X" } })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-craft-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-craft-1", "LlmCraftPrompt", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -76,7 +60,7 @@ public class LlmCraftPromptBlockTests : TestBase
             .WithBlockInstanceId("llm-craft-1")
             .WithInput("data", new { value = "test" })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-craft-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-craft-1", "LlmCraftPrompt", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -104,7 +88,7 @@ public class LlmCraftPromptBlockTests : TestBase
             .WithBlockInstanceId("llm-craft-1")
             .WithInput("data", new { value = 1 })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-craft-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-craft-1", "LlmCraftPrompt", config))
             .Build();
 
         await _sut.ExecuteAsync(context);
@@ -122,7 +106,7 @@ public class LlmCraftPromptBlockTests : TestBase
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("llm-craft-1")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-craft-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-craft-1", "LlmCraftPrompt", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -141,7 +125,7 @@ public class LlmCraftPromptBlockTests : TestBase
             .WithBlockInstanceId("llm-craft-1")
             .WithInput("data", new { value = "test" })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-craft-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-craft-1", "LlmCraftPrompt", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);

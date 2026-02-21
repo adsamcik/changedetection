@@ -21,21 +21,6 @@ public class LlmExtractBlockTests : TestBase
         return (llmChain, sp);
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "LlmExtract",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
-
     [Test]
     public async Task ExecuteAsync_WithValidHtml_ExtractsData()
     {
@@ -53,7 +38,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)"<html><body><span>$29.99</span></body></html>")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -80,7 +65,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)"<html><body>Content</body></html>")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -103,7 +88,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)"<html><body>Content</body></html>")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -136,7 +121,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)html)
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         await _sut.ExecuteAsync(context);
@@ -166,7 +151,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)"<html><body>Content</body></html>")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         await _sut.ExecuteAsync(context);
@@ -184,7 +169,7 @@ public class LlmExtractBlockTests : TestBase
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("llm-extract-1")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -203,7 +188,7 @@ public class LlmExtractBlockTests : TestBase
             .WithBlockInstanceId("llm-extract-1")
             .WithInput("html", (object)"<html><body>Content</body></html>")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-extract-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-extract-1", "LlmExtract", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);

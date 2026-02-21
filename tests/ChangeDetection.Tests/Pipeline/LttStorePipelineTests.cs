@@ -185,8 +185,9 @@ public class LttStorePipelineTests : TestBase
 
         result.ContentType.ShouldBe(ContentType.PriceInfo);
         result.UserIntent.ShouldNotBeNullOrWhiteSpace();
-        result.IdentifiedSections.ShouldNotBeEmpty();
+        result.IdentifiedSections.Count.ShouldBeGreaterThanOrEqualTo(2);
         result.IdentifiedSections.Any(s => s.IsLikelyTarget).ShouldBeTrue();
+        result.IdentifiedSections.ShouldContain(s => s.SuggestedSelector == ".product__price");
         result.RecommendedApproach.ShouldBe(MonitoringApproach.MultipleSelectors);
     }
 
@@ -274,8 +275,11 @@ public class LttStorePipelineTests : TestBase
 
         schema.ItemSelector.ShouldBe(".product-card");
         schema.SampleItemCount.ShouldBe(24);
+        schema.Fields.Count.ShouldBeGreaterThanOrEqualTo(3);
         schema.Fields.ShouldContain(f => f.Name == "Name" && f.IsIdentityField);
         schema.Fields.ShouldContain(f => f.Name == "Price");
+        schema.Fields.ShouldContain(f => f.Name == "Rating");
+        schema.InferredIdentityFields.ShouldContain("Name");
 
         await Task.CompletedTask;
     }
@@ -324,8 +328,10 @@ public class LttStorePipelineTests : TestBase
         // Assertions on content analysis
         analysis.ContentType.ShouldBe(ContentType.PriceInfo);
         analysis.UserIntent.ShouldNotBeNullOrWhiteSpace();
-        analysis.IdentifiedSections.ShouldNotBeEmpty();
+        analysis.IdentifiedSections.Count.ShouldBeGreaterThanOrEqualTo(2);
         analysis.IdentifiedSections.Any(s => s.IsLikelyTarget).ShouldBeTrue();
+        analysis.IdentifiedSections.ShouldContain(s => s.Name == "Price" && s.IsLikelyTarget);
+        analysis.IdentifiedSections.ShouldContain(s => s.Name == "Stock Status" && s.IsLikelyTarget);
     }
 
     #endregion

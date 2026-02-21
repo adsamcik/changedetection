@@ -16,7 +16,7 @@ public class NumericDeltaBlockTests : TestBase
     {
         var data = JsonSerializer.SerializeToElement(new { price = 100m });
 
-        var pipeline = CreatePipeline("numeric-1", new { field = "price" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("numeric-1", "NumericDelta", new { field = "price" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("numeric-1")
             .WithInput("data", data)
@@ -44,7 +44,7 @@ public class NumericDeltaBlockTests : TestBase
             changed = false
         });
 
-        var pipeline = CreatePipeline("numeric-1", new { field = "price" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("numeric-1", "NumericDelta", new { field = "price" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("numeric-1")
             .WithInput("data", currentData)
@@ -78,7 +78,7 @@ public class NumericDeltaBlockTests : TestBase
             changed = false
         });
 
-        var pipeline = CreatePipeline("numeric-1", new { field = "price" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("numeric-1", "NumericDelta", new { field = "price" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("numeric-1")
             .WithInput("data", currentData)
@@ -110,7 +110,7 @@ public class NumericDeltaBlockTests : TestBase
             changed = false
         });
 
-        var pipeline = CreatePipeline("numeric-1", new { field = "price" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("numeric-1", "NumericDelta", new { field = "price" });
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("numeric-1")
             .WithInput("data", currentData)
@@ -154,18 +154,4 @@ public class NumericDeltaBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "NumericDelta",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

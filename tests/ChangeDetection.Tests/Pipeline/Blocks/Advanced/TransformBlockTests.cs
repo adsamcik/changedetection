@@ -14,7 +14,7 @@ public class TransformBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_RenameFields_RenamesCorrectly()
     {
-        var pipeline = CreatePipeline("transform-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("transform-1", "Transform", new
         {
             rename = new Dictionary<string, string> { ["old_name"] = "new_name" }
         });
@@ -37,7 +37,7 @@ public class TransformBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_DropFields_RemovesFields()
     {
-        var pipeline = CreatePipeline("transform-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("transform-1", "Transform", new
         {
             drop = new[] { "unwanted" }
         });
@@ -58,7 +58,7 @@ public class TransformBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_ComputeFields_PerformsTemplateSubstitution()
     {
-        var pipeline = CreatePipeline("transform-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("transform-1", "Transform", new
         {
             compute = new Dictionary<string, string> { ["fullName"] = "${firstName} ${lastName}" }
         });
@@ -109,19 +109,4 @@ public class TransformBlockTests : TestBase
         _sut.CriticalityTier.ShouldBe(BlockCriticalityTier.Analysis);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Transform",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

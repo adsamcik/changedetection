@@ -122,4 +122,27 @@ public class BlockContextBuilder
         IsFirstRun = _isFirstRun,
         PipelineDefinition = _pipelineDefinition
     };
+
+    /// <summary>
+    /// Creates a <see cref="PipelineDefinition"/> containing a single block.
+    /// </summary>
+    public static PipelineDefinition CreateSingleBlockPipeline(string blockId, string blockType, object? config = null) => new()
+    {
+        SchemaVersion = 1,
+        Blocks =
+        [
+            new BlockDefinition
+            {
+                Id = blockId,
+                Type = blockType,
+                Config = config switch
+                {
+                    JsonElement je => je,
+                    not null => JsonSerializer.SerializeToElement(config),
+                    _ => default
+                }
+            }
+        ],
+        Connections = []
+    };
 }

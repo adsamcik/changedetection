@@ -71,6 +71,22 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
     }
 
     [Test]
+    public async Task EnqueueProcessAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.EnqueueAsync(Arg.Any<PipelineQueueItem>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => callInfo.Arg<PipelineQueueItem>());
+
+        // Act
+        await _sut.EnqueueProcessAsync(Guid.NewGuid(), Guid.NewGuid(), "test", ct: token);
+
+        // Assert
+        await _repository.Received(1).EnqueueAsync(Arg.Any<PipelineQueueItem>(), token);
+    }
+
+    [Test]
     public async Task EnqueueProcessAsync_WithOptions_SerializesOptionsToJson()
     {
         // Arrange
@@ -181,6 +197,12 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
         // Assert
         result.Success.ShouldBeTrue();
         result.ItemId.ShouldNotBeNull();
+        // Verify settings from AppSettings are forwarded to the repository
+        await _repository.Received(1).TryEnqueueWithLimitAsync(
+            Arg.Is<PipelineQueueItem>(item => item.SessionId == sessionId && item.OwnerId == ownerId),
+            Arg.Is<int>(max => max == _settings.MaxPendingItemsPerUser),
+            Arg.Is<int>(max => max == _settings.MaxConcurrentItemsPerUser),
+            Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -220,6 +242,24 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.ShouldBeTrue();
+        await _repository.Received(1).TryCancelIfPendingAsync(
+            Arg.Is<Guid>(id => id == itemId), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task TryCancelAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.TryCancelIfPendingAsync(itemId, token).Returns(true);
+
+        // Act
+        await _sut.TryCancelAsync(itemId, token);
+
+        // Assert
+        await _repository.Received(1).TryCancelIfPendingAsync(itemId, token);
     }
 
     [Test]
@@ -234,6 +274,8 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.ShouldBeFalse();
+        await _repository.Received(1).TryCancelIfPendingAsync(
+            Arg.Is<Guid>(id => id == itemId), Arg.Any<CancellationToken>());
     }
 
     #endregion
@@ -253,19 +295,40 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.ShouldNotBeNull();
+        await _repository.Received(1).GetByIdAsync(
+            Arg.Is<Guid>(id => id == itemId), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetItemAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.GetByIdAsync(itemId, token).Returns((PipelineQueueItem?)null);
+
+        // Act
+        await _sut.GetItemAsync(itemId, token);
+
+        // Assert
+        await _repository.Received(1).GetByIdAsync(itemId, token);
     }
 
     [Test]
     public async Task GetItemAsync_NonExistent_ReturnsNull()
     {
         // Arrange
-        _repository.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns((PipelineQueueItem?)null);
+        var itemId = Guid.NewGuid();
+        _repository.GetByIdAsync(itemId, Arg.Any<CancellationToken>()).Returns((PipelineQueueItem?)null);
 
         // Act
-        var result = await _sut.GetItemAsync(Guid.NewGuid());
+        var result = await _sut.GetItemAsync(itemId);
 
         // Assert
         result.ShouldBeNull();
+        await _repository.Received(1).GetByIdAsync(
+            Arg.Is<Guid>(id => id == itemId), Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -282,6 +345,24 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
         // Assert
         result.ShouldNotBeNull();
         result.SessionId.ShouldBe(sessionId);
+        await _repository.Received(1).GetBySessionIdAsync(
+            Arg.Is<Guid>(id => id == sessionId), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetItemBySessionAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.GetBySessionIdAsync(sessionId, token).Returns((PipelineQueueItem?)null);
+
+        // Act
+        await _sut.GetItemBySessionAsync(sessionId, token);
+
+        // Assert
+        await _repository.Received(1).GetBySessionIdAsync(sessionId, token);
     }
 
     [Test]
@@ -295,6 +376,24 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.ShouldBe(5);
+        await _repository.Received(1).GetCountByStatusAsync(
+            Arg.Is<PipelineQueueStatus>(s => s == PipelineQueueStatus.Pending),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetQueueDepthAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.GetCountByStatusAsync(PipelineQueueStatus.Pending, token).Returns(0);
+
+        // Act
+        await _sut.GetQueueDepthAsync(token);
+
+        // Assert
+        await _repository.Received(1).GetCountByStatusAsync(PipelineQueueStatus.Pending, token);
     }
 
     #endregion
@@ -504,6 +603,22 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.Count.ShouldBe(1);
+        await _repository.Received(1).GetDeadLetterItemsAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task GetDeadLetterItemsAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.GetDeadLetterItemsAsync(token).Returns(new List<PipelineQueueItem>());
+
+        // Act
+        await _sut.GetDeadLetterItemsAsync(token);
+
+        // Assert
+        await _repository.Received(1).GetDeadLetterItemsAsync(token);
     }
 
     [Test]
@@ -518,7 +633,24 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
 
         // Assert
         result.ShouldBeTrue();
-        await _repository.Received(1).DeleteDeadLetterItemAsync(itemId, Arg.Any<CancellationToken>());
+        await _repository.Received(1).DeleteDeadLetterItemAsync(
+            Arg.Is<Guid>(id => id == itemId), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task DeleteDeadLetterItemAsync_PropagatesCancellationToken()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _repository.DeleteDeadLetterItemAsync(itemId, token).Returns(true);
+
+        // Act
+        await _sut.DeleteDeadLetterItemAsync(itemId, token);
+
+        // Assert
+        await _repository.Received(1).DeleteDeadLetterItemAsync(itemId, token);
     }
 
     #endregion
@@ -598,6 +730,13 @@ public class PipelineQueueServiceTests : TestBase, IDisposable
         result.Reason.ShouldBeNull();
         result.CurrentPending.ShouldBe(5);
         result.CurrentProcessing.ShouldBe(1);
+        result.MaxPending.ShouldBe(_settings.MaxPendingItemsPerUser);
+        result.MaxConcurrent.ShouldBe(_settings.MaxConcurrentItemsPerUser);
+        // Verify the exact ownerId was forwarded
+        await _repository.Received(1).GetPendingCountByOwnerAsync(
+            Arg.Is<Guid>(id => id == ownerId), Arg.Any<CancellationToken>());
+        await _repository.Received(1).GetProcessingCountByOwnerAsync(
+            Arg.Is<Guid>(id => id == ownerId), Arg.Any<CancellationToken>());
     }
 
     [Test]

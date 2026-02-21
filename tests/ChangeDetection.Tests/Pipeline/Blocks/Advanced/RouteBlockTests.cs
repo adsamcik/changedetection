@@ -14,7 +14,7 @@ public class RouteBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_MatchingEqualsCondition_RoutesCorrectly()
     {
-        var pipeline = CreatePipeline("route-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("route-1", "Route", new
         {
             conditions = new[]
             {
@@ -39,7 +39,7 @@ public class RouteBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoMatchingCondition_RoutesToDefault()
     {
-        var pipeline = CreatePipeline("route-1", new
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("route-1", "Route", new
         {
             conditions = new[]
             {
@@ -70,12 +70,7 @@ public class RouteBlockTests : TestBase
             }
         });
 
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks = [new BlockDefinition { Id = "route-1", Type = "Route", Config = config }],
-            Connections = []
-        };
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("route-1", "Route", config);
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("route-1")
@@ -124,18 +119,4 @@ public class RouteBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Route",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

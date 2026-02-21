@@ -129,20 +129,6 @@ public class ChangeDtoTests
 public class LlmDtoTests
 {
     [Test]
-    public async Task ProcessInputRequest_CanSetInput()
-    {
-        // Arrange & Act
-        var request = new ProcessInputRequest
-        {
-            Input = "Watch example.com"
-        };
-
-        // Assert
-        request.Input.ShouldBe("Watch example.com");
-        await Task.CompletedTask;
-    }
-
-    [Test]
     public async Task ProcessInputResponse_HasDefaultValues()
     {
         // Act
@@ -170,23 +156,6 @@ public class LlmDtoTests
         await Task.CompletedTask;
     }
 
-    [Test]
-    public async Task SuggestionChipDto_CanSetProperties()
-    {
-        // Arrange & Act
-        var chip = new SuggestionChipDto
-        {
-            Label = "Add selector",
-            Value = ".content",
-            Type = "SetValue"
-        };
-
-        // Assert
-        chip.Label.ShouldBe("Add selector");
-        chip.Value.ShouldBe(".content");
-        chip.Type.ShouldBe("SetValue");
-        await Task.CompletedTask;
-    }
 }
 
 public class LlmProviderDtoTests

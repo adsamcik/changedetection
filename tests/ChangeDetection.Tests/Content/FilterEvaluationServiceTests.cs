@@ -505,4 +505,114 @@ public class FilterEvaluationServiceTests
         // Assert
         result.FilteredObjects.Count.ShouldBe(3);
     }
+
+    [Test]
+    public async Task EvaluateObjectAgainstRules_StopProcessing_HaltsAfterFirstMatch()
+    {
+        // Arrange
+        var diff = new ObjectDiffResult
+        {
+            AddedItems = [CreateObject("AI Workshop")]
+        };
+
+        var rules = new[]
+        {
+            new FilterRule
+            {
+                Name = "First Rule",
+                Priority = 10,
+                Conditions = [new FilterCondition { FieldName = "Title", Operator = FilterOperator.Contains, Value = "AI" }],
+                Actions = [new FilterAction { Type = FilterActionType.AddTag, Parameters = new Dictionary<string, string> { ["tag"] = "first" } }],
+                IsEnabled = true,
+                StopProcessing = true
+            },
+            new FilterRule
+            {
+                Name = "Second Rule",
+                Priority = 1,
+                Conditions = [new FilterCondition { FieldName = "Title", Operator = FilterOperator.Contains, Value = "Workshop" }],
+                Actions = [new FilterAction { Type = FilterActionType.AddTag, Parameters = new Dictionary<string, string> { ["tag"] = "second" } }],
+                IsEnabled = true
+            }
+        };
+
+        // Act
+        var result = await _sut.EvaluateAsync(diff, rules);
+
+        // Assert
+        result.TagsToAdd.ShouldContain("first");
+        result.TagsToAdd.ShouldNotContain("second");
+    }
+
+    [Test]
+    public async Task EvaluateCondition_Negate_InvertsResult()
+    {
+        // Arrange
+        var diff = new ObjectDiffResult
+        {
+            AddedItems =
+            [
+                CreateObject("AI Workshop"),
+                CreateObject("Database Talk")
+            ]
+        };
+
+        var rules = new[]
+        {
+            new FilterRule
+            {
+                Name = "Not AI",
+                Conditions =
+                [
+                    new FilterCondition
+                    {
+                        FieldName = "Title",
+                        Operator = FilterOperator.Contains,
+                        Value = "AI",
+                        Negate = true
+                    }
+                ],
+                Logic = FilterLogic.And,
+                Actions = [new FilterAction { Type = FilterActionType.AddTag, Parameters = new Dictionary<string, string> { ["tag"] = "no-ai" } }],
+                IsEnabled = true
+            }
+        };
+
+        // Act
+        var result = await _sut.EvaluateAsync(diff, rules);
+
+        // Assert
+        result.FilteredObjects.Count.ShouldBe(1);
+        result.FilteredObjects[0].Object.Fields["Title"].ShouldBe("Database Talk");
+        result.TagsToAdd.ShouldContain("no-ai");
+    }
+
+    [Test]
+    public async Task EvaluateConditions_EmptyConditions_ReturnsFalse()
+    {
+        // Arrange
+        var diff = new ObjectDiffResult
+        {
+            AddedItems = [CreateObject("Test Item")]
+        };
+
+        var rules = new[]
+        {
+            new FilterRule
+            {
+                Name = "Empty Conditions Rule",
+                Conditions = [],
+                Logic = FilterLogic.And,
+                Actions = [new FilterAction { Type = FilterActionType.AddTag, Parameters = new Dictionary<string, string> { ["tag"] = "should-not-apply" } }],
+                IsEnabled = true
+            }
+        };
+
+        // Act
+        var result = await _sut.EvaluateAsync(diff, rules);
+
+        // Assert
+        result.FilteredObjects.ShouldBeEmpty();
+        result.TagsToAdd.ShouldNotContain("should-not-apply");
+    }
 }

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Llm;
@@ -20,21 +19,6 @@ public class LlmEvaluateBlockTests : TestBase
         sp.GetService(typeof(ILlmProviderChain)).Returns(llmChain);
         return (llmChain, sp);
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "LlmEvaluate",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 
     [Test]
     public async Task ExecuteAsync_WithValidData_ReturnsEvaluation()
@@ -58,7 +42,7 @@ public class LlmEvaluateBlockTests : TestBase
             .WithBlockInstanceId("llm-eval-1")
             .WithInput("data", inputData)
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-eval-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-eval-1", "LlmEvaluate", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -85,7 +69,7 @@ public class LlmEvaluateBlockTests : TestBase
             .WithBlockInstanceId("llm-eval-1")
             .WithInput("data", new { items = new[] { "a", "b" } })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-eval-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-eval-1", "LlmEvaluate", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -104,7 +88,7 @@ public class LlmEvaluateBlockTests : TestBase
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("llm-eval-1")
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-eval-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-eval-1", "LlmEvaluate", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);
@@ -131,7 +115,7 @@ public class LlmEvaluateBlockTests : TestBase
             .WithBlockInstanceId("llm-eval-1")
             .WithInput("data", new { value = 1 })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-eval-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-eval-1", "LlmEvaluate", config))
             .Build();
 
         await _sut.ExecuteAsync(context);
@@ -150,7 +134,7 @@ public class LlmEvaluateBlockTests : TestBase
             .WithBlockInstanceId("llm-eval-1")
             .WithInput("data", new { items = new[] { "test" } })
             .WithServices(sp)
-            .WithPipelineDefinition(CreatePipeline("llm-eval-1", config))
+            .WithPipelineDefinition(BlockContextBuilder.CreateSingleBlockPipeline("llm-eval-1", "LlmEvaluate", config))
             .Build();
 
         var result = await _sut.ExecuteAsync(context);

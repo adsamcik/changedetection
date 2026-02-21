@@ -485,6 +485,108 @@ public class AlertThresholdEvaluatorTests
 
     #endregion
 
+    #region Exact Boundary Tests
+
+    [Test]
+    public async Task Evaluate_DropsBelow_AtExactThreshold_DoesNotTrigger()
+    {
+        // Arrange
+        var field = CreateField("Price", new FieldAlertThreshold
+        {
+            ConditionType = AlertConditionType.DropsBelow,
+            Value = 100
+        });
+
+        // Act - price drops to exactly threshold (< is strict)
+        var result = _evaluator.Evaluate(field, 150, 100, null);
+
+        // Assert
+        result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Evaluate_RisesAbove_AtExactThreshold_DoesNotTrigger()
+    {
+        // Arrange
+        var field = CreateField("Price", new FieldAlertThreshold
+        {
+            ConditionType = AlertConditionType.RisesAbove,
+            Value = 100
+        });
+
+        // Act - price rises to exactly threshold (> is strict)
+        var result = _evaluator.Evaluate(field, 80, 100, null);
+
+        // Assert
+        result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Evaluate_TargetReached_AtExactThreshold_DoesTrigger()
+    {
+        // Arrange
+        var field = CreateField("Price", new FieldAlertThreshold
+        {
+            ConditionType = AlertConditionType.TargetReached,
+            Value = 50
+        });
+
+        // Act - price drops to exactly threshold (<= includes boundary)
+        var result = _evaluator.Evaluate(field, 80, 50, null);
+
+        // Assert
+        result.HasTriggeredAlerts.ShouldBeTrue();
+        result.TriggeredThresholds.ShouldHaveSingleItem();
+        result.TriggeredThresholds[0].Message.ShouldContain("reached target");
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region ReturnsToBaseline Tests
+
+    [Test]
+    public async Task Evaluate_ReturnsToBaseline_Triggers_WhenValueReturnsWithinThreshold()
+    {
+        // Arrange - threshold of 5% deviation from baseline
+        var field = CreateField("Price", new FieldAlertThreshold
+        {
+            ConditionType = AlertConditionType.ReturnsToBaseline,
+            Value = 5 // 5% tolerance
+        });
+
+        // Act - old value was 20% away from baseline 100, new value is 2% away
+        var result = _evaluator.Evaluate(field, 120, 102, baselineValue: 100);
+
+        // Assert
+        result.HasTriggeredAlerts.ShouldBeTrue();
+        result.TriggeredThresholds.ShouldHaveSingleItem();
+        result.TriggeredThresholds[0].Message.ShouldContain("returned to within");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Evaluate_ReturnsToBaseline_DoesNotTrigger_WhenStillFarFromBaseline()
+    {
+        // Arrange - threshold of 5% deviation from baseline
+        var field = CreateField("Price", new FieldAlertThreshold
+        {
+            ConditionType = AlertConditionType.ReturnsToBaseline,
+            Value = 5 // 5% tolerance
+        });
+
+        // Act - old value was 20% away, new value is still 15% away
+        var result = _evaluator.Evaluate(field, 120, 115, baselineValue: 100);
+
+        // Assert
+        result.HasTriggeredAlerts.ShouldBeFalse();
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
     #region Disabled Threshold Tests
 
     [Test]

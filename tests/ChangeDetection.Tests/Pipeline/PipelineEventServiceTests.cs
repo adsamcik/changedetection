@@ -116,8 +116,9 @@ public class PipelineEventServiceTests
         var run = await _service.StartRunAsync(Guid.NewGuid(), "test input", Guid.NewGuid());
         var watchId = Guid.NewGuid();
         
-        // Small delay to ensure positive duration
-        await Task.Delay(10);
+        // Delay required: DurationMs is computed from DateTime.UtcNow difference between
+        // StartRunAsync and CompleteRunAsync. 200ms ensures a measurably positive duration.
+        await Task.Delay(200);
 
         // Act
         await _service.CompleteRunAsync(run.Id, watchId, """{"url":"https://example.com"}""");
@@ -326,10 +327,12 @@ public class PipelineEventServiceTests
     {
         // Arrange
         var ownerId = Guid.NewGuid();
+        // Delays required: GetRecentRunsAsync orders by DateTime.UtcNow-based StartedAt,
+        // so each run must have a distinct timestamp. 200ms ensures timer resolution safety.
         await _service.StartRunAsync(Guid.NewGuid(), "first", ownerId);
-        await Task.Delay(10); // Ensure different timestamps
+        await Task.Delay(200);
         await _service.StartRunAsync(Guid.NewGuid(), "second", ownerId);
-        await Task.Delay(10);
+        await Task.Delay(200);
         await _service.StartRunAsync(Guid.NewGuid(), "third", ownerId);
 
         // Act
@@ -427,8 +430,9 @@ public class PipelineEventServiceTests
         var run = await _service.StartRunAsync(Guid.NewGuid(), "old run", ownerId);
         await _service.RecordEventAsync(run.Id, "Stage", "Event", "test");
 
-        // Use a very short timespan to make this run "old"
-        await Task.Delay(50);
+        // Delay required: CleanupOldRunsAsync compares StartedAt against DateTime.UtcNow,
+        // so the run must be older than the cleanup threshold. 200ms ensures reliable age gap.
+        await Task.Delay(200);
 
         // Act
         var deleted = await _service.CleanupOldRunsAsync(TimeSpan.FromMilliseconds(10));

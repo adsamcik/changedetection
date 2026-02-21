@@ -15,7 +15,7 @@ public class ConditionBlockTests : TestBase
     public async Task ExecuteAsync_LessThan_TrueWhenBelow()
     {
         var data = JsonSerializer.SerializeToElement(new { price = 400 });
-        var pipeline = CreatePipeline("cond-1", new { field = "price", @operator = "lessThan", value = 500 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "price", @operator = "lessThan", value = 500 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -36,7 +36,7 @@ public class ConditionBlockTests : TestBase
     public async Task ExecuteAsync_LessThan_FalseWhenAbove()
     {
         var data = JsonSerializer.SerializeToElement(new { price = 600 });
-        var pipeline = CreatePipeline("cond-1", new { field = "price", @operator = "lessThan", value = 500 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "price", @operator = "lessThan", value = 500 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -54,7 +54,7 @@ public class ConditionBlockTests : TestBase
     public async Task ExecuteAsync_Equals_TrueWhenMatch()
     {
         var data = JsonSerializer.SerializeToElement(new { changed = true });
-        var pipeline = CreatePipeline("cond-1", new { field = "changed", @operator = "equals", value = true });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "changed", @operator = "equals", value = true });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -72,7 +72,7 @@ public class ConditionBlockTests : TestBase
     public async Task ExecuteAsync_Contains_TrueWhenFound()
     {
         var data = JsonSerializer.SerializeToElement(new { title = "Big Summer Sale Event" });
-        var pipeline = CreatePipeline("cond-1", new { field = "title", @operator = "contains", value = "sale" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "title", @operator = "contains", value = "sale" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -90,7 +90,7 @@ public class ConditionBlockTests : TestBase
     public async Task ExecuteAsync_GreaterThan_ForArrayLength()
     {
         var data = JsonSerializer.SerializeToElement(new { added = new[] { "item1", "item2" } });
-        var pipeline = CreatePipeline("cond-1", new { field = "added.length", @operator = "greaterThan", value = 0 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "added.length", @operator = "greaterThan", value = 0 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -107,7 +107,7 @@ public class ConditionBlockTests : TestBase
     [Test]
     public async Task ExecuteAsync_NoInputs_SkipsBlock()
     {
-        var pipeline = CreatePipeline("cond-1", new { field = "price", @operator = "lessThan", value = 500 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("cond-1", "Condition", new { field = "price", @operator = "lessThan", value = 500 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("cond-1")
@@ -151,18 +151,4 @@ public class ConditionBlockTests : TestBase
         await Task.CompletedTask;
     }
 
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Condition",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

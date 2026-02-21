@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
 using Microsoft.Playwright;
@@ -18,7 +17,7 @@ public class ClickBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("click-1", new { selector = "button.submit" });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("click-1", "Click", new { selector = "button.submit" });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("click-1")
@@ -52,7 +51,7 @@ public class ClickBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("click-1", new { });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("click-1", "Click", new { });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("click-1")
@@ -72,7 +71,7 @@ public class ClickBlockTests : TestBase
     {
         var mockPage = Substitute.For<IPage>();
 
-        var pipeline = CreatePipeline("click-1", new { selector = "#btn", waitAfter = 10 });
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("click-1", "Click", new { selector = "#btn", waitAfter = 10 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("click-1")
@@ -93,19 +92,4 @@ public class ClickBlockTests : TestBase
         _sut.CriticalityTier.ShouldBe(BlockCriticalityTier.Infrastructure);
         await Task.CompletedTask;
     }
-
-    private static PipelineDefinition CreatePipeline(string blockId, object config) => new()
-    {
-        SchemaVersion = 1,
-        Blocks =
-        [
-            new BlockDefinition
-            {
-                Id = blockId,
-                Type = "Click",
-                Config = JsonSerializer.SerializeToElement(config)
-            }
-        ],
-        Connections = []
-    };
 }

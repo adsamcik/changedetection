@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
@@ -75,20 +74,7 @@ public class NavigateBlockTests : TestBase
             .FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html></html>" });
 
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks =
-            [
-                new BlockDefinition
-                {
-                    Id = "nav-1",
-                    Type = "Navigate",
-                    Config = JsonSerializer.SerializeToElement(new { useJavaScript = true, timeout = 60000 })
-                }
-            ],
-            Connections = []
-        };
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("nav-1", "Navigate", new { useJavaScript = true, timeout = 60000 });
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("nav-1")
