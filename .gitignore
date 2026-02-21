@@ -117,6 +117,12 @@ test-llm-config.local.json
 
 # Playwright
 playwright/.cache/
+**/screenshots/*.png
+
+# Temporary debug/inspection files
+*.csx
+golden-*.png
+wowhead-*.md
 
 # Publish output
 publish/
