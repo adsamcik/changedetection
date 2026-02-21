@@ -475,4 +475,10 @@ public class WatchConfiguration
     /// Filter rules derived from user intent (e.g., "notify when Prague appears").
     /// </summary>
     public List<FilterRule> FilterRules { get; set; } = [];
+    
+    /// <summary>
+    /// Keywords from user intent that already appear in the fetched content.
+    /// E.g., user asks "when tour comes to Switzerland" and "Switzerland" is already on the page.
+    /// </summary>
+    public List<string> ImmediateMatches { get; set; } = [];
 }

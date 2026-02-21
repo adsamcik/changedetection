@@ -239,4 +239,142 @@ public class FilterRuleGenerationTests
         // Assert
         actions.ShouldBeEmpty();
     }
+
+    #region Immediate Match Detection Tests
+
+    private static List<string> InvokeFindImmediateMatches(PipelineSession session)
+    {
+        var method = typeof(WatchSetupPipeline).GetMethod(
+            "FindImmediateMatches",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.ShouldNotBeNull("FindImmediateMatches method not found on WatchSetupPipeline");
+        return (List<string>)method.Invoke(null, [session])!;
+    }
+
+    [Test]
+    public async Task FindImmediateMatches_KeywordInContent_ReturnsMatch()
+    {
+        var session = new PipelineSession
+        {
+            ContentAnalysis = new ContentAnalysis
+            {
+                FilterKeywords = ["Switzerland"]
+            },
+            FetchedContent = new FetchedContent
+            {
+                Url = "https://example.com/tour",
+                IsSuccess = true,
+                TextContent = "Tour Dates: Jun 30 - Zurich, Switzerland. Jul 5 - Berlin, Germany."
+            }
+        };
+
+        var matches = InvokeFindImmediateMatches(session);
+
+        matches.ShouldNotBeEmpty();
+        matches.ShouldContain("Switzerland");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FindImmediateMatches_KeywordNotInContent_ReturnsEmpty()
+    {
+        var session = new PipelineSession
+        {
+            ContentAnalysis = new ContentAnalysis
+            {
+                FilterKeywords = ["Prague"]
+            },
+            FetchedContent = new FetchedContent
+            {
+                Url = "https://example.com/tour",
+                IsSuccess = true,
+                TextContent = "Tour Dates: Jun 30 - Zurich, Switzerland. Jul 5 - Berlin, Germany."
+            }
+        };
+
+        var matches = InvokeFindImmediateMatches(session);
+
+        matches.ShouldBeEmpty();
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FindImmediateMatches_CaseInsensitive_ReturnsMatch()
+    {
+        var session = new PipelineSession
+        {
+            ContentAnalysis = new ContentAnalysis
+            {
+                FilterKeywords = ["switzerland"]
+            },
+            FetchedContent = new FetchedContent
+            {
+                Url = "https://example.com/tour",
+                IsSuccess = true,
+                TextContent = "Tour: Zurich, SWITZERLAND"
+            }
+        };
+
+        var matches = InvokeFindImmediateMatches(session);
+
+        matches.ShouldNotBeEmpty();
+        matches.ShouldContain("switzerland");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FindImmediateMatches_NoKeywords_ReturnsEmpty()
+    {
+        var session = new PipelineSession
+        {
+            ContentAnalysis = new ContentAnalysis
+            {
+                FilterKeywords = []
+            },
+            FetchedContent = new FetchedContent
+            {
+                Url = "https://example.com/tour",
+                IsSuccess = true,
+                TextContent = "Some content"
+            }
+        };
+
+        var matches = InvokeFindImmediateMatches(session);
+
+        matches.ShouldBeEmpty();
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FindImmediateMatches_MultipleKeywords_ReturnsOnlyMatching()
+    {
+        var session = new PipelineSession
+        {
+            ContentAnalysis = new ContentAnalysis
+            {
+                FilterKeywords = ["Switzerland", "Prague", "Berlin"]
+            },
+            FetchedContent = new FetchedContent
+            {
+                Url = "https://example.com/tour",
+                IsSuccess = true,
+                TextContent = "Tour: Zurich, Switzerland. Berlin, Germany."
+            }
+        };
+
+        var matches = InvokeFindImmediateMatches(session);
+
+        matches.Count.ShouldBe(2);
+        matches.ShouldContain("Switzerland");
+        matches.ShouldContain("Berlin");
+        matches.ShouldNotContain("Prague");
+
+        await Task.CompletedTask;
+    }
+
+    #endregion
 }

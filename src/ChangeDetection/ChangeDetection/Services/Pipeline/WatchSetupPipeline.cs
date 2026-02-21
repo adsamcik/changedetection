@@ -1300,6 +1300,9 @@ public class WatchSetupPipeline(
 
         // Create filter rules from user intent
         config.FilterRules = BuildFilterRulesFromIntent(session);
+        
+        // Check if any filter keywords already match the fetched content
+        config.ImmediateMatches = FindImmediateMatches(session);
 
         var summary = BuildSummary(session, config);
 
@@ -1311,6 +1314,25 @@ public class WatchSetupPipeline(
             FinalConfiguration = config,
             Summary = summary
         };
+    }
+
+    /// <summary>
+    /// Checks if any filter keywords from user intent already appear in the fetched content.
+    /// Returns keywords that match, enabling the UI to tell the user immediately.
+    /// </summary>
+    private static List<string> FindImmediateMatches(PipelineSession session)
+    {
+        var keywords = session.ContentAnalysis?.FilterKeywords ?? [];
+        if (keywords.Count == 0)
+            return [];
+
+        var textContent = session.FetchedContent?.TextContent ?? session.FetchedContent?.Html ?? "";
+        if (string.IsNullOrWhiteSpace(textContent))
+            return [];
+
+        return keywords
+            .Where(keyword => textContent.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .ToList();
     }
 
     private static string BuildSummary(PipelineSession session, WatchConfiguration config)
@@ -1332,7 +1354,16 @@ public class WatchSetupPipeline(
 
         parts.Add($"checking every {config.CheckInterval?.TotalMinutes ?? 60} minutes");
 
-        return string.Join(", ", parts) + ".";
+        var summary = string.Join(", ", parts) + ".";
+        
+        // Append immediate match notice if keywords already found in content
+        if (config.ImmediateMatches.Count > 0)
+        {
+            var matchList = string.Join(", ", config.ImmediateMatches.Select(m => $"'{m}'"));
+            summary += $" ⚡ Note: {matchList} already appears in the current page content. You'll be notified of any future changes.";
+        }
+
+        return summary;
     }
 
     /// <summary>
