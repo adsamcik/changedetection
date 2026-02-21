@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 
 namespace ChangeDetection.Services.Pipeline;
 
@@ -19,6 +21,7 @@ public class WatchSetupPipeline(
     SchemaDiscoveryStage schemaDiscovery,
     ILlmProviderChain llmProvider,
     IPipelineEventService eventService,
+    ILlmLogService llmLogService,
     IUserContext userContext,
     ILogger<WatchSetupPipeline> logger) : IWatchSetupPipeline
 {
@@ -53,6 +56,38 @@ public class WatchSetupPipeline(
 
         logger.LogInformation("Starting pipeline for input: {Input}, run: {RunId}", TruncateForLog(userInput), run.Id);
 
+        // Set up LLM call correlation
+        var promptsByRequestId = new ConcurrentDictionary<Guid, string>();
+        var currentStage = PipelineStageNames.UrlExtraction;
+
+        void OnLlmLogAdded(LlmLogEntry entry)
+        {
+            if (entry.PipelineRunId != run.Id) return;
+
+            if (entry.Category == LlmLogCategory.Request && entry.RequestId.HasValue && entry.FullPrompt != null)
+            {
+                promptsByRequestId[entry.RequestId.Value] = entry.FullPrompt;
+            }
+            else if (entry.Category is LlmLogCategory.Response or LlmLogCategory.Error)
+            {
+                string? prompt = null;
+                if (entry.RequestId.HasValue)
+                    promptsByRequestId.TryRemove(entry.RequestId.Value, out prompt);
+
+                _ = eventService.RecordLlmCallAsync(
+                    run.Id, currentStage,
+                    entry.ProviderName, entry.Model ?? "unknown",
+                    entry.InputTokens ?? 0, entry.OutputTokens ?? 0,
+                    entry.DurationMs ?? 0,
+                    entry.IsSuccess ?? true, entry.ErrorMessage,
+                    prompt, entry.FullResponse,
+                    CancellationToken.None);
+            }
+        }
+
+        llmLogService.OnLogAdded += OnLlmLogAdded;
+        PipelineExecutionContext.CurrentPipelineRunId = run.Id;
+
         try
         {
             // Transition to InProgress
@@ -72,6 +107,7 @@ public class WatchSetupPipeline(
             await eventService.UpdateExtractedUrlAsync(run.Id, session.SelectedUrl?.NormalizedUrl ?? "", ct);
 
             // Stage 2: Fetch Content
+            currentStage = PipelineStageNames.ContentFetching;
             await RecordStageStartAsync(run.Id, PipelineStageNames.ContentFetching, ct);
             result = await ExecuteContentFetchingAsync(session, options, ct);
             if (result != null)
@@ -83,6 +119,7 @@ public class WatchSetupPipeline(
                 $"Fetched {session.FetchedContent?.TextContent?.Length ?? 0} chars", ct);
 
             // Stage 3: Analyze Content
+            currentStage = PipelineStageNames.ContentAnalysis;
             await RecordStageStartAsync(run.Id, PipelineStageNames.ContentAnalysis, ct);
             result = await ExecuteContentAnalysisAsync(session, ct);
             if (result != null)
@@ -111,6 +148,7 @@ public class WatchSetupPipeline(
                 session.FetchedContent != null &&
                 SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
             {
+                currentStage = PipelineStageNames.SchemaDiscovery;
                 await RecordStageStartAsync(run.Id, PipelineStageNames.SchemaDiscovery, ct);
                 await ExecuteSchemaDiscoveryAsync(session, ct);
                 await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery, 
@@ -132,6 +170,7 @@ public class WatchSetupPipeline(
             }
 
             // Stage 4-5: Generate and Validate Selectors (with iteration loop)
+            currentStage = PipelineStageNames.SelectorGeneration;
             await RecordStageStartAsync(run.Id, PipelineStageNames.SelectorGeneration, ct);
             result = await ExecuteSelectorIterationAsync(session, options, ct);
             if (result != null)
@@ -162,6 +201,7 @@ public class WatchSetupPipeline(
                 ct);
 
             // Stage 6: Build final configuration
+            currentStage = PipelineStageNames.Configuration;
             var finalResult = BuildFinalResult(session, options);
             await HandleResultAsync(run.Id, finalResult, ct);
             return finalResult;
@@ -183,6 +223,8 @@ public class WatchSetupPipeline(
         }
         finally
         {
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
         }
     }
@@ -209,6 +251,38 @@ public class WatchSetupPipeline(
 
         logger.LogInformation("Starting streaming pipeline for input: {Input}, run: {RunId}", 
             TruncateForLog(userInput), run.Id);
+
+        // Set up LLM call correlation
+        var promptsByRequestId = new ConcurrentDictionary<Guid, string>();
+        var currentStage = PipelineStageNames.UrlExtraction;
+
+        void OnLlmLogAdded(LlmLogEntry entry)
+        {
+            if (entry.PipelineRunId != run.Id) return;
+
+            if (entry.Category == LlmLogCategory.Request && entry.RequestId.HasValue && entry.FullPrompt != null)
+            {
+                promptsByRequestId[entry.RequestId.Value] = entry.FullPrompt;
+            }
+            else if (entry.Category is LlmLogCategory.Response or LlmLogCategory.Error)
+            {
+                string? prompt = null;
+                if (entry.RequestId.HasValue)
+                    promptsByRequestId.TryRemove(entry.RequestId.Value, out prompt);
+
+                _ = eventService.RecordLlmCallAsync(
+                    run.Id, currentStage,
+                    entry.ProviderName, entry.Model ?? "unknown",
+                    entry.InputTokens ?? 0, entry.OutputTokens ?? 0,
+                    entry.DurationMs ?? 0,
+                    entry.IsSuccess ?? true, entry.ErrorMessage,
+                    prompt, entry.FullResponse,
+                    CancellationToken.None);
+            }
+        }
+
+        llmLogService.OnLogAdded += OnLlmLogAdded;
+        PipelineExecutionContext.CurrentPipelineRunId = run.Id;
 
         PipelineResult? result = null;
         Exception? error = null;
@@ -241,6 +315,8 @@ public class WatchSetupPipeline(
             await eventService.RecordFailureAsync(run.Id, PipelineStageNames.UrlExtraction, error.Message, ct: ct);
             await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.UrlExtraction, error.Message);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -249,6 +325,8 @@ public class WatchSetupPipeline(
         {
             await HandleResultAsync(run.Id, result, ct);
             yield return CreateResultProgress(result);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -268,6 +346,7 @@ public class WatchSetupPipeline(
 
         // Stage 2: Content Fetching
         error = null;
+        currentStage = PipelineStageNames.ContentFetching;
         await RecordStageStartAsync(run.Id, PipelineStageNames.ContentFetching, ct);
         yield return new PipelineProgress
         {
@@ -291,6 +370,8 @@ public class WatchSetupPipeline(
             await eventService.RecordFailureAsync(run.Id, PipelineStageNames.ContentFetching, error.Message, ct: ct);
             await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.ContentFetching, error.Message);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -299,6 +380,8 @@ public class WatchSetupPipeline(
         {
             await HandleResultAsync(run.Id, result, ct);
             yield return CreateResultProgress(result);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -317,6 +400,7 @@ public class WatchSetupPipeline(
 
         // Stage 3: Content Analysis (with streaming thinking)
         error = null;
+        currentStage = PipelineStageNames.ContentAnalysis;
         await RecordStageStartAsync(run.Id, PipelineStageNames.ContentAnalysis, ct);
         yield return new PipelineProgress
         {
@@ -364,6 +448,8 @@ public class WatchSetupPipeline(
             await eventService.RecordFailureAsync(run.Id, PipelineStageNames.ContentAnalysis, 
                 error.Message, ct: ct);
             await eventService.FailRunAsync(run.Id, error.Message, ct);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -374,6 +460,8 @@ public class WatchSetupPipeline(
                 "Content analysis failed", ct: ct);
             await eventService.FailRunAsync(run.Id, "Content analysis failed", ct);
             yield return CreateFailedProgress(session, PipelineStage.ContentAnalysis, "Content analysis failed");
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -408,6 +496,7 @@ public class WatchSetupPipeline(
             session.FetchedContent != null &&
             SchemaDiscoveryStage.ShouldDiscoverSchema(session.ContentAnalysis.ContentType))
         {
+            currentStage = PipelineStageNames.SchemaDiscovery;
             await RecordStageStartAsync(run.Id, PipelineStageNames.SchemaDiscovery, ct);
             yield return new PipelineProgress
             {
@@ -451,6 +540,7 @@ public class WatchSetupPipeline(
 
         // Stage 4-5: Selector Generation and Validation
         error = null;
+        currentStage = PipelineStageNames.SelectorGeneration;
         await RecordStageStartAsync(run.Id, PipelineStageNames.SelectorGeneration, ct);
         yield return new PipelineProgress
         {
@@ -475,6 +565,8 @@ public class WatchSetupPipeline(
                 error.Message, ct: ct);
             await eventService.FailRunAsync(run.Id, error.Message, ct);
             yield return CreateFailedProgress(session, PipelineStage.SelectorGeneration, error.Message);
+            llmLogService.OnLogAdded -= OnLlmLogAdded;
+            PipelineExecutionContext.CurrentPipelineRunId = null;
             CurrentRun.Value = null;
             yield break;
         }
@@ -485,6 +577,8 @@ public class WatchSetupPipeline(
             yield return CreateResultProgress(result);
             if (!result.NeedsUserInput)
             {
+                llmLogService.OnLogAdded -= OnLlmLogAdded;
+                PipelineExecutionContext.CurrentPipelineRunId = null;
                 CurrentRun.Value = null;
             }
             yield break;
@@ -523,9 +617,12 @@ public class WatchSetupPipeline(
         };
 
         // Stage 6: Build final configuration
+        currentStage = PipelineStageNames.Configuration;
         var finalResult = BuildFinalResult(session, options);
         await HandleResultAsync(run.Id, finalResult, ct);
         yield return CreateResultProgress(finalResult);
+        llmLogService.OnLogAdded -= OnLlmLogAdded;
+        PipelineExecutionContext.CurrentPipelineRunId = null;
         CurrentRun.Value = null;
     }
 

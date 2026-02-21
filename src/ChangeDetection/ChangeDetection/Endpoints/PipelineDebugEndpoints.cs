@@ -261,7 +261,9 @@ public static class PipelineDebugEndpoints
         LlmModel = evt.LlmModel,
         InputTokens = evt.InputTokens,
         OutputTokens = evt.OutputTokens,
-        Confidence = evt.Confidence
+        Confidence = evt.Confidence,
+        PromptText = evt.PromptText,
+        ResponseText = evt.ResponseText
     };
 }
 
@@ -313,6 +315,8 @@ public record PipelineEventDto
     public int? InputTokens { get; init; }
     public int? OutputTokens { get; init; }
     public float? Confidence { get; init; }
+    public string? PromptText { get; init; }
+    public string? ResponseText { get; init; }
 }
 
 public record ActiveSessionsDto

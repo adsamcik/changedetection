@@ -401,9 +401,10 @@ public class ServerWatchService : IWatchService
                         if (schemaDriftResolved)
                         {
                             // Reload watch and retry extraction with updated schema
-                            watch = await _watchRepo.GetByIdAsync(watchId, ct);
-                            if (watch?.Schema != null)
+                            var reloadedWatch = await _watchRepo.GetByIdAsync(watchId, ct);
+                            if (reloadedWatch?.Schema != null)
                             {
+                                watch = reloadedWatch;
                                 var retryResult = await _objectExtractionService.ExtractAsync(
                                     fetchResult.Html!, watch.Schema, ct);
                                 

@@ -22,6 +22,11 @@ public interface ILlmLogService
     IReadOnlyList<LlmLogEntry> GetLogsForProvider(string providerName, int count = 50);
 
     /// <summary>
+    /// Gets log entries for a specific pipeline run.
+    /// </summary>
+    IReadOnlyList<LlmLogEntry> GetLogsForPipelineRun(Guid pipelineRunId, int count = 100);
+
+    /// <summary>
     /// Clears all log entries.
     /// </summary>
     void Clear();
@@ -43,6 +48,9 @@ public record LlmLogEntry
 
     /// <summary>Correlation ID to group request/response pairs together.</summary>
     public Guid? RequestId { get; init; }
+
+    /// <summary>Pipeline run ID if this call was made during a pipeline execution.</summary>
+    public Guid? PipelineRunId { get; init; }
 
     /// <summary>When this entry was created.</summary>
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;

@@ -1104,7 +1104,8 @@ public class InputFlowIntegrationTests : TestBase
         service.RecordLlmCallAsync(
             Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<int>(), Arg.Any<int>(), Arg.Any<long>(),
-            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>())
             .Returns(new PipelineEvent { Id = Guid.NewGuid(), PipelineRunId = Guid.Empty, Stage = "", EventType = "" });
         
         return service;
@@ -1291,6 +1292,7 @@ public class InputFlowIntegrationTests : TestBase
             schemaDiscovery,
             llmChain,
             CreateMockPipelineEventService(),
+            Substitute.For<ILlmLogService>(),
             Substitute.For<IUserContext>(),
             Substitute.For<ILogger<WatchSetupPipeline>>());
     }
@@ -1321,6 +1323,7 @@ public class InputFlowIntegrationTests : TestBase
             schemaDiscovery2,
             llmChain,
             CreateMockPipelineEventService(),
+            Substitute.For<ILlmLogService>(),
             Substitute.For<IUserContext>(),
             Substitute.For<ILogger<WatchSetupPipeline>>());
     }

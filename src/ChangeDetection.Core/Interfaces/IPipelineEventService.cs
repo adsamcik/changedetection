@@ -57,6 +57,8 @@ public interface IPipelineEventService
         long durationMs,
         bool isSuccess = true,
         string? errorMessage = null,
+        string? promptText = null,
+        string? responseText = null,
         CancellationToken ct = default);
     
     /// <summary>

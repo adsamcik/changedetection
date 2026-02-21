@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 
 namespace ChangeDetection.Services.LLM;
 
@@ -42,6 +43,16 @@ public class LlmLogService : ILlmLogService
     {
         return _entries
             .Where(e => e.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(e => e.Timestamp)
+            .Take(count)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<LlmLogEntry> GetLogsForPipelineRun(Guid pipelineRunId, int count = 100)
+    {
+        return _entries
+            .Where(e => e.PipelineRunId == pipelineRunId)
             .OrderByDescending(e => e.Timestamp)
             .Take(count)
             .ToList();
@@ -98,7 +109,8 @@ public static class LlmLogServiceExtensions
             Message = $"Sending request to {providerName}",
             PromptPreview = TruncatePreview(prompt),
             FullPrompt = prompt,
-            Metadata = metadata
+            Metadata = metadata,
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
         return requestId;
     }
@@ -129,7 +141,8 @@ public static class LlmLogServiceExtensions
             DurationMs = durationMs,
             InputTokens = inputTokens,
             OutputTokens = outputTokens,
-            IsSuccess = true
+            IsSuccess = true,
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -157,7 +170,8 @@ public static class LlmLogServiceExtensions
             ErrorMessage = exception.Message,
             ExceptionType = exception.GetType().Name,
             StackTrace = exception.StackTrace,
-            IsSuccess = false
+            IsSuccess = false,
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -178,7 +192,8 @@ public static class LlmLogServiceExtensions
             Model = model,
             Category = LlmLogCategory.Retry,
             Message = $"Retrying {providerName}, attempt {attemptNumber}" + (reason != null ? $": {reason}" : ""),
-            Metadata = new Dictionary<string, string> { ["attemptNumber"] = attemptNumber.ToString() }
+            Metadata = new Dictionary<string, string> { ["attemptNumber"] = attemptNumber.ToString() },
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -198,7 +213,8 @@ public static class LlmLogServiceExtensions
             ProviderName = providerName,
             Category = LlmLogCategory.CircuitBreaker,
             Message = $"Circuit breaker {state} for {providerName}" + (reason != null ? $": {reason}" : ""),
-            Metadata = new Dictionary<string, string> { ["circuitState"] = state }
+            Metadata = new Dictionary<string, string> { ["circuitState"] = state },
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -221,7 +237,8 @@ public static class LlmLogServiceExtensions
             {
                 ["fromProvider"] = fromProvider,
                 ["toProvider"] = toProvider
-            }
+            },
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -238,7 +255,8 @@ public static class LlmLogServiceExtensions
             ProviderName = providerName,
             Category = LlmLogCategory.CircuitBreaker,
             Message = $"Request blocked by circuit breaker for {providerName} - provider temporarily unavailable",
-            IsSuccess = false
+            IsSuccess = false,
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 
@@ -262,7 +280,8 @@ public static class LlmLogServiceExtensions
             ErrorMessage = exception?.Message,
             ExceptionType = exception?.GetType().Name,
             StackTrace = exception?.StackTrace,
-            IsSuccess = false
+            IsSuccess = false,
+            PipelineRunId = PipelineExecutionContext.CurrentPipelineRunId,
         });
     }
 

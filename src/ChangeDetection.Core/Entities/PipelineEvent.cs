@@ -92,6 +92,16 @@ public class PipelineEvent
     /// Confidence score (0-1) if applicable.
     /// </summary>
     public float? Confidence { get; set; }
+
+    /// <summary>
+    /// Full prompt text sent to the LLM (for LlmCall events).
+    /// </summary>
+    public string? PromptText { get; set; }
+
+    /// <summary>
+    /// Full response text received from the LLM (for LlmCall events).
+    /// </summary>
+    public string? ResponseText { get; set; }
 }
 
 /// <summary>

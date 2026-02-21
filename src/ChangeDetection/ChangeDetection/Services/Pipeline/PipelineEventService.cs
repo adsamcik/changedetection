@@ -112,6 +112,8 @@ public class PipelineEventService(LiteDbContext context, ILogger<PipelineEventSe
         long durationMs,
         bool isSuccess = true,
         string? errorMessage = null,
+        string? promptText = null,
+        string? responseText = null,
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -132,6 +134,8 @@ public class PipelineEventService(LiteDbContext context, ILogger<PipelineEventSe
             DurationMs = durationMs,
             IsSuccess = isSuccess,
             ErrorMessage = errorMessage,
+            PromptText = promptText,
+            ResponseText = responseText,
             Timestamp = DateTime.UtcNow
         };
         
