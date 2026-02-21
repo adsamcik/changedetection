@@ -91,7 +91,20 @@ public class WatchSetupPipeline(
                 return result;
             }
             await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentAnalysis, 
-                $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}", ct);
+                $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}",
+                SerializeStageData(new
+                {
+                    session.ContentAnalysis?.ContentType,
+                    session.ContentAnalysis?.UserIntent,
+                    session.ContentAnalysis?.Confidence,
+                    session.ContentAnalysis?.RecommendedApproach,
+                    FilterKeywords = session.ContentAnalysis?.FilterKeywords ?? [],
+                    Sections = session.ContentAnalysis?.IdentifiedSections.Select(s => new
+                    {
+                        s.Name, s.SuggestedSelector, s.IsLikelyTarget
+                    }).ToList() ?? []
+                }),
+                ct);
 
             // Stage 3.5: Schema Discovery (for list-type content)
             if (session.ContentAnalysis != null && 
@@ -103,7 +116,19 @@ public class WatchSetupPipeline(
                 await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery, 
                     session.DiscoveredSchema != null 
                         ? $"Discovered schema with {session.DiscoveredSchema.Fields.Count} fields" 
-                        : "No schema discovered", ct);
+                        : "No schema discovered",
+                    session.DiscoveredSchema != null 
+                        ? SerializeStageData(new
+                        {
+                            session.DiscoveredSchema.ItemSelector,
+                            Fields = session.DiscoveredSchema.Fields.Select(f => new
+                            {
+                                f.Name, f.Type, f.Selector, f.IsIdentityField, f.Confidence
+                            }).ToList(),
+                            session.DiscoveredSchema.InferredIdentityFields
+                        })
+                        : null,
+                    ct);
             }
 
             // Stage 4-5: Generate and Validate Selectors (with iteration loop)
@@ -115,7 +140,26 @@ public class WatchSetupPipeline(
                 return result;
             }
             await RecordStageCompletedAsync(run.Id, PipelineStageNames.SelectorValidation, 
-                session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector", ct);
+                session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector",
+                SerializeStageData(new
+                {
+                    BestSelector = session.BestSelector != null ? new
+                    {
+                        session.BestSelector.Selector,
+                        Type = session.BestSelector.Type.ToString(),
+                        session.BestSelector.Description,
+                        session.BestSelector.Confidence
+                    } : null,
+                    AllSelectors = session.GeneratedSelectors.Select(s => new
+                    {
+                        s.Selector, Type = s.Type.ToString(), s.Confidence
+                    }).ToList(),
+                    Validations = session.ValidationResults.Select(v => new
+                    {
+                        v.Selector, v.IsValid, v.MatchCount, v.ValidationMessage
+                    }).ToList()
+                }),
+                ct);
 
             // Stage 6: Build final configuration
             var finalResult = BuildFinalResult(session, options);
@@ -335,7 +379,20 @@ public class WatchSetupPipeline(
         }
 
         await RecordStageCompletedAsync(run.Id, PipelineStageNames.ContentAnalysis, 
-            $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}", ct);
+            $"Detected {session.ContentAnalysis?.ContentType}: {session.ContentAnalysis?.UserIntent}",
+            SerializeStageData(new
+            {
+                session.ContentAnalysis?.ContentType,
+                session.ContentAnalysis?.UserIntent,
+                session.ContentAnalysis?.Confidence,
+                session.ContentAnalysis?.RecommendedApproach,
+                FilterKeywords = session.ContentAnalysis?.FilterKeywords ?? [],
+                Sections = session.ContentAnalysis?.IdentifiedSections.Select(s => new
+                {
+                    s.Name, s.SuggestedSelector, s.IsLikelyTarget
+                }).ToList() ?? []
+            }),
+            ct);
 
         yield return new PipelineProgress
         {
@@ -365,7 +422,19 @@ public class WatchSetupPipeline(
             await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery,
                 session.DiscoveredSchema != null
                     ? $"Discovered schema with {session.DiscoveredSchema.Fields.Count} fields"
-                    : "No schema discovered", ct);
+                    : "No schema discovered",
+                session.DiscoveredSchema != null
+                    ? SerializeStageData(new
+                    {
+                        session.DiscoveredSchema.ItemSelector,
+                        Fields = session.DiscoveredSchema.Fields.Select(f => new
+                        {
+                            f.Name, f.Type, f.Selector, f.IsIdentityField, f.Confidence
+                        }).ToList(),
+                        session.DiscoveredSchema.InferredIdentityFields
+                    })
+                    : null,
+                ct);
 
             if (session.DiscoveredSchema != null)
             {
@@ -422,7 +491,26 @@ public class WatchSetupPipeline(
         }
 
         await RecordStageCompletedAsync(run.Id, PipelineStageNames.SelectorValidation, 
-            session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector", ct);
+            session.BestSelector != null ? $"Selected: {session.BestSelector.Selector}" : "No selector",
+            SerializeStageData(new
+            {
+                BestSelector = session.BestSelector != null ? new
+                {
+                    session.BestSelector.Selector,
+                    Type = session.BestSelector.Type.ToString(),
+                    session.BestSelector.Description,
+                    session.BestSelector.Confidence
+                } : null,
+                AllSelectors = session.GeneratedSelectors.Select(s => new
+                {
+                    s.Selector, Type = s.Type.ToString(), s.Confidence
+                }).ToList(),
+                Validations = session.ValidationResults.Select(v => new
+                {
+                    v.Selector, v.IsValid, v.MatchCount, v.ValidationMessage
+                }).ToList()
+            }),
+            ct);
 
         yield return new PipelineProgress
         {
@@ -1866,6 +1954,17 @@ public class WatchSetupPipeline(
             ct: ct);
     }
     
+    private Task RecordStageCompletedAsync(Guid runId, string stage, string? summary, string? dataJson, CancellationToken ct)
+    {
+        return eventService.RecordEventAsync(
+            runId, 
+            stage, 
+            PipelineEventTypes.StageCompleted, 
+            summary ?? $"Completed {stage}",
+            dataJson: dataJson,
+            ct: ct);
+    }
+    
     private async Task HandleResultAsync(Guid runId, PipelineResult result, CancellationToken ct)
     {
         if (result.NeedsUserInput)
@@ -1937,6 +2036,22 @@ public class WatchSetupPipeline(
                 feedback,
                 $"User provided feedback: {TruncateForLog(feedback)}",
                 ct);
+        }
+    }
+    
+    private static string? SerializeStageData(object data)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(data, new JsonSerializerOptions
+            {
+                WriteIndented = false,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+        }
+        catch
+        {
+            return null;
         }
     }
     
