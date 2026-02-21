@@ -68,9 +68,11 @@ await done.Task;
 
 Console.WriteLine($"\n   Full response: {response.Substring(0, Math.Min(200, response.Length))}...");
 
-// Cleanup - dispose session first, then stop client
+// Cleanup - dispose session, delete from disk, then stop client
 Console.WriteLine("\n5. Cleaning up...");
+var sessionId = session.SessionId;
 await session.DisposeAsync();
+await client.DeleteSessionAsync(sessionId);
 await client.StopAsync();
 
 Console.WriteLine("\n=== E2E Test Complete ===");
