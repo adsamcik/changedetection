@@ -390,6 +390,35 @@ public class ServerWatchService : IWatchService
                     _logger.LogWarning(
                         "Object extraction failed for watch {Id}: {Error}, DriftDetected: {Drift}",
                         watch.Id, extractionResult.Error, extractionResult.DriftDetected);
+                    
+                    // Attempt schema drift auto-recovery
+                    if (extractionResult.DriftDetected && watch.AutoErrorResolutionEnabled &&
+                        watch.AutoResolutionAttempts < watch.MaxAutoResolutionAttempts)
+                    {
+                        var schemaDriftResolved = await TryAutoResolveSchemaDriftAsync(
+                            watch, fetchResult.Html!, extractionResult, ct);
+                        
+                        if (schemaDriftResolved)
+                        {
+                            // Reload watch and retry extraction with updated schema
+                            watch = await _watchRepo.GetByIdAsync(watchId, ct);
+                            if (watch?.Schema != null)
+                            {
+                                var retryResult = await _objectExtractionService.ExtractAsync(
+                                    fetchResult.Html!, watch.Schema, ct);
+                                
+                                if (retryResult.Success && retryResult.Objects != null)
+                                {
+                                    extractedObjects = retryResult.Objects;
+                                    snapshot.ExtractedObjectsJson = JsonSerializer.Serialize(extractedObjects);
+                                    snapshot.SchemaVersion = watch.Schema.Version;
+                                    snapshot.SchemaDriftDetected = false;
+                                    snapshot.ExtractionError = null;
+                                    _logger.LogInformation("Schema drift auto-recovery successful for watch {Id}", watch.Id);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1186,6 +1215,101 @@ public class ServerWatchService : IWatchService
             watch.AutoResolutionAttempts++;
             watch.LastResolutionAttempt = DateTime.UtcNow;
             watch.LastResolutionDiagnosis = $"Resolution error: {ex.Message}";
+            await _watchRepo.UpdateAsync(watch, ct);
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// Attempts to auto-resolve schema drift using LLM to find a corrected item selector.
+    /// </summary>
+    private async Task<bool> TryAutoResolveSchemaDriftAsync(
+        WatchedSite watch,
+        string currentHtml,
+        ObjectExtractionResult extractionResult,
+        CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Attempting schema drift auto-recovery for watch {Id} ({Url}), attempt {Attempt} of {Max}",
+            watch.Id, watch.Url, watch.AutoResolutionAttempts + 1, watch.MaxAutoResolutionAttempts);
+        
+        try
+        {
+            var previousSnapshot = await _snapshotRepo.FirstOrDefaultOrderedDescAsync(
+                s => s.WatchedSiteId == watch.Id && !string.IsNullOrEmpty(s.ExtractedObjectsJson),
+                s => s.CapturedAt,
+                ct);
+            
+            var context = new ErrorResolutionContext
+            {
+                Watch = watch,
+                CurrentHtml = currentHtml,
+                ErrorMessage = extractionResult.Error ?? "Schema extraction failed due to structure drift",
+                ErrorType = ErrorType.SchemaDrift,
+                PreviousContent = previousSnapshot?.ExtractedObjectsJson,
+                ConsecutiveFailures = watch.ConsecutiveFailures
+            };
+            
+            var result = await _errorResolutionService.TryResolveAsync(context, ct);
+            
+            watch.AutoResolutionAttempts++;
+            watch.LastResolutionAttempt = DateTime.UtcNow;
+            watch.LastResolutionDiagnosis = result.Diagnosis;
+            
+            var newItemSelector = result.NewItemSelector ?? result.NewCssSelector;
+            
+            if (result.IsResolved && result.AutoFixApplied && !string.IsNullOrEmpty(newItemSelector))
+            {
+                // Store selector history for potential rollback
+                watch.SelectorHistory.Add(new SelectorHistoryEntry
+                {
+                    ChangedAt = DateTime.UtcNow,
+                    PreviousCssSelector = watch.Schema!.ItemSelector,
+                    ChangeReason = "Schema drift auto-recovery",
+                    Diagnosis = result.Diagnosis,
+                    Confidence = result.Confidence
+                });
+                
+                // Apply the fix to the schema
+                watch.Schema!.ItemSelector = newItemSelector;
+                watch.Schema.Version++;
+                
+                _logger.LogInformation(
+                    "Schema drift auto-recovery applied for watch {Id}: {Diagnosis}, new ItemSelector: {Selector}",
+                    watch.Id, result.Diagnosis, newItemSelector);
+                
+                await _watchRepo.UpdateAsync(watch, ct);
+                return true;
+            }
+            else if (result.IsResolved && result.RequiresUserApproval)
+            {
+                _logger.LogInformation(
+                    "Schema drift recovery found fix for watch {Id} but requires user approval: {Diagnosis}",
+                    watch.Id, result.Diagnosis);
+                
+                watch.LastError = $"Schema drift detected: {result.Diagnosis}. " +
+                    $"Proposed fix available (confidence: {result.Confidence:P0}). " +
+                    $"Review and approve the schema change.";
+                
+                await _watchRepo.UpdateAsync(watch, ct);
+                return false;
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Schema drift auto-recovery failed for watch {Id}: {Diagnosis}",
+                    watch.Id, result.Diagnosis);
+                
+                await _watchRepo.UpdateAsync(watch, ct);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during schema drift auto-recovery for watch {Id}", watch.Id);
+            watch.AutoResolutionAttempts++;
+            watch.LastResolutionAttempt = DateTime.UtcNow;
+            watch.LastResolutionDiagnosis = $"Schema drift recovery error: {ex.Message}";
             await _watchRepo.UpdateAsync(watch, ct);
             return false;
         }

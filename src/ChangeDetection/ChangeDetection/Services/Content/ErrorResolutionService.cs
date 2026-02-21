@@ -92,6 +92,41 @@ public class ErrorResolutionService(
                     "Error resolution successful for watch {WatchId}: {Diagnosis}, confidence: {Confidence}",
                     context.Watch.Id, resolution.Diagnosis, resolution.Confidence);
             }
+            
+            // Validate NewItemSelector for schema drift recovery
+            if (!string.IsNullOrEmpty(resolution.NewItemSelector))
+            {
+                var itemValidation = await ValidateSelectorFixAsync(
+                    context.CurrentHtml, resolution.NewItemSelector, SelectorType.CssSelector, ct);
+
+                if (!itemValidation.IsValid)
+                {
+                    logger.LogWarning(
+                        "Proposed item selector fix failed validation: {Error}",
+                        itemValidation.ErrorMessage);
+                    
+                    resolution = resolution with
+                    {
+                        NewItemSelector = null,
+                        IsResolved = !string.IsNullOrEmpty(resolution.NewCssSelector) || 
+                                     !string.IsNullOrEmpty(resolution.NewXPathSelector)
+                    };
+                }
+                else
+                {
+                    resolution = resolution with
+                    {
+                        AutoFixApplied = resolution.Confidence >= AutoFixConfidenceThreshold && 
+                                         !resolution.MajorStructureChange,
+                        RequiresUserApproval = resolution.Confidence < AutoFixConfidenceThreshold || 
+                                               resolution.MajorStructureChange
+                    };
+
+                    logger.LogInformation(
+                        "Schema drift resolution found new item selector for watch {WatchId}, matches: {Count}",
+                        context.Watch.Id, itemValidation.MatchCount);
+                }
+            }
 
             return resolution;
         }
@@ -173,7 +208,7 @@ public class ErrorResolutionService(
                 ? $"XPath: {watch.XPathSelector}" 
                 : "Full page (no selector)";
 
-        return $$"""
+        var prompt = $$"""
             Diagnose why content extraction failed and suggest a fix.
             
             WATCH INFO:
@@ -216,6 +251,33 @@ public class ErrorResolutionService(
             - Set confidence below 0.8 if unsure about the fix
             - Set majorStructureChange=true if the page layout changed significantly
             """;
+
+        // If schema drift, add schema-specific context to help LLM recover the item selector
+        if (context.ErrorType == ErrorType.SchemaDrift && context.Watch.Schema != null)
+        {
+            var schema = context.Watch.Schema;
+            var fieldDescriptions = string.Join("\n",
+                schema.Fields.Select(f => $"  - {f.Name}: selector=\"{f.Selector}\""));
+
+            prompt += $$"""
+            
+            
+            SCHEMA DRIFT CONTEXT:
+            This watch uses schema-based object extraction. The item container selector no longer matches.
+            - Current ItemSelector: {{schema.ItemSelector}}
+            - Schema fields:
+            {{fieldDescriptions}}
+            
+            ADDITIONAL TASK:
+            Find a new CSS selector for the repeating item container that groups these fields together.
+            The field selectors are relative to the item container.
+            
+            Include in your JSON response:
+              "newItemSelector": "new CSS selector for the repeating item container"
+            """;
+        }
+
+        return prompt;
     }
 
     private ErrorResolutionResult ParseResolutionResponse(string content, ErrorResolutionContext context)
@@ -259,17 +321,23 @@ public class ErrorResolutionService(
             var suggestedAction = root.TryGetProperty("suggestedAction", out var s) 
                 ? s.GetString() 
                 : null;
+            
+            var newItemSelector = root.TryGetProperty("newItemSelector", out var nis)
+                ? nis.GetString()
+                : null;
 
             // Validate we have at least a diagnosis
             var hasSelector = !string.IsNullOrEmpty(newCss) || !string.IsNullOrEmpty(newXPath);
+            var hasItemSelector = !string.IsNullOrEmpty(newItemSelector);
 
             return new ErrorResolutionResult
             {
-                IsResolved = hasSelector,
+                IsResolved = hasSelector || hasItemSelector,
                 AutoFixApplied = false, // Will be set after validation
                 Diagnosis = diagnosis,
                 NewCssSelector = string.IsNullOrEmpty(newCss) ? null : newCss,
                 NewXPathSelector = string.IsNullOrEmpty(newXPath) ? null : newXPath,
+                NewItemSelector = string.IsNullOrEmpty(newItemSelector) ? null : newItemSelector,
                 Confidence = Math.Clamp(confidence, 0f, 1f),
                 Reasoning = reasoning,
                 SuggestedAction = suggestedAction ?? "Review the watch configuration and update the selector manually",

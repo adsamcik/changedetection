@@ -173,6 +173,11 @@ public record ErrorResolutionResult
     /// Whether the website structure has fundamentally changed.
     /// </summary>
     public bool MajorStructureChange { get; init; }
+    
+    /// <summary>
+    /// New item selector for schema-based extraction if the fix involves schema recovery.
+    /// </summary>
+    public string? NewItemSelector { get; init; }
 }
 
 /// <summary>
