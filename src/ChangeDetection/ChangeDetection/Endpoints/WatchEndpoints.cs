@@ -111,6 +111,13 @@ public static class WatchEndpoints
             .Produces<object>()
             .Produces(404);
 
+        // Search discovery: promote a search result to a standalone watch
+        group.MapPost("/{id}/promote", PromoteSearchResult)
+            .WithName("PromoteSearchResult")
+            .Produces<WatchDetailDto>(201)
+            .Produces(404)
+            .Produces(400);
+
         return group;
     }
 
@@ -1312,5 +1319,45 @@ public static class WatchEndpoints
                 kv.Value.Error
             })
         });
+    }
+
+    private static async Task<IResult> PromoteSearchResult(
+        Guid id,
+        PromoteSearchResultDto dto,
+        ISearchDiscoveryService discoveryService,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Url))
+            return Results.BadRequest("URL is required");
+
+        var request = new PromoteSearchResultRequest
+        {
+            Url = dto.Url,
+            Name = dto.Name,
+            CssSelector = dto.CssSelector,
+            CheckInterval = dto.CheckIntervalMinutes.HasValue
+                ? TimeSpan.FromMinutes(dto.CheckIntervalMinutes.Value)
+                : null
+        };
+
+        var watch = await discoveryService.PromoteResultAsync(id, request, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        var detailDto = new WatchDetailDto
+        {
+            Id = watch.Id.ToString(),
+            Url = watch.Url,
+            Title = watch.Name,
+            IsEnabled = watch.IsEnabled,
+            CheckInterval = watch.CheckInterval,
+            LastCheck = watch.LastChecked,
+            Tags = watch.Tags.Select(t => new TagDto { Name = t, Color = "#6B7280" }).ToList(),
+            CssSelector = watch.CssSelector,
+            CreatedAt = watch.CreatedAt,
+            SourceType = (SourceTypeDto)(int)watch.SourceType
+        };
+
+        return Results.Created($"/api/watches/{watch.Id}", detailDto);
     }
 }

@@ -141,6 +141,9 @@ builder.Services.AddHttpClient();
 // Named HttpClient for SearXNG search provider
 builder.Services.AddHttpClient("SearXNG");
 
+// Named HttpClient for Google Custom Search API
+builder.Services.AddHttpClient("GoogleCSE");
+
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");
 
@@ -312,6 +315,15 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var logger = sp.GetRequiredService<ILogger<SearXNGSearchProvider>>();
     return new SearXNGSearchProvider(httpClient, settings, urlValidator, logger);
 });
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient("GoogleCSE");
+    var settings = sp.GetRequiredService<IOptions<SearchSettings>>();
+    var logger = sp.GetRequiredService<ILogger<GoogleCseSearchProvider>>();
+    return new GoogleCseSearchProvider(httpClient, settings, logger);
+});
+builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
 
 // Composable pipeline block system
 builder.Services.AddSingleton<IBlockRegistry>(sp =>

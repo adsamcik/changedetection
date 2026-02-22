@@ -8,6 +8,12 @@ public class SearchSettings
     /// <summary>Base URL for a SearXNG instance (e.g., "http://localhost:8080").</summary>
     public string? SearxngUrl { get; set; }
 
+    /// <summary>Google Custom Search API key.</summary>
+    public string? GoogleCseApiKey { get; set; }
+
+    /// <summary>Google Custom Search Engine ID (cx parameter).</summary>
+    public string? GoogleCseEngineId { get; set; }
+
     /// <summary>Default search provider ID when none specified.</summary>
     public string DefaultProvider { get; set; } = "searxng";
 

@@ -1,5 +1,6 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Search;
+using NSubstitute;
 using Shouldly;
 using TUnit.Core;
 
@@ -193,7 +194,7 @@ public class SearXNGSearchProviderTests : TestBase
         var httpClient = new HttpClient();
         var settings = Microsoft.Extensions.Options.Options.Create(
             new Core.Entities.SearchSettings { SearxngUrl = "http://169.254.169.254" });
-        var urlValidator = NSubstitute.Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
+        var urlValidator = Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
         urlValidator.Validate("http://169.254.169.254").Returns("URL targets a blocked IP range");
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<SearXNGSearchProvider>();
 
@@ -210,8 +211,8 @@ public class SearXNGSearchProviderTests : TestBase
         var httpClient = new HttpClient();
         var settings = Microsoft.Extensions.Options.Options.Create(
             new Core.Entities.SearchSettings { SearxngUrl = searxngUrl });
-        var urlValidator = NSubstitute.Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
-        urlValidator.Validate(NSubstitute.Arg.Any<string>()).Returns((string?)null); // allow all URLs
+        var urlValidator = Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
+        urlValidator.Validate(Arg.Any<string>()).Returns((string?)null); // allow all URLs
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<SearXNGSearchProvider>();
 
         return (new SearXNGSearchProvider(httpClient, settings, urlValidator, logger), httpClient);

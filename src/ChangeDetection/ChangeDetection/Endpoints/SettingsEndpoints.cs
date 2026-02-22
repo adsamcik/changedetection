@@ -192,6 +192,8 @@ public static class SettingsEndpoints
         var dto = new SearchSettingsDto
         {
             SearxngUrl = settings.SearxngUrl,
+            GoogleCseApiKey = settings.GoogleCseApiKey is not null ? "***configured***" : null,
+            GoogleCseEngineId = settings.GoogleCseEngineId,
             DefaultProvider = settings.DefaultProvider,
             DefaultMaxResults = settings.DefaultMaxResults,
             TimeoutSeconds = settings.TimeoutSeconds,
