@@ -15,6 +15,5 @@ public enum PortType
     Notification,
     PageReference,
     Url,
-    Configuration,
-    SearchResults
+    Configuration
 }
