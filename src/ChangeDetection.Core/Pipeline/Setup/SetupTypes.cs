@@ -36,6 +36,7 @@ public enum SetupPhase
     Checkpoint1,
     PipelineBuilding,
     DryRun,
+    AdversarialTest,
     QcValidation,
     Checkpoint2,
     Saving
@@ -81,6 +82,7 @@ public record PipelineProposal
     public required string HumanSummary { get; init; }
     public DryRunResult? DryRun { get; init; }
     public QcResult? QcValidation { get; init; }
+    public AdversarialTestResult? AdversarialTest { get; init; }
 }
 
 /// <summary>Results from executing the pipeline as a dry run.</summary>
@@ -98,6 +100,22 @@ public record QcResult
     public bool Valid { get; init; }
     public List<string> Issues { get; init; } = [];
     public List<string> Suggestions { get; init; } = [];
+    /// <summary>Per-block justification from the LLM explaining why each block exists.</summary>
+    public Dictionary<string, string> BlockJustifications { get; init; } = [];
+    /// <summary>Block IDs the LLM could not justify — candidates for removal.</summary>
+    public List<string> UnjustifiedBlocks { get; init; } = [];
+}
+
+/// <summary>Results from adversarial testing of the pipeline against synthetic mutations.</summary>
+public record AdversarialTestResult
+{
+    public bool Passed { get; init; }
+    public int MutationsTested { get; init; }
+    public int MutationsPassed { get; init; }
+    public List<string> FragileBlocks { get; init; } = [];
+    public List<string> Warnings { get; init; } = [];
+    public bool Skipped { get; init; }
+    public string? SkipReason { get; init; }
 }
 
 /// <summary>In-memory session state for the composable setup flow.</summary>
@@ -113,6 +131,7 @@ public class SetupSession
     public PipelineDefinition? AssembledPipeline { get; set; }
     public DryRunResult? DryRunResult { get; set; }
     public QcResult? QcResult { get; set; }
+    public AdversarialTestResult? AdversarialTestResult { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;
     public int LlmCallCount { get; set; }

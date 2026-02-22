@@ -106,5 +106,13 @@ public enum LlmUsageType
     /// Sentiment analysis of content changes.
     /// </summary>
     SentimentAnalysis,
+    /// <summary>
+    /// LLM-powered pipeline optimization review using a large model.
+    /// </summary>
+    PipelineOptimization,
+    /// <summary>
+    /// Adversarial testing — generating synthetic mutations to stress-test pipelines.
+    /// </summary>
+    AdversarialTest,
     Other
 }

@@ -50,7 +50,7 @@ public class LlmProviderChain : ILlmProviderChain
         var failedProviders = 0;
 
         // Get providers ordered by priority
-        var providers = await GetProvidersToTryAsync(options.ProviderName, ct);
+        var providers = await GetProvidersToTryAsync(options.ProviderName, ct, options.PreferLargeModel);
         
         if (!providers.Any())
         {
@@ -161,7 +161,7 @@ public class LlmProviderChain : ILlmProviderChain
         var failedProviders = 0;
 
         // Get providers ordered by priority
-        var providers = await GetProvidersToTryAsync(options.ProviderName, ct);
+        var providers = await GetProvidersToTryAsync(options.ProviderName, ct, options.PreferLargeModel);
         
         if (!providers.Any())
         {
@@ -355,7 +355,7 @@ public class LlmProviderChain : ILlmProviderChain
         }
     }
 
-    private async Task<IEnumerable<LlmProviderConfig>> GetProvidersToTryAsync(string? specificProvider, CancellationToken ct)
+    private async Task<IEnumerable<LlmProviderConfig>> GetProvidersToTryAsync(string? specificProvider, CancellationToken ct, bool preferLargeModel = false)
     {
         var allProviders = await _providerRepo.GetAllAsync(ct);
         var enabledProviders = allProviders
@@ -372,6 +372,15 @@ public class LlmProviderChain : ILlmProviderChain
             {
                 return [specific];
             }
+        }
+
+        // When PreferLargeModel is set, sort non-small models first while preserving priority order within each group
+        if (preferLargeModel && enabledProviders.Count > 1)
+        {
+            enabledProviders = enabledProviders
+                .OrderBy(p => IsSmallModel(p.Model) ? 1 : 0)
+                .ThenBy(p => p.Priority)
+                .ToList();
         }
 
         // If no providers configured, try auto-detecting Ollama
@@ -699,7 +708,8 @@ public class LlmProviderChain : ILlmProviderChain
             UsageType = options.UsageType,
             WatchedSiteId = options.WatchedSiteId,
             ExpectJson = options.ExpectJson,
-            CompactMode = true
+            CompactMode = true,
+            PreferLargeModel = options.PreferLargeModel
         };
     }
 
@@ -723,5 +733,11 @@ public class LlmProviderChain : ILlmProviderChain
                lowerModel.Contains("tiny") ||
                lowerModel.Contains("nano") ||
                lowerModel.Contains("lite");
+    }
+
+    public async Task<bool> HasLargeModelAsync(CancellationToken ct = default)
+    {
+        var providers = await _providerRepo.GetAllAsync(ct);
+        return providers.Any(p => p.IsEnabled && p.IsHealthy && !IsSmallModel(p.Model));
     }
 }

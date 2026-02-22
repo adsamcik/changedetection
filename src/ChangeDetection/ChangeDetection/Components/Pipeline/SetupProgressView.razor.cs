@@ -55,6 +55,7 @@ public partial class SetupProgressView
         SetupPhase.Checkpoint1 => "✋",
         SetupPhase.PipelineBuilding => "🔧",
         SetupPhase.DryRun => "🧪",
+        SetupPhase.AdversarialTest => "🛡️",
         SetupPhase.QcValidation => "✅",
         SetupPhase.Checkpoint2 => "✋",
         SetupPhase.Saving => "💾",

@@ -26,6 +26,11 @@ public interface ILlmProviderChain
     /// Gets the health status of all providers.
     /// </summary>
     Task<IEnumerable<ProviderHealthStatus>> GetHealthStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Checks whether any enabled, healthy provider uses a non-small (large) model.
+    /// </summary>
+    Task<bool> HasLargeModelAsync(CancellationToken ct = default);
 }
 
 /// <summary>
@@ -108,6 +113,12 @@ public class LlmRequestOptions
     /// Auto-detected based on model name if null.
     /// </summary>
     public bool? CompactMode { get; set; }
+
+    /// <summary>
+    /// When true, prefers a large (non-small) model for this request.
+    /// Falls back to any available model if no large model is available.
+    /// </summary>
+    public bool PreferLargeModel { get; set; }
 }
 
 /// <summary>

@@ -252,6 +252,34 @@ public class ComposableSetupPipeline(
                 : "Dry run completed with issues.",
             dryRunResult.SampleOutput ?? dryRunResult.Error);
 
+        // Phase 5.5: Adversarial testing (optional, requires large model)
+        session.CurrentPhase = SetupPhase.AdversarialTest;
+        yield return Progress(SetupPhase.AdversarialTest, SetupProgressType.Started, "Running adversarial mutation tests...");
+
+        AdversarialTestResult adversarialResult;
+        try
+        {
+            adversarialResult = await RunAdversarialTestAsync(pipeline, dryRunResult, session.Intent!, ct);
+            session.AdversarialTestResult = adversarialResult;
+            if (!adversarialResult.Skipped) session.LlmCallCount++;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Adversarial testing failed for session {SessionId}", sessionId);
+            adversarialResult = new AdversarialTestResult { Passed = true, Skipped = true, SkipReason = "Adversarial testing encountered an error." };
+            session.AdversarialTestResult = adversarialResult;
+        }
+
+        yield return Progress(SetupPhase.AdversarialTest, SetupProgressType.Progress,
+            adversarialResult.Skipped
+                ? $"Adversarial testing skipped: {adversarialResult.SkipReason}"
+                : adversarialResult.Passed
+                    ? "Adversarial testing passed — pipeline is resilient."
+                    : $"Adversarial testing found {adversarialResult.FragileBlocks.Count} fragile block(s).",
+            adversarialResult.FragileBlocks.Count > 0
+                ? $"Fragile: {string.Join(", ", adversarialResult.FragileBlocks)}"
+                : null);
+
         // Phase 6: QC validation
         session.CurrentPhase = SetupPhase.QcValidation;
         yield return Progress(SetupPhase.QcValidation, SetupProgressType.Thinking, "Validating pipeline against your original intent...");
@@ -278,7 +306,7 @@ public class ComposableSetupPipeline(
         session.CurrentPhase = SetupPhase.Checkpoint2;
         session.LastActivityAt = DateTime.UtcNow;
 
-        var humanSummary = BuildHumanSummary(session.Intent!, pipeline, dryRunResult, qcResult);
+        var humanSummary = BuildHumanSummary(session.Intent!, pipeline, dryRunResult, qcResult, adversarialResult);
 
         yield return new SetupProgress
         {
@@ -290,7 +318,8 @@ public class ComposableSetupPipeline(
                 Pipeline = pipeline,
                 HumanSummary = humanSummary,
                 DryRun = dryRunResult,
-                QcValidation = qcResult
+                QcValidation = qcResult,
+                AdversarialTest = adversarialResult
             },
             Detail = $"Session: {session.Id}"
         };
@@ -328,18 +357,23 @@ public class ComposableSetupPipeline(
                 var dryRunResult = await ExecuteDryRunAsync(revisedPipeline, ct);
                 session.DryRunResult = dryRunResult;
 
+                var adversarialResult = await RunAdversarialTestAsync(revisedPipeline, dryRunResult, session.Intent!, ct);
+                session.AdversarialTestResult = adversarialResult;
+                if (!adversarialResult.Skipped) session.LlmCallCount++;
+
                 var qcResult = await ValidateWithQcAsync(session.Intent!, revisedPipeline, dryRunResult, ct);
                 session.QcResult = qcResult;
                 session.LlmCallCount++;
 
-                var humanSummary = BuildHumanSummary(session.Intent!, revisedPipeline, dryRunResult, qcResult);
+                var humanSummary = BuildHumanSummary(session.Intent!, revisedPipeline, dryRunResult, qcResult, adversarialResult);
 
                 proposal = new PipelineProposal
                 {
                     Pipeline = revisedPipeline,
                     HumanSummary = humanSummary,
                     DryRun = dryRunResult,
-                    QcValidation = qcResult
+                    QcValidation = qcResult,
+                    AdversarialTest = adversarialResult
                 };
             }
             catch (Exception ex)
@@ -592,7 +626,8 @@ public class ComposableSetupPipeline(
             ExpectJson = true,
             Temperature = 0.3f,
             MaxTokens = 1024,
-            UsageType = LlmUsageType.WatchSetup
+            UsageType = LlmUsageType.WatchSetup,
+            PreferLargeModel = true
         }, ct);
 
         if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
@@ -702,7 +737,9 @@ public class ComposableSetupPipeline(
             {
               "valid": true/false,
               "issues": ["list of problems found, empty if none"],
-              "suggestions": ["list of improvement suggestions, empty if none"]
+              "suggestions": ["list of improvement suggestions, empty if none"],
+              "blockJustifications": { "block-id": "why this block is necessary" },
+              "unjustifiedBlocks": ["block IDs that cannot be justified"]
             }
             
             Check for:
@@ -710,6 +747,8 @@ public class ComposableSetupPipeline(
             2. Are the right comparison/detection blocks used for the change type?
             3. Is notification configured if the user requested it?
             4. Are there missing blocks that would improve accuracy?
+            5. For each block, provide a justification of why it exists in blockJustifications.
+            6. List any block IDs you cannot justify in unjustifiedBlocks.
             
             Respond ONLY with the JSON object.
             """;
@@ -718,8 +757,9 @@ public class ComposableSetupPipeline(
         {
             ExpectJson = true,
             Temperature = 0.2f,
-            MaxTokens = 512,
-            UsageType = LlmUsageType.Validation
+            MaxTokens = 1024,
+            UsageType = LlmUsageType.Validation,
+            PreferLargeModel = true
         }, ct);
 
         if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
@@ -946,8 +986,120 @@ public class ComposableSetupPipeline(
         }
     }
 
+    private async Task<AdversarialTestResult> RunAdversarialTestAsync(
+        PipelineDefinition pipeline, DryRunResult dryRun, ParsedIntent intent, CancellationToken ct)
+    {
+        if (!dryRun.Success)
+        {
+            return new AdversarialTestResult
+            {
+                Passed = true,
+                Skipped = true,
+                SkipReason = "Dry run failed — adversarial testing requires a working pipeline."
+            };
+        }
+
+        var hasLargeModel = await llmChain.HasLargeModelAsync(ct);
+        if (!hasLargeModel)
+        {
+            return new AdversarialTestResult
+            {
+                Passed = true,
+                Skipped = true,
+                SkipReason = "No large model available — adversarial testing requires a large model."
+            };
+        }
+
+        var blockSummary = string.Join("\n",
+            pipeline.Blocks.Select(b => $"  - {b.Id} ({b.Type})"));
+
+        var prompt = $$"""
+            You are an adversarial tester for website monitoring pipelines.
+            
+            Pipeline blocks:
+            {{blockSummary}}
+            
+            User intent: {{intent.Intent}}
+            URL: {{intent.Url}}
+            
+            Imagine 3 realistic mutations that could happen to the target page:
+            1. A CSS class or element ID is renamed
+            2. The data format changes (e.g. currency symbol, date format)
+            3. The page is completely redesigned with new structure
+            
+            For each mutation, predict which pipeline blocks would break (become "fragile").
+            A block is fragile if it relies on specific selectors, class names, or structure
+            that would change under the mutation.
+            
+            Respond with a JSON object:
+            {
+              "mutations": [
+                {
+                  "description": "short description of the mutation",
+                  "predictedFragileBlocks": ["block-id-1", "block-id-2"]
+                }
+              ]
+            }
+            
+            Respond ONLY with the JSON object.
+            """;
+
+        var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        {
+            ExpectJson = true,
+            Temperature = 0.3f,
+            MaxTokens = 512,
+            UsageType = LlmUsageType.AdversarialTest,
+            PreferLargeModel = true
+        }, ct);
+
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
+        {
+            return new AdversarialTestResult
+            {
+                Passed = true,
+                Skipped = true,
+                SkipReason = $"LLM call failed: {response.ErrorMessage ?? "empty response"}"
+            };
+        }
+
+        try
+        {
+            var analysis = DeserializeOrThrow<MutationAnalysis>(response.Content, "MutationAnalysis");
+            var allFragile = analysis.Mutations
+                .SelectMany(m => m.PredictedFragileBlocks ?? [])
+                .Distinct()
+                .ToList();
+
+            var mutationsPassed = analysis.Mutations.Count(m => (m.PredictedFragileBlocks ?? []).Count == 0);
+
+            return new AdversarialTestResult
+            {
+                Passed = allFragile.Count == 0,
+                MutationsTested = analysis.Mutations.Count,
+                MutationsPassed = mutationsPassed,
+                FragileBlocks = allFragile,
+                Warnings = analysis.Mutations
+                    .Where(m => (m.PredictedFragileBlocks ?? []).Count > 0)
+                    .Select(m => $"{m.Description}: {string.Join(", ", m.PredictedFragileBlocks!)}")
+                    .ToList()
+            };
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to parse adversarial test response");
+            return new AdversarialTestResult
+            {
+                Passed = true,
+                Skipped = true,
+                SkipReason = $"Failed to parse response: {ex.Message}"
+            };
+        }
+    }
+
     private static string BuildHumanSummary(
-        ParsedIntent intent, PipelineDefinition pipeline, DryRunResult dryRun, QcResult qc)
+        ParsedIntent intent, PipelineDefinition pipeline, DryRunResult dryRun, QcResult qc,
+        AdversarialTestResult? adversarial = null)
     {
         var parts = new List<string>
         {
@@ -969,6 +1121,21 @@ public class ComposableSetupPipeline(
         if (qc.Suggestions.Count > 0)
             parts.Add($"**Suggestions:** {string.Join(", ", qc.Suggestions)}");
 
+        if (qc.UnjustifiedBlocks.Count > 0)
+            parts.Add($"**Unjustified blocks:** {string.Join(", ", qc.UnjustifiedBlocks)}");
+
+        if (adversarial is not null && !adversarial.Skipped)
+        {
+            if (adversarial.Passed)
+                parts.Add("**Adversarial test:** ✓ Pipeline is resilient to mutations");
+            else
+                parts.Add($"**Adversarial test:** ⚠ {adversarial.FragileBlocks.Count} fragile block(s): {string.Join(", ", adversarial.FragileBlocks)}");
+        }
+        else if (adversarial is { Skipped: true })
+        {
+            parts.Add($"**Adversarial test:** Skipped — {adversarial.SkipReason}");
+        }
+
         return string.Join("\n", parts);
     }
 
@@ -989,6 +1156,17 @@ public class ComposableSetupPipeline(
             return TimeSpan.FromDays(Math.Max(1, days));
 
         return TimeSpan.FromMinutes(30);
+    }
+
+    private record MutationAnalysis
+    {
+        public List<MutationEntry> Mutations { get; init; } = [];
+    }
+
+    private record MutationEntry
+    {
+        public string Description { get; init; } = "";
+        public List<string> PredictedFragileBlocks { get; init; } = [];
     }
 
     private static T DeserializeOrThrow<T>(string json, string typeName)
