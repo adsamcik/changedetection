@@ -39,6 +39,12 @@ public class AppSettings
     public int ChangeEventRetentionDays { get; set; } = 90;
     
     /// <summary>
+    /// Hard ceiling for snapshot retention (in days). Per-watch values cannot exceed this.
+    /// Set to 0 to disable the ceiling.
+    /// </summary>
+    public int MaxRetentionDays { get; set; } = 180;
+    
+    /// <summary>
     /// Whether to use LLM for change summarization by default.
     /// </summary>
     public bool UseLlmForSummaries { get; set; } = true;

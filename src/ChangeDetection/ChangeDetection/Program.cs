@@ -184,6 +184,9 @@ builder.Services.AddScoped(sp =>
     new LiteDbRepository<ChangeEvent>(sp.GetRequiredService<LiteDbContext>(), "events"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<Category>(sp.GetRequiredService<LiteDbContext>(), "categories"));
+// TODO: WatchGroup entity not yet implemented
+// builder.Services.AddScoped(sp => 
+//     new LiteDbRepository<WatchGroup>(sp.GetRequiredService<LiteDbContext>(), "watch_groups"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
 builder.Services.AddScoped(sp => 
@@ -210,6 +213,11 @@ builder.Services.AddScoped<IRepository<View>>(sp =>
     new TenantRepository<View>(
         sp.GetRequiredService<LiteDbRepository<View>>(),
         sp.GetRequiredService<IUserContext>()));
+// TODO: WatchGroup entity not yet implemented
+// builder.Services.AddScoped<IRepository<WatchGroup>>(sp => 
+//     new TenantRepository<WatchGroup>(
+//         sp.GetRequiredService<LiteDbRepository<WatchGroup>>(),
+//         sp.GetRequiredService<IUserContext>()));
 builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
     new TenantRepository<NotificationOutboxEntry>(
         sp.GetRequiredService<LiteDbRepository<NotificationOutboxEntry>>(),
@@ -235,6 +243,7 @@ builder.Services.AddScoped<IRepository<BlockExecutionSnapshotEntity>>(sp =>
 builder.Services.AddSingleton<PlaywrightFetcher>();
 builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<PlaywrightFetcher>());
 builder.Services.AddSingleton<ILlmLogService, LlmLogService>();
+builder.Services.AddSingleton<IRobotsTxtChecker, RobotsTxtChecker>();
 
 // LLM Kernel Factories for provider-specific kernel creation
 builder.Services.AddSingleton<ILlmKernelFactory, OllamaKernelFactory>();
@@ -249,6 +258,8 @@ builder.Services.AddScoped<IDomCompactor, DomCompactor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
 builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
+// TODO: IWatchGroupService and ServerWatchGroupService not yet implemented
+// builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
@@ -418,6 +429,10 @@ app.MapGroup("/api/categories")
 app.MapGroup("/api/views")
     .RequireAuthenticationInSsoMode(builder.Configuration)
     .MapViewEndpoints();
+// TODO: WatchGroupEndpoints not yet implemented
+// app.MapGroup("/api/groups")
+//     .RequireAuthenticationInSsoMode(builder.Configuration)
+//     .MapWatchGroupEndpoints();
 
 // LLM provider management requires admin in SSO mode
 app.MapGroup("/api/llm")
@@ -438,6 +453,11 @@ app.MapGroup("/api/notifications")
 app.MapGroup("/api/debug/pipeline")
     .RequireAdminInSsoMode(builder.Configuration)
     .MapPipelineDebugEndpoints();
+
+// Change feed endpoints for history, CSV export, and RSS
+app.MapGroup("/api/feeds")
+    .RequireAuthenticationInSsoMode(builder.Configuration)
+    .MapFeedEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")

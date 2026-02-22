@@ -88,6 +88,11 @@ public class WatchedSite : IOwnedEntity
     /// If null, the watch belongs to the default "Uncategorized" category.
     /// </summary>
     public Guid? CategoryId { get; set; }
+
+    /// <summary>
+    /// Optional membership in a WatchGroup for aggregate monitoring.
+    /// </summary>
+    public Guid? GroupId { get; set; }
     
     /// <summary>
     /// LLM-generated tags for organizing and searching watches.
@@ -220,6 +225,22 @@ public class WatchedSite : IOwnedEntity
     /// Null for legacy watches that haven't been migrated.
     /// </summary>
     public string? PipelineDefinitionJson { get; set; }
+
+    /// <summary>
+    /// Per-watch retention override in days. Null uses global default.
+    /// Capped by AppSettings.MaxRetentionDays.
+    /// </summary>
+    public int? RetentionDays { get; set; }
+
+    /// <summary>
+    /// Whether the user acknowledged the robots.txt status.
+    /// </summary>
+    public bool RobotsTxtAcknowledged { get; set; }
+
+    /// <summary>
+    /// Cached robots.txt compliance status for this watch's URL.
+    /// </summary>
+    public RobotsTxtStatus? RobotsTxtStatus { get; set; }
 
     /// <summary>
     /// HTML snapshot captured at setup time, used by Layer 2 auto-healing
