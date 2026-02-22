@@ -35,4 +35,28 @@ public record SearchConfig
 
     /// <summary>Maximum results to return per check.</summary>
     public int MaxResults { get; init; } = 20;
+
+    /// <summary>
+    /// Optional rules for auto-promoting search results to standalone watches.
+    /// When a new search result matches a rule, a URL watch is created automatically.
+    /// </summary>
+    public List<AutoPromotionRule> AutoPromotionRules { get; init; } = [];
+}
+
+/// <summary>
+/// A rule that automatically promotes matching search results to standalone watches.
+/// </summary>
+public record AutoPromotionRule
+{
+    /// <summary>Glob pattern to match against result URLs (e.g., "*github.com/*/releases*").</summary>
+    public string? UrlPattern { get; init; }
+
+    /// <summary>Substring to match in result titles (case-insensitive).</summary>
+    public string? TitleContains { get; init; }
+
+    /// <summary>Whether this rule is active.</summary>
+    public bool IsEnabled { get; init; } = true;
+
+    /// <summary>Optional CSS selector to apply to the promoted watch.</summary>
+    public string? CssSelector { get; init; }
 }

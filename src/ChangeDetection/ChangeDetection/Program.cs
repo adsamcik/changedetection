@@ -144,6 +144,9 @@ builder.Services.AddHttpClient("SearXNG");
 // Named HttpClient for Google Custom Search API
 builder.Services.AddHttpClient("GoogleCSE");
 
+// Named HttpClient for Brave Search API
+builder.Services.AddHttpClient("BraveSearch");
+
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");
 
@@ -254,7 +257,9 @@ builder.Services.AddSingleton<ILlmKernelFactory, GeminiKernelFactory>();
 builder.Services.AddSingleton<ILlmKernelFactory, ClaudeKernelFactory>();
 builder.Services.AddSingleton<ILlmKernelFactory, CopilotKernelFactory>();
 
-builder.Services.AddScoped<IContentExtractor, ContentExtractor>();;
+builder.Services.AddScoped<IContentExtractor, ContentExtractor>();
+builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
+builder.Services.AddSingleton<ITrustAutopilot, TrustAutopilot>();
 builder.Services.AddScoped<IDomCompactor, DomCompactor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
@@ -323,7 +328,16 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var logger = sp.GetRequiredService<ILogger<GoogleCseSearchProvider>>();
     return new GoogleCseSearchProvider(httpClient, settings, logger);
 });
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient("BraveSearch");
+    var settings = sp.GetRequiredService<IOptions<SearchSettings>>();
+    var logger = sp.GetRequiredService<ILogger<BraveSearchProvider>>();
+    return new BraveSearchProvider(httpClient, settings, logger);
+});
 builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
+builder.Services.AddSingleton<MultiProviderSearchService>();
 
 // Composable pipeline block system
 builder.Services.AddSingleton<IBlockRegistry>(sp =>

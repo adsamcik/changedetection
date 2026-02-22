@@ -14,6 +14,9 @@ public class SearchSettingsDto
     /// <summary>Google Custom Search Engine ID (cx parameter).</summary>
     public string? GoogleCseEngineId { get; set; }
 
+    /// <summary>Brave Search API subscription token.</summary>
+    public string? BraveApiKey { get; set; }
+
     /// <summary>Default search provider ID.</summary>
     public string DefaultProvider { get; set; } = "searxng";
 

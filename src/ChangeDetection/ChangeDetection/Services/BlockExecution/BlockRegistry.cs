@@ -246,5 +246,15 @@ public class BlockRegistry : IBlockRegistry
                 new PortDescriptor { Name = "text", Type = PortType.PlainText, Description = "Diffable text representation" }
             ],
             factory: _ => new SearchBlock());
+
+        // RankingSnapshot: search results → position-sorted ranking text for SERP tracking
+        registry.Register("RankingSnapshot",
+            inputPorts: [new PortDescriptor { Name = "searchResults", Type = PortType.SearchResults, Description = "Search results from SearchBlock" }],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "rankingText", Type = PortType.PlainText, Description = "Position-sorted ranking snapshot" },
+                new PortDescriptor { Name = "rankingData", Type = PortType.SearchResults, Description = "Structured ranking data" }
+            ],
+            factory: _ => new RankingSnapshotBlock());
     }
 }

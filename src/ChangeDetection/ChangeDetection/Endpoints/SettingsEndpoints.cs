@@ -194,6 +194,7 @@ public static class SettingsEndpoints
             SearxngUrl = settings.SearxngUrl,
             GoogleCseApiKey = settings.GoogleCseApiKey is not null ? "***configured***" : null,
             GoogleCseEngineId = settings.GoogleCseEngineId,
+            BraveApiKey = settings.BraveApiKey is not null ? "***configured***" : null,
             DefaultProvider = settings.DefaultProvider,
             DefaultMaxResults = settings.DefaultMaxResults,
             TimeoutSeconds = settings.TimeoutSeconds,

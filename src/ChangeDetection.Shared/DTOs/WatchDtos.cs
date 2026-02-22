@@ -1108,5 +1108,23 @@ public class SearchConfigDto
 
     /// <summary>Maximum results per check.</summary>
     public int MaxResults { get; set; } = 20;
+
+    /// <summary>Rules for auto-promoting matching search results to standalone watches.</summary>
+    public List<AutoPromotionRuleDto> AutoPromotionRules { get; set; } = [];
+}
+
+public class AutoPromotionRuleDto
+{
+    /// <summary>Glob pattern to match against result URLs (e.g., "*github.com/*/releases*").</summary>
+    public string? UrlPattern { get; set; }
+
+    /// <summary>Substring to match in result titles (case-insensitive).</summary>
+    public string? TitleContains { get; set; }
+
+    /// <summary>Whether this rule is active.</summary>
+    public bool IsEnabled { get; set; } = true;
+
+    /// <summary>Optional CSS selector for the promoted watch.</summary>
+    public string? CssSelector { get; set; }
 }
 
