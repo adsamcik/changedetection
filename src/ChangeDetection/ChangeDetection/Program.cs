@@ -184,9 +184,8 @@ builder.Services.AddScoped(sp =>
     new LiteDbRepository<ChangeEvent>(sp.GetRequiredService<LiteDbContext>(), "events"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<Category>(sp.GetRequiredService<LiteDbContext>(), "categories"));
-// TODO: WatchGroup entity not yet implemented
-// builder.Services.AddScoped(sp => 
-//     new LiteDbRepository<WatchGroup>(sp.GetRequiredService<LiteDbContext>(), "watch_groups"));
+builder.Services.AddScoped(sp =>
+    new LiteDbRepository<WatchGroup>(sp.GetRequiredService<LiteDbContext>(), "watch_groups"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
 builder.Services.AddScoped(sp => 
@@ -213,11 +212,10 @@ builder.Services.AddScoped<IRepository<View>>(sp =>
     new TenantRepository<View>(
         sp.GetRequiredService<LiteDbRepository<View>>(),
         sp.GetRequiredService<IUserContext>()));
-// TODO: WatchGroup entity not yet implemented
-// builder.Services.AddScoped<IRepository<WatchGroup>>(sp => 
-//     new TenantRepository<WatchGroup>(
-//         sp.GetRequiredService<LiteDbRepository<WatchGroup>>(),
-//         sp.GetRequiredService<IUserContext>()));
+builder.Services.AddScoped<IRepository<WatchGroup>>(sp =>
+    new TenantRepository<WatchGroup>(
+        sp.GetRequiredService<LiteDbRepository<WatchGroup>>(),
+        sp.GetRequiredService<IUserContext>()));
 builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
     new TenantRepository<NotificationOutboxEntry>(
         sp.GetRequiredService<LiteDbRepository<NotificationOutboxEntry>>(),
@@ -258,8 +256,7 @@ builder.Services.AddScoped<IDomCompactor, DomCompactor>();
 builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
 builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
-// TODO: IWatchGroupService and ServerWatchGroupService not yet implemented
-// builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
+builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
@@ -311,8 +308,9 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var httpClient = httpClientFactory.CreateClient("SearXNG");
     var settings = sp.GetRequiredService<IOptions<SearchSettings>>();
+    var urlValidator = sp.GetRequiredService<IUrlValidator>();
     var logger = sp.GetRequiredService<ILogger<SearXNGSearchProvider>>();
-    return new SearXNGSearchProvider(httpClient, settings, logger);
+    return new SearXNGSearchProvider(httpClient, settings, urlValidator, logger);
 });
 
 // Composable pipeline block system
@@ -429,10 +427,9 @@ app.MapGroup("/api/categories")
 app.MapGroup("/api/views")
     .RequireAuthenticationInSsoMode(builder.Configuration)
     .MapViewEndpoints();
-// TODO: WatchGroupEndpoints not yet implemented
-// app.MapGroup("/api/groups")
-//     .RequireAuthenticationInSsoMode(builder.Configuration)
-//     .MapWatchGroupEndpoints();
+app.MapGroup("/api/groups")
+    .RequireAuthenticationInSsoMode(builder.Configuration)
+    .MapWatchGroupEndpoints();
 
 // LLM provider management requires admin in SSO mode
 app.MapGroup("/api/llm")

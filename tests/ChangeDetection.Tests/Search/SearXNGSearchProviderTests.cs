@@ -187,14 +187,33 @@ public class SearXNGSearchProviderTests : TestBase
         await Task.CompletedTask;
     }
 
+    [Test]
+    public async Task SearchAsync_WhenUrlBlockedBySsrf_ReturnsError()
+    {
+        var httpClient = new HttpClient();
+        var settings = Microsoft.Extensions.Options.Options.Create(
+            new Core.Entities.SearchSettings { SearxngUrl = "http://169.254.169.254" });
+        var urlValidator = NSubstitute.Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
+        urlValidator.Validate("http://169.254.169.254").Returns("URL targets a blocked IP range");
+        var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<SearXNGSearchProvider>();
+
+        var provider = new SearXNGSearchProvider(httpClient, settings, urlValidator, logger);
+        var result = await provider.SearchAsync(new SearchQuery { Query = "test" });
+
+        result.IsSuccess.ShouldBeFalse();
+        result.ErrorMessage.ShouldContain("security policy");
+    }
+
     private static (SearXNGSearchProvider provider, HttpClient httpClient) CreateProvider(
         string? searxngUrl = "http://localhost:8080")
     {
         var httpClient = new HttpClient();
         var settings = Microsoft.Extensions.Options.Options.Create(
             new Core.Entities.SearchSettings { SearxngUrl = searxngUrl });
+        var urlValidator = NSubstitute.Substitute.For<ChangeDetection.Core.Pipeline.IUrlValidator>();
+        urlValidator.Validate(NSubstitute.Arg.Any<string>()).Returns((string?)null); // allow all URLs
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<SearXNGSearchProvider>();
 
-        return (new SearXNGSearchProvider(httpClient, settings, logger), httpClient);
+        return (new SearXNGSearchProvider(httpClient, settings, urlValidator, logger), httpClient);
     }
 }

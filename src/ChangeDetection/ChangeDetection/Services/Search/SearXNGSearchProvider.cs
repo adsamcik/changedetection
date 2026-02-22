@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -14,6 +15,7 @@ namespace ChangeDetection.Services.Search;
 public class SearXNGSearchProvider(
     HttpClient httpClient,
     IOptions<SearchSettings> settings,
+    IUrlValidator urlValidator,
     ILogger<SearXNGSearchProvider> logger) : ISearchProvider
 {
     public string ProviderId => "searxng";
@@ -33,6 +35,20 @@ public class SearXNGSearchProvider(
                 Results = [],
                 IsSuccess = false,
                 ErrorMessage = "SearXNG URL is not configured. Set SearchSettings:SearxngUrl in settings."
+            };
+        }
+
+        // SSRF protection: validate the configured base URL
+        var validationError = urlValidator.Validate(baseUrl);
+        if (validationError is not null)
+        {
+            return new SearchResultSet
+            {
+                ProviderId = ProviderId,
+                Query = query.Query,
+                Results = [],
+                IsSuccess = false,
+                ErrorMessage = $"SearXNG URL blocked by security policy: {validationError}"
             };
         }
 
