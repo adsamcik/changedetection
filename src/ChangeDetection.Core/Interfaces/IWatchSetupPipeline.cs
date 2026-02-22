@@ -247,6 +247,12 @@ public class PipelineSession
     /// Auto-set based on content type, can be overridden by user.
     /// </summary>
     public bool? SchemaEnabled { get; set; }
+
+    /// <summary>
+    /// Numeric thresholds detected from user intent (e.g., "below $30").
+    /// Used to create proper numeric filter rules instead of keyword-based ones.
+    /// </summary>
+    public List<DetectedThreshold> DetectedThresholds { get; set; } = [];
     
     // Iteration tracking
     public int CurrentIteration { get; set; }
@@ -488,3 +494,13 @@ public class WatchConfiguration
     /// </summary>
     public List<string> ImmediateMatches { get; set; } = [];
 }
+
+/// <summary>
+/// A numeric threshold extracted from user intent.
+/// E.g., "below $30" → { FieldHint: "price", Operator: LessThan, Value: 30 }
+/// </summary>
+public record DetectedThreshold(
+    string? FieldHint,
+    FilterOperator Operator,
+    decimal Value,
+    string OriginalText);

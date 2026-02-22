@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
@@ -1024,6 +1026,15 @@ public class WatchSetupPipeline(
         session.UserIntent = urlExtraction.ExtractUserIntent(session.OriginalInput);
         logger.LogDebug("Extracted user intent: {Intent}", session.UserIntent);
 
+        // Detect numeric thresholds from user intent (e.g., "below $30")
+        session.DetectedThresholds = DetectThresholds(session.OriginalInput);
+        if (session.DetectedThresholds.Count > 0)
+        {
+            logger.LogInformation("Detected {Count} threshold(s): {Thresholds}",
+                session.DetectedThresholds.Count,
+                string.Join(", ", session.DetectedThresholds.Select(t => t.OriginalText)));
+        }
+
         if (session.ExtractedUrls.Count == 0)
         {
             session.FailedUrlExtractionAttempts++;
@@ -1693,10 +1704,69 @@ public class WatchSetupPipeline(
     private static List<FilterRule> BuildFilterRulesFromIntent(PipelineSession session)
     {
         var keywords = session.ContentAnalysis?.FilterKeywords ?? [];
-        if (keywords.Count == 0)
+        var thresholds = session.DetectedThresholds;
+        
+        if (keywords.Count == 0 && thresholds.Count == 0)
             return [];
 
         var rules = new List<FilterRule>();
+
+        // First, create threshold-based rules (numeric conditions like "below $30")
+        if (thresholds.Count > 0 && session.SchemaEnabled == true && session.DiscoveredSchema?.Fields.Count > 0)
+        {
+            foreach (var threshold in thresholds)
+            {
+                // Find matching numeric field in schema
+                var numericFields = session.DiscoveredSchema.Fields
+                    .Where(f => f.Type is "number" or "price" or "decimal" or "integer" or "currency")
+                    .ToList();
+
+                // If we have a field hint, try to match it
+                var targetField = threshold.FieldHint != null
+                    ? numericFields.FirstOrDefault(f => f.Name.Contains(threshold.FieldHint, StringComparison.OrdinalIgnoreCase))
+                      ?? numericFields.FirstOrDefault()
+                    : numericFields.FirstOrDefault();
+
+                if (targetField != null)
+                {
+                    var opLabel = threshold.Operator == FilterOperator.LessThan ? "drops below" : "rises above";
+                    rules.Add(new FilterRule
+                    {
+                        Name = $"Threshold: {targetField.Name} {opLabel} {threshold.Value}",
+                        Description = $"Notify when {targetField.Name} {opLabel} {threshold.Value} (from: \"{threshold.OriginalText}\")",
+                        Conditions =
+                        [
+                            new FilterCondition
+                            {
+                                FieldName = targetField.Name,
+                                Operator = threshold.Operator,
+                                Value = threshold.Value.ToString(CultureInfo.InvariantCulture)
+                            }
+                        ],
+                        Actions =
+                        [
+                            new FilterAction
+                            {
+                                Type = FilterActionType.ImmediateNotify,
+                                Parameters = new Dictionary<string, string>
+                                {
+                                    ["reason"] = $"{targetField.Name} {opLabel} {threshold.Value}"
+                                }
+                            }
+                        ],
+                        Priority = 200, // Higher priority than keyword rules
+                        IsEnabled = true
+                    });
+
+                    // Remove threshold value from keywords to avoid duplicate rules
+                    keywords = keywords.Where(k => k != threshold.Value.ToString(CultureInfo.InvariantCulture)
+                        && k != $"${threshold.Value}").ToList();
+                }
+            }
+        }
+
+        if (keywords.Count == 0)
+            return rules;
 
         if (session.SchemaEnabled == true && session.DiscoveredSchema?.Fields.Count > 0)
         {
@@ -1780,6 +1850,75 @@ public class WatchSetupPipeline(
         }
 
         return rules;
+    }
+
+    /// <summary>
+    /// Detects numeric threshold conditions from the user's original input.
+    /// Matches patterns like "below $30", "under 50", "above €100", "less than 25.99".
+    /// </summary>
+    private static List<DetectedThreshold> DetectThresholds(string userIntent)
+    {
+        if (string.IsNullOrWhiteSpace(userIntent))
+            return [];
+
+        var thresholds = new List<DetectedThreshold>();
+
+        // Pattern: (below|under|less than|cheaper than) [$€£]?NUMBER
+        var belowPattern = new Regex(
+            @"(?:below|under|less\s+than|cheaper\s+than|drops?\s+(?:below|under|to))\s*[\$€£]?\s*(\d+(?:[.,]\d+)?)",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match match in belowPattern.Matches(userIntent))
+        {
+            if (decimal.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+            {
+                thresholds.Add(new DetectedThreshold(
+                    FieldHint: DetectFieldHint(userIntent, match),
+                    Operator: FilterOperator.LessThan,
+                    Value: value,
+                    OriginalText: match.Value.Trim()));
+            }
+        }
+
+        // Pattern: (above|over|more than|exceeds) [$€£]?NUMBER
+        var abovePattern = new Regex(
+            @"(?:above|over|more\s+than|exceeds?|rises?\s+(?:above|over|to))\s*[\$€£]?\s*(\d+(?:[.,]\d+)?)",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match match in abovePattern.Matches(userIntent))
+        {
+            if (decimal.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+            {
+                thresholds.Add(new DetectedThreshold(
+                    FieldHint: DetectFieldHint(userIntent, match),
+                    Operator: FilterOperator.GreaterThan,
+                    Value: value,
+                    OriginalText: match.Value.Trim()));
+            }
+        }
+
+        return thresholds;
+    }
+
+    /// <summary>
+    /// Tries to infer which field a threshold applies to based on nearby words.
+    /// </summary>
+    private static string? DetectFieldHint(string input, Match thresholdMatch)
+    {
+        // Look at words near the threshold for field hints
+        var start = Math.Max(0, thresholdMatch.Index - 40);
+        var context = input[start..thresholdMatch.Index].ToLowerInvariant();
+
+        if (context.Contains("price") || context.Contains("cost") || context.Contains("$") || context.Contains("€") || context.Contains("£"))
+            return "price";
+        if (context.Contains("stock") || context.Contains("inventory") || context.Contains("quantity"))
+            return "stock";
+        if (context.Contains("rating") || context.Contains("score") || context.Contains("review"))
+            return "rating";
+        if (context.Contains("discount") || context.Contains("sale") || context.Contains("off"))
+            return "price";
+
+        return null;
     }
 
     private static PipelineResult CreateFailedResult(PipelineSession session, PipelineStage stage, string error)
