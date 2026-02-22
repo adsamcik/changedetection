@@ -111,6 +111,7 @@ public partial class SelectorValidationStage(
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(content.Html ?? string.Empty);
+        var totalElements = doc.DocumentNode.Descendants().Count();
 
         // Try the original selector first, then normalized alternatives
         var selectorsToTry = GetSelectorAlternatives(selector.Selector);
@@ -135,7 +136,7 @@ public partial class SelectorValidationStage(
                 // Found matches with this selector variant
                 var firstNode = nodeList[0];
                 var sample = CleanText(firstNode.InnerText);
-                var quality = CalculateMatchQuality(sample, analysis, nodeList.Count);
+                var quality = CalculateMatchQuality(sample, analysis, nodeList.Count, totalElements);
 
                 // Create a new selector with the working selector string
                 var workingSelector = new GeneratedSelector
@@ -148,6 +149,9 @@ public partial class SelectorValidationStage(
                     Priority = selector.Priority
                 };
 
+                var isBroad = totalElements > 0 && nodeList.Count > 2 && 
+                    (double)nodeList.Count / totalElements > 0.2;
+
                 return new SelectorValidation
                 {
                     Selector = workingSelector,
@@ -155,9 +159,11 @@ public partial class SelectorValidationStage(
                     MatchCount = nodeList.Count,
                     ExtractedSample = TruncateText(sample, 500),
                     MatchQuality = quality,
-                    ValidationMessage = nodeList.Count == 1 
-                        ? "Unique match found" 
-                        : $"Found {nodeList.Count} matches"
+                    ValidationMessage = isBroad
+                        ? $"Broad selector — matches {nodeList.Count} of {totalElements} elements"
+                        : nodeList.Count == 1 
+                            ? "Unique match found" 
+                            : $"Found {nodeList.Count} matches"
                 };
             }
         }
@@ -344,7 +350,7 @@ public partial class SelectorValidationStage(
         }
     }
 
-    private static float CalculateMatchQuality(string extractedContent, ContentAnalysis analysis, int matchCount)
+    private static float CalculateMatchQuality(string extractedContent, ContentAnalysis analysis, int matchCount, int totalElements = 0)
     {
         float quality = 0.5f;
 
@@ -355,6 +361,18 @@ public partial class SelectorValidationStage(
             quality += 0.1f;
         else if (matchCount > 20)
             quality -= 0.2f;
+
+        // Selector specificity gate: penalize selectors matching too large a portion of the page
+        if (totalElements > 0 && matchCount > 2)
+        {
+            var matchRatio = (double)matchCount / totalElements;
+            if (matchRatio > 0.5)
+                quality -= 0.4f; // Extremely broad — nearly the whole page
+            else if (matchRatio > 0.2)
+                quality -= 0.25f; // Very broad — large chunk of page
+            else if (matchCount > 500)
+                quality -= 0.2f; // Too many absolute matches regardless of ratio
+        }
 
         // Content length check
         var contentLength = extractedContent.Length;
