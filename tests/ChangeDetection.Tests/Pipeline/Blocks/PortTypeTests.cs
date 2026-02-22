@@ -14,7 +14,7 @@ public class PortTypeTests : TestBase
         var values = Enum.GetValues<PortType>();
 
         values.Length.ShouldBe(values.Distinct().Count());
-        values.Length.ShouldBe(10);
+        values.Length.ShouldBe(11);
         await Task.CompletedTask;
     }
 

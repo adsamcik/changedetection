@@ -22,7 +22,9 @@ using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.BlockExecution;
+using ChangeDetection.Services.Search;
 using ChangeDetection.Services.Startup;
+using Microsoft.Extensions.Options;
 using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Services.Persistence;
 using ChangeDetection.Services.Persistence.Migrations;
@@ -135,6 +137,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 // Add HttpClient factory
 builder.Services.AddHttpClient();
+
+// Named HttpClient for SearXNG search provider
+builder.Services.AddHttpClient("SearXNG");
 
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");
@@ -287,6 +292,17 @@ builder.Services.AddHostedService<SetupSessionCleanupService>();
 
 // URL validation for SSRF protection
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
+
+// Search provider configuration
+builder.Services.Configure<SearchSettings>(builder.Configuration.GetSection("SearchSettings"));
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient("SearXNG");
+    var settings = sp.GetRequiredService<IOptions<SearchSettings>>();
+    var logger = sp.GetRequiredService<ILogger<SearXNGSearchProvider>>();
+    return new SearXNGSearchProvider(httpClient, settings, logger);
+});
 
 // Composable pipeline block system
 builder.Services.AddSingleton<IBlockRegistry>(sp =>

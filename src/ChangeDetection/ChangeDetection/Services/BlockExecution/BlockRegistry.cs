@@ -236,5 +236,15 @@ public class BlockRegistry : IBlockRegistry
             inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             factory: _ => new EnrichBlock());
+
+        // Search: query → results + text
+        registry.Register("Search",
+            inputPorts: [new PortDescriptor { Name = "query", Type = PortType.PlainText, Description = "Search query string" }],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "results", Type = PortType.SearchResults, Description = "Structured search results" },
+                new PortDescriptor { Name = "text", Type = PortType.PlainText, Description = "Diffable text representation" }
+            ],
+            factory: _ => new SearchBlock());
     }
 }
