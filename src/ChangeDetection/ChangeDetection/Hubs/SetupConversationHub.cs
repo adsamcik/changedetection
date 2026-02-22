@@ -339,14 +339,29 @@ public class SetupConversationHub(
                 };
                 RecordStateEntry(request.SessionId, errorEntry);
                 await channel.Writer.WriteAsync(errorEntry, CancellationToken.None);
+                
+                // Notify dashboard that this session failed (so it's removed from pending list)
+                try
+                {
+                    var failedSession = sessionManager.GetSession(request.SessionId);
+                    await changeHubContext.Clients.Group(GetUserDashboardGroup()).SendAsync("SetupSessionUpdated", new SetupSessionUpdatedEvent(
+                        request.SessionId,
+                        failedSession?.DisplayName ?? "Failed Setup",
+                        CurrentPrompt: null,
+                        IsProcessing: false,
+                        IsCompleted: true,
+                        IsCancelled: false));
+                }
+                catch { /* Best-effort notification */ }
             }
             finally
             {
-                // Clear actively processing flag when pipeline completes
+                // Clear processing flags when pipeline completes (success or failure)
                 var session = sessionManager.GetSession(request.SessionId);
                 if (session != null)
                 {
                     session.IsActivelyProcessing = false;
+                    session.PendingInput = null;
                     sessionManager.UpdateSession(session);
                 }
                 
@@ -551,6 +566,8 @@ public class SetupConversationHub(
                         if (convSessionAfterRecovery != null)
                         {
                             convSessionAfterRecovery.IsCompleted = true;
+                            convSessionAfterRecovery.PendingInput = null;
+                            convSessionAfterRecovery.IsActivelyProcessing = false;
                             sessionManager.UpdateSession(convSessionAfterRecovery);
                         }
                         
@@ -699,6 +716,8 @@ public class SetupConversationHub(
                 if (convSessionAfterCreate != null)
                 {
                     convSessionAfterCreate.IsCompleted = true;
+                    convSessionAfterCreate.PendingInput = null;
+                    convSessionAfterCreate.IsActivelyProcessing = false;
                     sessionManager.UpdateSession(convSessionAfterCreate);
                 }
                 

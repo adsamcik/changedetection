@@ -990,10 +990,19 @@
 
         hubConnection.On<object>("WatchCreated", async (data) =>
         {
-            // Refresh watches when a new watch is created
+            // Only refresh watches list, NOT pending setups — SetupSessionUpdated handles removal
             await InvokeAsync(async () =>
             {
-                await LoadWatches();
+                try
+                {
+                    var response = await Http.GetAsync("/api/watches");
+                    if (response.IsSuccessStatusCode)
+                    {
+                        watches = await response.Content.ReadFromJsonAsync<List<WatchListItemDto>>() ?? [];
+                        InvalidateCache();
+                    }
+                }
+                catch { /* Ignore load failures during SignalR events */ }
                 StateHasChanged();
             });
         });
