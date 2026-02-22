@@ -16,10 +16,22 @@ public class WatchedSite : IOwnedEntity
     public Guid OwnerId { get; set; } = Guid.Empty;
     
     /// <summary>
-    /// The URL to monitor.
+    /// The URL to monitor. Required for SourceType.Url watches.
+    /// For SourceType.Search, this may be empty or contain a display label.
     /// </summary>
     public required string Url { get; set; }
-    
+
+    /// <summary>
+    /// How this watch acquires content. Defaults to Url (standard HTTP fetching).
+    /// </summary>
+    public SourceType SourceType { get; set; } = SourceType.Url;
+
+    /// <summary>
+    /// Configuration for search-based watches (SourceType.Search).
+    /// Null for URL-based watches.
+    /// </summary>
+    public SearchConfig? SearchConfig { get; set; }
+
     /// <summary>
     /// A friendly name for the watch.
     /// </summary>

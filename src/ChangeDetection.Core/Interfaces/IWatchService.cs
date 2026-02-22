@@ -59,4 +59,14 @@ public class CreateWatchRequest
     /// Filter rules to apply to extracted objects and changes.
     /// </summary>
     public List<FilterRule>? FilterRules { get; set; }
+
+    /// <summary>
+    /// How this watch acquires content. Defaults to Url.
+    /// </summary>
+    public SourceType SourceType { get; set; } = SourceType.Url;
+
+    /// <summary>
+    /// Configuration for search-based watches (when SourceType is Search).
+    /// </summary>
+    public SearchConfig? SearchConfig { get; set; }
 }

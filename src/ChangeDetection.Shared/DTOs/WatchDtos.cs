@@ -48,6 +48,12 @@ public class WatchListItemDto
     
     // Tags with their colors
     public List<TagDto> Tags { get; set; } = [];
+
+    /// <summary>How this watch acquires content.</summary>
+    public SourceTypeDto SourceType { get; set; } = SourceTypeDto.Url;
+
+    /// <summary>Search configuration (when SourceType is Search).</summary>
+    public SearchConfigDto? SearchConfig { get; set; }
 }
 
 /// <summary>
@@ -169,6 +175,12 @@ public class WatchDetailDto
     /// History of selector changes from auto-resolution.
     /// </summary>
     public List<SelectorHistoryEntryDto> SelectorHistory { get; set; } = [];
+
+    /// <summary>How this watch acquires content.</summary>
+    public SourceTypeDto SourceType { get; set; } = SourceTypeDto.Url;
+
+    /// <summary>Search configuration (when SourceType is Search).</summary>
+    public SearchConfigDto? SearchConfig { get; set; }
 }
 
 /// <summary>
@@ -199,6 +211,12 @@ public class WatchCreateDto
     
     // Tag color overrides (tag name -> hex color)
     public Dictionary<string, string> TagColors { get; set; } = [];
+
+    /// <summary>How this watch acquires content. Defaults to Url.</summary>
+    public SourceTypeDto SourceType { get; set; } = SourceTypeDto.Url;
+
+    /// <summary>Search configuration (when SourceType is Search).</summary>
+    public SearchConfigDto? SearchConfig { get; set; }
 }
 
 /// <summary>
@@ -1057,5 +1075,38 @@ public class BulkOperationResultDto
     /// IDs of watches that failed to update with error messages.
     /// </summary>
     public Dictionary<string, string> Failures { get; set; } = [];
+}
+
+/// <summary>
+/// How a watch acquires its content.
+/// </summary>
+public enum SourceTypeDto
+{
+    Url = 0,
+    Search = 1
+}
+
+/// <summary>
+/// DTO for search-based watch configuration.
+/// </summary>
+public class SearchConfigDto
+{
+    /// <summary>The search query to execute periodically.</summary>
+    public required string Query { get; set; }
+
+    /// <summary>Search provider ID (e.g., "searxng"). Null uses the default.</summary>
+    public string? ProviderId { get; set; }
+
+    /// <summary>Search category (e.g., "general", "news").</summary>
+    public string? Category { get; set; }
+
+    /// <summary>Language filter (e.g., "en", "cs").</summary>
+    public string? Language { get; set; }
+
+    /// <summary>Time range filter (e.g., "day", "week", "month").</summary>
+    public string? TimeRange { get; set; }
+
+    /// <summary>Maximum results per check.</summary>
+    public int MaxResults { get; set; } = 20;
 }
 

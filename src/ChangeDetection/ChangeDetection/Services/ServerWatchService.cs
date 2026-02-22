@@ -2,6 +2,7 @@ using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Persistence;
+using ChangeDetection.Services.Search;
 
 namespace ChangeDetection.Services;
 
@@ -109,8 +110,17 @@ public class ServerWatchService : IWatchService
             Notifications = request.Notifications ?? new NotificationSettings(),
             SchemaEnabled = request.SchemaEnabled,
             Schema = request.Schema,
-            FilterRules = request.FilterRules ?? []
+            FilterRules = request.FilterRules ?? [],
+            SourceType = request.SourceType,
+            SearchConfig = request.SearchConfig
         };
+
+        // For search watches, auto-generate the pipeline definition
+        if (watch.SourceType == SourceType.Search && watch.SearchConfig is not null)
+        {
+            watch.PipelineDefinitionJson = SearchPipelineBuilder.BuildSearchPipelineJson(watch.SearchConfig);
+            watch.Name ??= $"Search: {watch.SearchConfig.Query}";
+        }
 
         await _watchRepo.InsertAsync(watch, ct);
         _logger.LogInformation("Created watch {Id} for {Url}", watch.Id, watch.Url);

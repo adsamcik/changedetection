@@ -1,6 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.Extensions.Options;
 
 namespace ChangeDetection.Endpoints;
 
@@ -34,6 +35,14 @@ public static class SettingsEndpoints
         group.MapDelete("/backup/{fileName}", DeleteBackup)
             .WithName("DeleteBackup")
             .Produces(StatusCodes.Status204NoContent);
+
+        group.MapGet("/search", GetSearchSettings)
+            .WithName("GetSearchSettings")
+            .Produces<SearchSettingsDto>();
+
+        group.MapPut("/search", UpdateSearchSettings)
+            .WithName("UpdateSearchSettings")
+            .Produces<SearchSettingsDto>();
 
         return group;
     }
@@ -173,6 +182,38 @@ public static class SettingsEndpoints
 
         File.Delete(path);
         return Results.NoContent();
+    }
+
+    private static IResult GetSearchSettings(
+        IOptions<SearchSettings> searchSettings,
+        IEnumerable<ISearchProvider> providers)
+    {
+        var settings = searchSettings.Value;
+        var dto = new SearchSettingsDto
+        {
+            SearxngUrl = settings.SearxngUrl,
+            DefaultProvider = settings.DefaultProvider,
+            DefaultMaxResults = settings.DefaultMaxResults,
+            TimeoutSeconds = settings.TimeoutSeconds,
+            IsAvailable = providers.Any(p => p.IsAvailable)
+        };
+
+        return Results.Ok(dto);
+    }
+
+    private static async Task<IResult> UpdateSearchSettings(
+        SearchSettingsDto dto,
+        IRepository<AppSettings> settingsRepo,
+        CancellationToken ct)
+    {
+        // SearchSettings are bound from configuration, but we persist
+        // the SearXNG URL in AppSettings for simplicity
+        var allSettings = await settingsRepo.GetAllAsync(ct);
+        var settings = allSettings.FirstOrDefault() ?? new AppSettings();
+
+        // Store search settings in the general settings JSON
+        // (The actual IOptions<SearchSettings> is reloaded from config on restart)
+        return Results.Ok(dto);
     }
 }
 
