@@ -506,7 +506,15 @@ public class WatchSetupPipeline(
                 Session = session
             };
 
-            await ExecuteSchemaDiscoveryAsync(session, ct);
+            // Run schema discovery with heartbeat pulses to keep SignalR alive
+            await foreach (var pulse in WithHeartbeatAsync(
+                ExecuteSchemaDiscoveryAsync(session, ct),
+                PipelineStage.ContentAnalysis,
+                "Analyzing page structure",
+                session, ct))
+            {
+                yield return pulse;
+            }
 
             await RecordStageCompletedAsync(run.Id, PipelineStageNames.SchemaDiscovery,
                 session.DiscoveredSchema != null
@@ -550,14 +558,78 @@ public class WatchSetupPipeline(
             Session = session
         };
 
-        try
+        // Run selector generation with heartbeat pulses using channel pattern (can't yield in try-catch)
+        var selectorChannel = System.Threading.Channels.Channel.CreateUnbounded<PipelineProgress>();
+
+        var selectorTask = Task.Run(async () =>
         {
-            result = await ExecuteSelectorIterationAsync(session, options, ct);
-        }
-        catch (Exception ex)
+            try
+            {
+                var r = await ExecuteSelectorIterationAsync(session, options, ct);
+                // Store result in a completion marker
+                selectorChannel.Writer.TryWrite(new PipelineProgress
+                {
+                    Stage = PipelineStage.SelectorGeneration,
+                    Type = ProgressType.StageCompleted,
+                    Summary = "Selector generation complete",
+                    Session = session,
+                    Result = r
+                });
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Let cancellation propagate naturally
+            }
+            catch (Exception ex)
+            {
+                selectorChannel.Writer.TryWrite(CreateFailedProgress(session, PipelineStage.SelectorGeneration, ex.Message));
+            }
+            finally
+            {
+                selectorChannel.Writer.Complete();
+            }
+        }, ct);
+
+        // Yield heartbeat pulses while waiting for selector generation
+        var selectorElapsed = System.Diagnostics.Stopwatch.StartNew();
+        var selectorHeartbeat = TimeSpan.FromSeconds(8);
+
+        while (!selectorTask.IsCompleted)
         {
-            error = ex;
+            try
+            {
+                await Task.WhenAny(selectorTask, Task.Delay(selectorHeartbeat, ct));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            if (!selectorTask.IsCompleted)
+            {
+                var secs = (int)selectorElapsed.Elapsed.TotalSeconds;
+                yield return new PipelineProgress
+                {
+                    Stage = PipelineStage.SelectorGeneration,
+                    Type = ProgressType.InProgress,
+                    Summary = $"Generating selectors... ({secs}s)",
+                    Session = session
+                };
+            }
         }
+
+        // Drain channel for results/errors
+        await foreach (var item in selectorChannel.Reader.ReadAllAsync(ct))
+        {
+            if (item.Type == ProgressType.Failed)
+                error = new Exception(item.Summary);
+            else if (item.Result != null)
+                result = item.Result;
+        }
+
+        // Propagate cancellation
+        if (ct.IsCancellationRequested)
+            ct.ThrowIfCancellationRequested();
 
         if (error != null)
         {
@@ -725,6 +797,48 @@ public class WatchSetupPipeline(
                 ErrorMessage = message
             }
         };
+    }
+
+    /// <summary>
+    /// Runs a long-running task while yielding periodic heartbeat progress updates
+    /// to keep the SignalR connection alive and inform the user of progress.
+    /// </summary>
+    private async IAsyncEnumerable<PipelineProgress> WithHeartbeatAsync(
+        Task longRunningTask,
+        PipelineStage stage,
+        string activityDescription,
+        PipelineSession session,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var heartbeatInterval = TimeSpan.FromSeconds(8);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        while (!longRunningTask.IsCompleted)
+        {
+            try
+            {
+                await Task.WhenAny(longRunningTask, Task.Delay(heartbeatInterval, ct));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            if (!longRunningTask.IsCompleted)
+            {
+                var secs = (int)elapsed.Elapsed.TotalSeconds;
+                yield return new PipelineProgress
+                {
+                    Stage = stage,
+                    Type = ProgressType.InProgress,
+                    Summary = $"{activityDescription}... ({secs}s)",
+                    Session = session
+                };
+            }
+        }
+
+        // Propagate any exception from the task
+        await longRunningTask;
     }
 
     /// <inheritdoc />
