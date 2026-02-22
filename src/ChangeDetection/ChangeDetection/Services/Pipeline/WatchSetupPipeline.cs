@@ -1026,16 +1026,36 @@ public class WatchSetupPipeline(
 
         if (session.ExtractedUrls.Count == 0)
         {
+            session.FailedUrlExtractionAttempts++;
+            
+            var (message, options) = session.FailedUrlExtractionAttempts switch
+            {
+                1 => ("I couldn't find a URL in your input. Please provide the website URL you want to monitor.",
+                      (List<SelectorOption>?)null),
+                2 => ("I still couldn't find a valid URL. Try including the full address starting with https:// — for example:\n• https://example.com/products\n• https://news.ycombinator.com",
+                      (List<SelectorOption>?)null),
+                _ => ("I'm having trouble finding a URL in your messages. You can paste a URL directly, or I can help you set it up manually.",
+                      (List<SelectorOption>?)
+                      [
+                          new SelectorOption { Label = "Enter URL manually", Value = "manual_url", IsRecommended = true },
+                          new SelectorOption { Label = "Cancel setup", Value = "cancel" }
+                      ])
+            };
+            
             return new PipelineResult
             {
                 IsSuccess = false,
                 CurrentStage = PipelineStage.UrlExtraction,
                 Session = session,
                 NeedsUserInput = true,
-                UserPrompts = ["I couldn't find a URL in your input. Please provide the website URL you want to monitor."],
+                UserPrompts = [message],
+                SuggestedOptions = options ?? [],
                 ErrorMessage = "No URL found in input"
             };
         }
+
+        // URL found — reset failed extraction counter
+        session.FailedUrlExtractionAttempts = 0;
 
         if (session.ExtractedUrls.Count > 1)
         {

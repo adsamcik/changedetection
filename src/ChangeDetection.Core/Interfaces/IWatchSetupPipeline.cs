@@ -258,6 +258,12 @@ public class PipelineSession
     public int RecoveryAttempts { get; set; }
 
     /// <summary>
+    /// Number of consecutive failed URL extraction attempts.
+    /// Used to provide escalating guidance messages.
+    /// </summary>
+    public int FailedUrlExtractionAttempts { get; set; }
+
+    /// <summary>
     /// Last error that triggered recovery.
     /// </summary>
     public string? LastRecoveryError { get; set; }
