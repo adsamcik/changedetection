@@ -30,6 +30,16 @@ public static class ChangeEndpoints
             .Produces(204)
             .Produces(404);
 
+        group.MapPost("/{id}/feedback", SubmitFeedback)
+            .WithName("SubmitChangeFeedback")
+            .Produces(204)
+            .Produces(404);
+
+        group.MapGet("/quality/{watchId}", GetQualityMetrics)
+            .WithName("GetQualityMetrics")
+            .Produces<QualityMetricsDto>()
+            .Produces(404);
+
         group.MapGet("/unviewed/count", GetUnviewedCount)
             .WithName("GetUnviewedCount")
             .Produces<int>()
@@ -476,4 +486,87 @@ public static class ChangeEndpoints
             _ => value
         };
     }
+
+    private static async Task<IResult> SubmitFeedback(
+        Guid id,
+        FeedbackRequest request,
+        IRepository<ChangeEvent> eventRepo,
+        IOutputCacheStore cacheStore,
+        CancellationToken ct)
+    {
+        var change = await eventRepo.GetByIdAsync(id, ct);
+        if (change is null)
+            return Results.NotFound();
+
+        change.Feedback = request.Feedback;
+        change.FeedbackAt = DateTime.UtcNow;
+        change.FeedbackNote = request.Note;
+        await eventRepo.UpdateAsync(change, ct);
+        await cacheStore.EvictByTagAsync("changes", ct);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> GetQualityMetrics(
+        Guid watchId,
+        IRepository<ChangeEvent> eventRepo,
+        IRepository<WatchedSite> watchRepo,
+        CancellationToken ct)
+    {
+        var watch = await watchRepo.GetByIdAsync(watchId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        var events = (await eventRepo.FindAsync(e => e.WatchedSiteId == watchId, ct)).ToList();
+        var withFeedback = events.Where(e => e.Feedback != UserFeedback.None).ToList();
+
+        var helpful = withFeedback.Count(e => e.Feedback == UserFeedback.Helpful);
+        var falsePositive = withFeedback.Count(e => e.Feedback == UserFeedback.FalsePositive);
+        var irrelevant = withFeedback.Count(e => e.Feedback == UserFeedback.Irrelevant);
+        var missed = withFeedback.Count(e => e.Feedback == UserFeedback.Missed);
+
+        var truePositives = helpful;
+        var falsePositives = falsePositive + irrelevant;
+        var precision = truePositives + falsePositives > 0
+            ? (double)truePositives / (truePositives + falsePositives)
+            : (double?)null;
+
+        var recall = truePositives + missed > 0
+            ? (double)truePositives / (truePositives + missed)
+            : (double?)null;
+
+        return Results.Ok(new QualityMetricsDto
+        {
+            WatchId = watchId,
+            TotalEvents = events.Count,
+            EventsWithFeedback = withFeedback.Count,
+            Helpful = helpful,
+            FalsePositive = falsePositive,
+            Irrelevant = irrelevant,
+            Missed = missed,
+            Precision = precision,
+            Recall = recall,
+            AverageRelevance = events.Where(e => e.RelevanceScore.HasValue)
+                .Select(e => (double)e.RelevanceScore!.Value).DefaultIfEmpty().Average(),
+            AverageConfidence = events.Where(e => e.AnalysisConfidence.HasValue)
+                .Select(e => (double)e.AnalysisConfidence!.Value).DefaultIfEmpty().Average()
+        });
+    }
+}
+
+public record FeedbackRequest(UserFeedback Feedback, string? Note = null);
+
+public class QualityMetricsDto
+{
+    public Guid WatchId { get; set; }
+    public int TotalEvents { get; set; }
+    public int EventsWithFeedback { get; set; }
+    public int Helpful { get; set; }
+    public int FalsePositive { get; set; }
+    public int Irrelevant { get; set; }
+    public int Missed { get; set; }
+    public double? Precision { get; set; }
+    public double? Recall { get; set; }
+    public double AverageRelevance { get; set; }
+    public double AverageConfidence { get; set; }
 }

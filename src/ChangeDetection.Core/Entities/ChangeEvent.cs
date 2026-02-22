@@ -170,6 +170,35 @@ public class ChangeEvent : IOwnedEntity
     /// Whether LLM analysis was performed on this change.
     /// </summary>
     public bool HasLlmAnalysis { get; set; }
+
+    // ========== User Quality Feedback ==========
+
+    /// <summary>
+    /// User feedback on this change event's quality/relevance.
+    /// </summary>
+    public UserFeedback Feedback { get; set; } = UserFeedback.None;
+
+    /// <summary>
+    /// When the user provided feedback.
+    /// </summary>
+    public DateTime? FeedbackAt { get; set; }
+
+    /// <summary>
+    /// Optional user note explaining the feedback.
+    /// </summary>
+    public string? FeedbackNote { get; set; }
+}
+
+/// <summary>
+/// User feedback on a detected change's quality.
+/// </summary>
+public enum UserFeedback
+{
+    None,
+    Helpful,
+    FalsePositive,
+    Irrelevant,
+    Missed
 }
 
 public enum ChangeType

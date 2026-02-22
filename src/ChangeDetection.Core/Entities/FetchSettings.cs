@@ -76,6 +76,11 @@ public class FetchSettings
     public int ViewportHeight { get; set; } = 1080;
 
     /// <summary>
+    /// Device emulation profile. Overrides viewport, user agent, and touch settings.
+    /// </summary>
+    public DeviceProfile DeviceProfile { get; set; } = DeviceProfile.Desktop;
+
+    /// <summary>
     /// Detailed screenshot capture settings.
     /// </summary>
     public ScreenshotSettings Screenshot { get; set; } = new();

@@ -271,14 +271,25 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
         CancellationToken ct)
     {
         var timeouts = options.EffectiveTimeouts;
+        
+        // Apply device profile if not Desktop (Desktop uses explicit viewport/UA settings)
+        var deviceSettings = options.DeviceProfile != DeviceProfile.Desktop
+            ? DeviceProfileSettings.FromProfile(options.DeviceProfile)
+            : null;
+
         var contextOptions = new BrowserNewContextOptions
         {
             ViewportSize = new ViewportSize
             {
-                Width = options.ViewportWidth,
-                Height = options.ViewportHeight
+                Width = deviceSettings?.ViewportWidth ?? options.ViewportWidth,
+                Height = deviceSettings?.ViewportHeight ?? options.ViewportHeight
             },
-            UserAgent = options.UserAgent ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            UserAgent = options.UserAgent
+                ?? deviceSettings?.UserAgent
+                ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            IsMobile = deviceSettings?.IsMobile ?? false,
+            HasTouch = deviceSettings?.HasTouch ?? false,
+            DeviceScaleFactor = deviceSettings?.DeviceScaleFactor ?? 1.0f
         };
 
         if (!string.IsNullOrEmpty(options.ProxyUrl))
