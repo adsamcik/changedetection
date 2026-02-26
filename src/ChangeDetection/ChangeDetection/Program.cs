@@ -146,6 +146,7 @@ builder.Services.AddHttpClient("GoogleCSE");
 
 // Named HttpClient for Brave Search API
 builder.Services.AddHttpClient("BraveSearch");
+builder.Services.AddHttpClient("NewsData");
 
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");
@@ -337,8 +338,19 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var logger = sp.GetRequiredService<ILogger<BraveSearchProvider>>();
     return new BraveSearchProvider(httpClient, settings, logger);
 });
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient("NewsData");
+    var settings = sp.GetRequiredService<IOptions<SearchSettings>>();
+    var logger = sp.GetRequiredService<ILogger<NewsDataSearchProvider>>();
+    return new NewsDataSearchProvider(httpClient, settings, logger);
+});
 builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
 builder.Services.AddSingleton<MultiProviderSearchService>();
+builder.Services.AddScoped<IQueryEvolutionService, QueryEvolutionService>();
+builder.Services.AddScoped<IRssDiscoveryService, RssDiscoveryService>();
+builder.Services.AddSingleton<AdversarialSearchAnalyzer>();
 
 // Composable pipeline block system
 builder.Services.AddSingleton<IBlockRegistry>(sp =>
@@ -396,6 +408,8 @@ builder.Services.AddHostedService<NotificationOutboxProcessor>();
 builder.Services.AddSingleton<IDatabaseBackupService, DatabaseBackupService>();
 builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
 builder.Services.AddHostedService<SnapshotCleanupService>();
+builder.Services.AddSingleton<DatabaseMaintenanceService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseMaintenanceService>());
 
 // Graceful shutdown for Playwright
 builder.Services.AddHostedService<PlaywrightShutdownService>();
@@ -482,6 +496,11 @@ app.MapGroup("/api/debug/pipeline")
 app.MapGroup("/api/feeds")
     .RequireAuthenticationInSsoMode(builder.Configuration)
     .MapFeedEndpoints();
+
+// Database health monitoring (admin-only in SSO mode)
+app.MapGroup("/api/health")
+    .RequireAdminInSsoMode(builder.Configuration)
+    .MapDatabaseHealthEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")

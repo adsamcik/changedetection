@@ -151,6 +151,7 @@ public class LiteDbContext : IDisposable
         events.EnsureIndex(x => x.DetectedAt);
         events.EnsureIndex(x => x.IsViewed);
         events.EnsureIndex(x => x.OwnerId);
+        events.EnsureIndex(x => x.Feedback);
 
         // Configure indexes for LlmProviderConfigs
         var providers = _database.GetCollection<Core.Entities.LlmProviderConfig>("llm_providers");
@@ -193,6 +194,11 @@ public class LiteDbContext : IDisposable
         pipelineEvents.EnsureIndex(x => x.Stage);
         pipelineEvents.EnsureIndex(x => x.EventType);
         pipelineEvents.EnsureIndex(x => x.Timestamp);
+
+        // Configure indexes for FieldValueHistory
+        var fieldHistory = _database.GetCollection<Core.Entities.FieldValueHistory>("fieldvaluehistorys");
+        fieldHistory.EnsureIndex(x => x.WatchedSiteId);
+        fieldHistory.EnsureIndex(x => x.FieldName);
     }
 
     public void Dispose()

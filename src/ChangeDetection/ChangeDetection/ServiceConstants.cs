@@ -100,6 +100,12 @@ public static class ServiceConstants
     /// <summary>Age after which completed/failed pipeline items are purged.</summary>
     public static readonly TimeSpan PipelineItemPurgeAge = TimeSpan.FromDays(7);
 
+    /// <summary>How often the database maintenance service runs compaction.</summary>
+    public static readonly TimeSpan DatabaseMaintenanceInterval = TimeSpan.FromDays(7);
+
+    /// <summary>Database file size warning threshold in megabytes.</summary>
+    public const long DatabaseSizeWarningMb = 500;
+
     /// <summary>Delay before retrying after an unexpected worker error.</summary>
     public static readonly TimeSpan PipelineWorkerRetryDelay = TimeSpan.FromSeconds(5);
 
