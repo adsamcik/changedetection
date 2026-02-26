@@ -265,6 +265,7 @@ builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
 builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
 builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
+builder.Services.AddScoped<IAggregateSetupPipeline, AggregateSetupPipeline>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
@@ -488,6 +489,8 @@ app.MapHub<ChangeDetectionHub>("/hubs/changes")
 app.MapHub<SetupConversationHub>("/hubs/setup")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<ComposableSetupHub>("/hubs/composable-setup")
+    .RequireAuthenticationInSsoMode(builder.Configuration);
+app.MapHub<AggregateSetupHub>("/hubs/aggregate-setup")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 
 // Configure static files with aggressive caching (assets are fingerprinted for cache-busting)

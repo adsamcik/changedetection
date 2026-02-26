@@ -78,6 +78,24 @@ public class ChangeDetectionHub(
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"watch-{watchId}");
         logger.LogDebug("Client {ConnectionId} unsubscribed from watch {WatchId}", Context.ConnectionId, watchId);
     }
+
+    /// <summary>
+    /// Subscribe to updates for a specific watch group.
+    /// </summary>
+    public async Task SubscribeToGroup(Guid groupId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"group-{groupId}");
+        logger.LogDebug("Client {ConnectionId} subscribed to group {GroupId}", Context.ConnectionId, groupId);
+    }
+
+    /// <summary>
+    /// Unsubscribe from updates for a specific watch group.
+    /// </summary>
+    public async Task UnsubscribeFromGroup(Guid groupId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"group-{groupId}");
+        logger.LogDebug("Client {ConnectionId} unsubscribed from group {GroupId}", Context.ConnectionId, groupId);
+    }
 }
 
 /// <summary>
@@ -123,3 +141,27 @@ public record SetupSessionUpdatedEvent(
     bool IsCancelled,
     bool IsBackgrounded = false,
     string? CurrentStage = null);
+
+/// <summary>
+/// Event data for aggregate group updates (recomputed after a member watch check).
+/// </summary>
+public record AggregateUpdatedEvent(
+    Guid GroupId,
+    string GroupName,
+    Guid TriggerWatchId,
+    int MemberCount,
+    int ErrorCount,
+    DateTime ComputedAt);
+
+/// <summary>
+/// Event data for triggered aggregate alerts.
+/// </summary>
+public record AggregateAlertTriggeredEvent(
+    Guid GroupId,
+    string GroupName,
+    Guid AlertId,
+    string FieldName,
+    double? AggregatedValue,
+    double ThresholdValue,
+    string? Message,
+    string Importance);

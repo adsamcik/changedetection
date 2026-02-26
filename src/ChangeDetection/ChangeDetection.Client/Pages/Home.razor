@@ -129,6 +129,20 @@
 
     <!-- Main Content Area -->
     <div class="cmd-main">
+        <!-- Watch Groups Section -->
+        @if (watchGroups.Any())
+        {
+            <div class="groups-section">
+                <div class="panel-toolbar">
+                    <h3 class="section-title">📊 Watch Groups</h3>
+                </div>
+                @foreach (var group in watchGroups)
+                {
+                    <WatchGroupCard Group="group" Detail="@expandedGroupDetails.GetValueOrDefault(group.Id)" OnExpandToggled="OnGroupExpanded" />
+                }
+            </div>
+        }
+
         <!-- Watch List Panel -->
         <div class="watch-panel">
             <div class="panel-toolbar">
@@ -607,6 +621,8 @@
     private List<WatchListItemDto> watches = [];
     private List<ChangeListItemDto> recentChanges = [];
     private List<PendingSetupDto> pendingSetups = [];
+    private List<WatchGroupListItemDto> watchGroups = [];
+    private Dictionary<string, WatchGroupDetailDto> expandedGroupDetails = [];
     private Dictionary<string, ProcessingActivity> activeProcessing = [];
     private bool isLoading = true;
     private string? error;
@@ -886,7 +902,7 @@
 
         await InitializeSignalR();
         await LoadWatches();
-        await LoadRecentChanges();
+        await Task.WhenAll(LoadRecentChanges(), LoadWatchGroups());
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1103,6 +1119,36 @@
         catch
         {
             recentChanges = [];
+        }
+    }
+
+    private async Task LoadWatchGroups()
+    {
+        try
+        {
+            watchGroups = await Http.GetFromJsonAsync<List<WatchGroupListItemDto>>("/api/groups") ?? [];
+        }
+        catch
+        {
+            watchGroups = [];
+        }
+    }
+
+    private async Task OnGroupExpanded(string groupId)
+    {
+        if (expandedGroupDetails.ContainsKey(groupId)) return;
+        try
+        {
+            var detail = await Http.GetFromJsonAsync<WatchGroupDetailDto>($"/api/groups/{groupId}");
+            if (detail != null)
+            {
+                expandedGroupDetails[groupId] = detail;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Silent fail for group detail loading
         }
     }
 

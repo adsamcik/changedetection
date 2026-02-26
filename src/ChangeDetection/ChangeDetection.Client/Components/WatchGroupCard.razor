@@ -1,0 +1,119 @@
+@using ChangeDetection.Shared.Dtos
+
+<div class="watch-group-card @(IsExpanded ? "expanded" : "")">
+    <div class="group-card-header" @onclick="ToggleExpand">
+        <div class="group-icon">@(Group.Icon ?? "📊")</div>
+        <div class="group-info">
+            <div class="group-name">@Group.Name</div>
+            <div class="group-meta">
+                <span class="member-count">@Group.MemberCount sites</span>
+                @if (Group.ErrorCount > 0)
+                {
+                    <span class="error-badge">⚠ @Group.ErrorCount</span>
+                }
+            </div>
+        </div>
+        <div class="group-primary-values">
+            @foreach (var field in Group.PrimaryFields.Take(2))
+            {
+                <div class="primary-field">
+                    <span class="field-value">@FormatFieldValue(field)</span>
+                    <span class="field-label">@(field.BestSourceName ?? field.Function)</span>
+                </div>
+            }
+        </div>
+        <div class="group-expand-toggle">
+            <span>@(IsExpanded ? "▲" : "▼")</span>
+        </div>
+    </div>
+
+    @if (IsExpanded && Detail is not null)
+    {
+        <div class="group-card-body">
+            @if (Detail.Description is not null)
+            {
+                <p class="group-description">@Detail.Description</p>
+            }
+
+            <table class="data-grid group-members-grid">
+                <thead>
+                    <tr>
+                        <th width="40">St</th>
+                        <th>Site</th>
+                        @foreach (var field in (Detail.LatestSnapshot?.Fields ?? []))
+                        {
+                            <th>@field.FieldName</th>
+                        }
+                        <th width="120">Last Check</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var member in Detail.Members)
+                    {
+                        <tr class="grid-row @(member.HasErrors ? "error-row" : "")">
+                            <td class="status-cell">
+                                <div class="status-indicator @member.Status.ToLower()"></div>
+                            </td>
+                            <td class="name-cell">
+                                <div class="watch-title">@member.Name</div>
+                                <div class="watch-url">@member.Url</div>
+                            </td>
+                            @foreach (var field in (Detail.LatestSnapshot?.Fields ?? []))
+                            {
+                                var siteVal = field.PerSiteValues.FirstOrDefault(p => p.WatchId == member.WatchId);
+                                <td>@(siteVal?.FormattedValue ?? siteVal?.Value?.ToString("N2") ?? "-")</td>
+                            }
+                            <td class="meta-cell">
+                                @if (member.LastChecked.HasValue)
+                                {
+                                    <span>@FormatTimeAgo(member.LastChecked.Value)</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public WatchGroupListItemDto Group { get; set; } = null!;
+
+    [Parameter]
+    public WatchGroupDetailDto? Detail { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnExpandToggled { get; set; }
+
+    private bool IsExpanded { get; set; }
+
+    private async Task ToggleExpand()
+    {
+        IsExpanded = !IsExpanded;
+        if (IsExpanded)
+        {
+            await OnExpandToggled.InvokeAsync(Group.Id);
+        }
+    }
+
+    private static string FormatFieldValue(AggregateFieldValueDto field)
+    {
+        if (field.FormattedValue is not null) return field.FormattedValue;
+        return field.Value.HasValue ? field.Value.Value.ToString("N2") : "-";
+    }
+
+    private static string FormatTimeAgo(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+}

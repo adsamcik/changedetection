@@ -58,6 +58,24 @@
             }
         }
 
+        @* Watch Groups *@
+        @if (groups.Any())
+        {
+            <div class="nav-section-header px-3">
+                <span>Groups</span>
+            </div>
+            @foreach (var group in groups)
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link view-link" href="@($"groups/{group.Id}")">
+                        <span class="view-icon" aria-hidden="true">@(group.Icon ?? "📊")</span>
+                        @group.Name
+                        <span class="nav-badge">@group.MemberCount</span>
+                    </NavLink>
+                </div>
+            }
+        }
+
         <div class="nav-section-header px-3">
             <span>Actions</span>
         </div>
@@ -90,10 +108,11 @@
 
 @code {
     private List<ViewDto> views = [];
+    private List<WatchGroupListItemDto> groups = [];
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadViews();
+        await Task.WhenAll(LoadViews(), LoadGroups());
     }
 
     private async Task LoadViews()
@@ -104,8 +123,19 @@
         }
         catch
         {
-            // Silent fail, views are optional
             views = [];
+        }
+    }
+
+    private async Task LoadGroups()
+    {
+        try
+        {
+            groups = await Http.GetFromJsonAsync<List<WatchGroupListItemDto>>("/api/groups") ?? [];
+        }
+        catch
+        {
+            groups = [];
         }
     }
 }
