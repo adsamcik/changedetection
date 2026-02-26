@@ -219,7 +219,24 @@ public static class WatchEndpoints
             IgnorePatterns = dto.IgnorePatterns,
             TagColors = dto.TagColors,
             CategoryId = dto.CategoryId != null ? Guid.Parse(dto.CategoryId) : null,
-            ScheduleSettings = MapScheduleSettingsFromDto(dto.ScheduleSettings)
+            ScheduleSettings = MapScheduleSettingsFromDto(dto.ScheduleSettings),
+            SourceType = (SourceType)(int)dto.SourceType,
+            SearchConfig = dto.SearchConfig is not null ? new SearchConfig
+            {
+                Query = dto.SearchConfig.Query,
+                ProviderId = dto.SearchConfig.ProviderId,
+                Category = dto.SearchConfig.Category,
+                Language = dto.SearchConfig.Language,
+                TimeRange = dto.SearchConfig.TimeRange,
+                MaxResults = dto.SearchConfig.MaxResults,
+                AutoPromotionRules = dto.SearchConfig.AutoPromotionRules.Select(r => new AutoPromotionRule
+                {
+                    UrlPattern = r.UrlPattern,
+                    TitleContains = r.TitleContains,
+                    IsEnabled = r.IsEnabled,
+                    CssSelector = r.CssSelector
+                }).ToList()
+            } : null
         };
 
         if (dto.FetchSettings != null)
@@ -798,6 +815,23 @@ public static class WatchEndpoints
             LastResolutionDiagnosis = watch.LastResolutionDiagnosis,
             LastResolutionAttempt = watch.LastResolutionAttempt,
             SelectorHistory = watch.SelectorHistory.Select(MapSelectorHistoryToDto).ToList(),
+            SourceType = (SourceTypeDto)(int)watch.SourceType,
+            SearchConfig = watch.SearchConfig is not null ? new SearchConfigDto
+            {
+                Query = watch.SearchConfig.Query,
+                ProviderId = watch.SearchConfig.ProviderId,
+                Category = watch.SearchConfig.Category,
+                Language = watch.SearchConfig.Language,
+                TimeRange = watch.SearchConfig.TimeRange,
+                MaxResults = watch.SearchConfig.MaxResults,
+                AutoPromotionRules = watch.SearchConfig.AutoPromotionRules.Select(r => new AutoPromotionRuleDto
+                {
+                    UrlPattern = r.UrlPattern,
+                    TitleContains = r.TitleContains,
+                    IsEnabled = r.IsEnabled,
+                    CssSelector = r.CssSelector
+                }).ToList()
+            } : null,
             LatestSnapshot = snapshot != null ? new SnapshotDto
             {
                 Id = snapshot.Id.ToString(),
