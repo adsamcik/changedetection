@@ -1071,6 +1071,173 @@ public class ComposableSetupPipelineTests : TestBase
         adversarial.Warnings.Count.ShouldBe(3); // one warning per mutation with fragile blocks
     }
 
+    [Test]
+    public async Task ConfirmIntentAsync_HumanSummary_IncludesAdversarialResults()
+    {
+        // Arrange — adversarial test finds fragile blocks, summary should mention them
+        var intentJson = """{ "url": "https://example.com/p", "intent": "Track price", "changeType": "price", "summary": "Watch price" }""";
+        var analysisJson = """{ "contentType": "product", "regions": ["price"], "hasPagination": false, "needsJavaScript": false, "recommendedSelector": ".price", "pageSummary": "Product" }""";
+        var pipelineBlocksJson = """
+            {
+                "blocks": [
+                    { "id": "input-1", "type": "Input", "position": 0 },
+                    { "id": "navigate-1", "type": "Navigate", "position": 1 },
+                    { "id": "filter-1", "type": "Filter", "config": { "cssSelector": ".price" }, "position": 2 },
+                    { "id": "output-1", "type": "Output", "position": 3 }
+                ],
+                "estimatedLlmCallsPerRun": 0
+            }
+            """;
+        var adversarialJson = """
+            {
+                "mutations": [
+                    { "description": "CSS class renamed", "predictedFragileBlocks": ["filter-1"] },
+                    { "description": "Format changed", "predictedFragileBlocks": [] }
+                ]
+            }
+            """;
+        var qcJson = """
+            {
+                "valid": true, "issues": [], "suggestions": ["Add threshold check"],
+                "blockJustifications": { "input-1": "Entry", "navigate-1": "Load", "filter-1": "Extract", "output-1": "Output" },
+                "unjustifiedBlocks": []
+            }
+            """;
+
+        _llmChain.HasLargeModelAsync(Arg.Any<CancellationToken>()).Returns(true);
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                SuccessResponse(intentJson), SuccessResponse(analysisJson),
+                SuccessResponse(pipelineBlocksJson), SuccessResponse(adversarialJson), SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
+
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), OutputData = JsonDocument.Parse("""{"price": 9.99}""").RootElement, ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
+
+        var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
+        string? sessionId = null;
+        await foreach (var p in _sut.StartSetupAsync(request))
+            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+
+        // Act
+        var progress = new List<SetupProgress>();
+        await foreach (var p in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            progress.Add(p);
+
+        // Assert — HumanSummary includes adversarial test results and QC suggestions
+        var summary = progress.Last().Proposal!.HumanSummary;
+        summary.ShouldContain("Adversarial test");
+        summary.ShouldContain("fragile");
+        summary.ShouldContain("filter-1");
+        summary.ShouldContain("Quality check");
+        summary.ShouldContain("Suggestions");
+        summary.ShouldContain("Add threshold check");
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_HumanSummary_IncludesUnjustifiedBlocks()
+    {
+        // Arrange — QC returns unjustified blocks, summary should display warning
+        var intentJson = """{ "url": "https://example.com/p", "intent": "Track price", "changeType": "price", "summary": "Watch price" }""";
+        var analysisJson = """{ "contentType": "product", "regions": ["price"], "hasPagination": false, "needsJavaScript": false, "recommendedSelector": ".price", "pageSummary": "Product" }""";
+        var pipelineBlocksJson = """
+            {
+                "blocks": [
+                    { "id": "input-1", "type": "Input", "position": 0 },
+                    { "id": "navigate-1", "type": "Navigate", "position": 1 },
+                    { "id": "filter-1", "type": "Filter", "config": { "cssSelector": ".price" }, "position": 2 },
+                    { "id": "filter-2", "type": "Filter", "config": { "cssSelector": ".ads" }, "position": 3 },
+                    { "id": "output-1", "type": "Output", "position": 4 }
+                ],
+                "estimatedLlmCallsPerRun": 0
+            }
+            """;
+        var qcJson = """
+            {
+                "valid": true, "issues": [], "suggestions": [],
+                "blockJustifications": { "input-1": "Entry", "navigate-1": "Load", "filter-1": "Extract price", "output-1": "Output" },
+                "unjustifiedBlocks": ["filter-2"]
+            }
+            """;
+
+        _llmChain.HasLargeModelAsync(Arg.Any<CancellationToken>()).Returns(false);
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                SuccessResponse(intentJson), SuccessResponse(analysisJson),
+                SuccessResponse(pipelineBlocksJson), SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
+
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
+
+        var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
+        string? sessionId = null;
+        await foreach (var p in _sut.StartSetupAsync(request))
+            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+
+        // Act
+        var progress = new List<SetupProgress>();
+        await foreach (var p in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            progress.Add(p);
+
+        // Assert — HumanSummary includes unjustified blocks warning
+        var summary = progress.Last().Proposal!.HumanSummary;
+        summary.ShouldContain("Unjustified blocks");
+        summary.ShouldContain("filter-2");
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_HumanSummary_SkippedAdversarialShowsReason()
+    {
+        // Arrange — adversarial test skipped, summary should show skip reason
+        var intentJson = """{ "url": "https://example.com/p", "intent": "Track price", "changeType": "price", "summary": "Watch price" }""";
+        var analysisJson = """{ "contentType": "product", "regions": ["price"], "hasPagination": false, "needsJavaScript": false, "recommendedSelector": ".price", "pageSummary": "Product" }""";
+        var pipelineBlocksJson = """
+            {
+                "blocks": [
+                    { "id": "input-1", "type": "Input", "position": 0 },
+                    { "id": "navigate-1", "type": "Navigate", "position": 1 },
+                    { "id": "filter-1", "type": "Filter", "config": { "cssSelector": ".price" }, "position": 2 },
+                    { "id": "output-1", "type": "Output", "position": 3 }
+                ],
+                "estimatedLlmCallsPerRun": 0
+            }
+            """;
+        var qcJson = """{ "valid": true, "issues": [], "suggestions": [] }""";
+
+        _llmChain.HasLargeModelAsync(Arg.Any<CancellationToken>()).Returns(false);
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                SuccessResponse(intentJson), SuccessResponse(analysisJson),
+                SuccessResponse(pipelineBlocksJson), SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
+
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
+
+        var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
+        string? sessionId = null;
+        await foreach (var p in _sut.StartSetupAsync(request))
+            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+
+        // Act
+        var progress = new List<SetupProgress>();
+        await foreach (var p in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            progress.Add(p);
+
+        // Assert — HumanSummary shows adversarial test was skipped with reason
+        var summary = progress.Last().Proposal!.HumanSummary;
+        summary.ShouldContain("Adversarial test");
+        summary.ShouldContain("Skipped");
+        summary.ShouldContain("large model");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static LlmResponse SuccessResponse(string content) => new()

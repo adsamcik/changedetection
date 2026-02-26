@@ -723,16 +723,37 @@ public class LlmProviderChain : ILlmProviderChain
 
         var lowerModel = modelName.ToLowerInvariant();
         
-        // Check for size indicators in model name
-        return lowerModel.Contains("3b") ||
-               lowerModel.Contains("7b") ||
-               lowerModel.Contains("8b") ||
-               lowerModel.Contains("ministral") ||
-               lowerModel.Contains("small") ||
-               lowerModel.Contains("mini") ||
-               lowerModel.Contains("tiny") ||
-               lowerModel.Contains("nano") ||
-               lowerModel.Contains("lite");
+        // Check for named small-model indicators
+        if (lowerModel.Contains("ministral") ||
+            lowerModel.Contains("small") ||
+            lowerModel.Contains("mini") ||
+            lowerModel.Contains("tiny") ||
+            lowerModel.Contains("nano") ||
+            lowerModel.Contains("lite"))
+            return true;
+
+        // Check for parameter count indicators (e.g., ":3b", "-7b", ":8b")
+        // Use boundary-aware matching to avoid "3b" matching "33b" or "13b"
+        return ContainsSmallParamSize(lowerModel, "3b") ||
+               ContainsSmallParamSize(lowerModel, "7b") ||
+               ContainsSmallParamSize(lowerModel, "8b");
+    }
+
+    /// <summary>
+    /// Checks if the model name contains a parameter size suffix (e.g. "3b") 
+    /// that isn't preceded by another digit (to avoid "33b" matching "3b").
+    /// </summary>
+    private static bool ContainsSmallParamSize(string lowerModel, string sizeTag)
+    {
+        var index = lowerModel.IndexOf(sizeTag, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            // Valid match if at start or preceded by a non-digit character
+            if (index == 0 || !char.IsDigit(lowerModel[index - 1]))
+                return true;
+            index = lowerModel.IndexOf(sizeTag, index + 1, StringComparison.Ordinal);
+        }
+        return false;
     }
 
     public async Task<bool> HasLargeModelAsync(CancellationToken ct = default)

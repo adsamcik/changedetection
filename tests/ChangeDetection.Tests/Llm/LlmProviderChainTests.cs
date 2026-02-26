@@ -229,6 +229,39 @@ public class LlmProviderChainTests
     }
 
     [Test]
+    [Arguments("llama3.1:70b", true, "Large model (70b) should not be small")]
+    [Arguments("qwen2.5:32b", true, "32b is not in the small list")]
+    [Arguments("gpt-4", true, "Named model without size indicator")]
+    [Arguments("claude-3-opus", true, "Named model without size indicator")]
+    [Arguments("deepseek-coder:33b", true, "33b is not in the small list")]
+    [Arguments("ministral-3:8b", false, "Contains both 'ministral' and '8b'")]
+    [Arguments("llama3.1:7b", false, "Contains '7b'")]
+    [Arguments("phi-3-mini", false, "Contains 'mini'")]
+    [Arguments("gemma:3b", false, "Contains '3b'")]
+    [Arguments("TinyLlama", false, "Contains 'tiny' (case insensitive)")]
+    [Arguments("MINISTRAL-8B", false, "Contains 'ministral' (case insensitive)")]
+    [Arguments("gemma-nano", false, "Contains 'nano'")]
+    [Arguments("some-lite-model", false, "Contains 'lite'")]
+    [Arguments("smalltalk-llm", false, "Contains 'small'")]
+    public async Task HasLargeModelAsync_IsSmallModelDetection(string modelName, bool expectLargeModel, string reason)
+    {
+        // Arrange — single provider with the given model name
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Test", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = modelName }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert — HasLargeModelAsync returns true when model is NOT small
+        result.ShouldBe(expectLargeModel, reason);
+    }
+
+    [Test]
     public async Task ExecuteAsync_PreferLargeModel_UsesLargeModelFirst()
     {
         // Arrange — small model is priority 1, large model is priority 2
