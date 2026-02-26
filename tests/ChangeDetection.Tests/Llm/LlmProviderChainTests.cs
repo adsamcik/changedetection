@@ -114,6 +114,143 @@ public class LlmProviderChainTests
         // Mock responds instantly so DurationMs may be 0; verify timing was recorded (not negative/unset)
         result.DurationMs.ShouldBeGreaterThanOrEqualTo(0);
     }
+
+    [Test]
+    public async Task HasLargeModelAsync_WithLargeModel_ReturnsTrue()
+    {
+        // Arrange
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Large", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "llama3.1:70b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task HasLargeModelAsync_OnlySmallModels_ReturnsFalse()
+    {
+        // Arrange
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Small1", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "ministral-3:8b" },
+                new() { Id = Guid.NewGuid(), Name = "Small2", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 2, Model = "llama3.1:7b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task HasLargeModelAsync_NoProviders_ReturnsFalse()
+    {
+        // Arrange
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>());
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task HasLargeModelAsync_DisabledLargeModel_ReturnsFalse()
+    {
+        // Arrange — large model exists but is disabled
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Large", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = false, IsHealthy = true, Priority = 1, Model = "llama3.1:70b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task HasLargeModelAsync_UnhealthyLargeModel_ReturnsFalse()
+    {
+        // Arrange — large model exists but is unhealthy (circuit breaker open)
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Large", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = false, Priority = 1, Model = "llama3.1:70b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task HasLargeModelAsync_MixedModels_ReturnsTrue()
+    {
+        // Arrange — mix of small and large models
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Small", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "ministral-3:8b" },
+                new() { Id = Guid.NewGuid(), Name = "Large", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 2, Model = "qwen2.5:32b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(new MockLlmHttpHandler()));
+
+        // Act
+        var result = await sut.HasLargeModelAsync();
+
+        // Assert
+        result.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_PreferLargeModel_UsesLargeModelFirst()
+    {
+        // Arrange — small model is priority 1, large model is priority 2
+        var mockHandler = new MockLlmHttpHandler();
+        mockHandler.WithDefaultResponse("Response from model");
+
+        _providerRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<LlmProviderConfig>
+            {
+                new() { Id = Guid.NewGuid(), Name = "SmallFirst", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 1, Model = "ministral-3:8b" },
+                new() { Id = Guid.NewGuid(), Name = "LargeSecond", ProviderType = LlmProviderType.Ollama, Endpoint = "http://localhost:11434", IsEnabled = true, IsHealthy = true, Priority = 2, Model = "llama3.1:70b" }
+            });
+
+        var sut = new LlmProviderChain(_providerRepo, _usageRepo, _logger, _serviceProvider, _llmLogService, _factories, new MockHttpClientFactory(mockHandler));
+
+        // Act — with PreferLargeModel, the large model should be tried first
+        var result = await sut.ExecuteAsync("Test prompt", new LlmRequestOptions { PreferLargeModel = true });
+
+        // Assert — the response should come from the large model
+        result.IsSuccess.ShouldBeTrue();
+        result.Model.ShouldBe("llama3.1:70b");
+    }
 }
 
 public class LlmRequestOptionsTests
@@ -128,6 +265,7 @@ public class LlmRequestOptionsTests
         options.Temperature.ShouldBe(0.7f);
         options.MaxTokens.ShouldBe(1024);
         options.ProviderName.ShouldBeNull();
+        options.PreferLargeModel.ShouldBeFalse();
     }
 
     [Test]
