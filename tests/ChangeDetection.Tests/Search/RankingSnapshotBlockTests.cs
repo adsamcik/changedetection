@@ -167,4 +167,73 @@ public class RankingSnapshotBlockTests : TestBase
         results[1].Position.ShouldBe(2);
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task ExecuteAsync_WithValidInput_ReturnsRankingOutput()
+    {
+        var block = new RankingSnapshotBlock();
+        var searchOutput = JsonSerializer.SerializeToElement(new
+        {
+            results = new[]
+            {
+                new { url = "https://a.com", title = "Page A", position = 1 },
+                new { url = "https://b.com", title = "Page B", position = 2 }
+            }
+        });
+
+        var context = new ChangeDetection.Tests.Pipeline.Blocks.BlockContextBuilder()
+            .WithBlockInstanceId("ranking-1")
+            .WithInput("searchResults", (object)searchOutput)
+            .Build();
+
+        var result = await block.ExecuteAsync(context);
+
+        result.Success.ShouldBeTrue();
+        result.Output.ShouldNotBeNull();
+
+        var output = result.Output.Value;
+        output.TryGetProperty("rankingText", out var text).ShouldBeTrue();
+        text.GetString().ShouldContain("#1");
+        text.GetString().ShouldContain("https://a.com");
+        text.GetString().ShouldContain("#2");
+        text.GetString().ShouldContain("https://b.com");
+
+        output.TryGetProperty("resultCount", out var count).ShouldBeTrue();
+        count.GetInt32().ShouldBe(2);
+    }
+
+    [Test]
+    public async Task ExecuteAsync_MissingInput_ReturnsFailed()
+    {
+        var block = new RankingSnapshotBlock();
+
+        var context = new ChangeDetection.Tests.Pipeline.Blocks.BlockContextBuilder()
+            .WithBlockInstanceId("ranking-1")
+            .Build();
+
+        var result = await block.ExecuteAsync(context);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldContain("searchResults");
+    }
+
+    [Test]
+    public async Task ExecuteAsync_EmptyResults_ReturnsFailed()
+    {
+        var block = new RankingSnapshotBlock();
+        var searchOutput = JsonSerializer.SerializeToElement(new
+        {
+            results = Array.Empty<object>()
+        });
+
+        var context = new ChangeDetection.Tests.Pipeline.Blocks.BlockContextBuilder()
+            .WithBlockInstanceId("ranking-1")
+            .WithInput("searchResults", (object)searchOutput)
+            .Build();
+
+        var result = await block.ExecuteAsync(context);
+
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldContain("No search results");
+    }
 }

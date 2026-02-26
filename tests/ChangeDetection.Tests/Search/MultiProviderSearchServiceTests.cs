@@ -1,5 +1,7 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.Search;
+using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 using Shouldly;
 using TUnit.Core;
 
@@ -178,5 +180,122 @@ public class MultiProviderSearchServiceTests : TestBase
         merged.Count.ShouldBe(1);
         merged[0].ProviderCount.ShouldBe(2);
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task SearchAllAsync_QueriesAllAvailableProviders()
+    {
+        var provider1 = CreateMockProvider("p1", isAvailable: true,
+            results: [new SearchResult { Url = "https://a.com", Title = "A", Position = 1 }]);
+        var provider2 = CreateMockProvider("p2", isAvailable: true,
+            results: [new SearchResult { Url = "https://b.com", Title = "B", Position = 1 }]);
+
+        var sut = new MultiProviderSearchService([provider1, provider2], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" });
+
+        result.ProviderResults.Count.ShouldBe(2);
+        result.MergedResults.Count.ShouldBe(2);
+        result.Query.ShouldBe("test");
+    }
+
+    [Test]
+    public async Task SearchAllAsync_SkipsUnavailableProviders()
+    {
+        var available = CreateMockProvider("p1", isAvailable: true,
+            results: [new SearchResult { Url = "https://a.com", Title = "A", Position = 1 }]);
+        var unavailable = CreateMockProvider("p2", isAvailable: false, results: []);
+
+        var sut = new MultiProviderSearchService([available, unavailable], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" });
+
+        result.ProviderResults.Count.ShouldBe(1);
+        result.MergedResults.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task SearchAllAsync_FiltersToSpecificProviderIds()
+    {
+        var p1 = CreateMockProvider("searxng", isAvailable: true,
+            results: [new SearchResult { Url = "https://a.com", Title = "A", Position = 1 }]);
+        var p2 = CreateMockProvider("brave", isAvailable: true,
+            results: [new SearchResult { Url = "https://b.com", Title = "B", Position = 1 }]);
+        var p3 = CreateMockProvider("google-cse", isAvailable: true,
+            results: [new SearchResult { Url = "https://c.com", Title = "C", Position = 1 }]);
+
+        var sut = new MultiProviderSearchService([p1, p2, p3], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" }, ["searxng", "brave"]);
+
+        result.ProviderResults.Count.ShouldBe(2);
+        result.MergedResults.ShouldNotContain(r => r.Url == "https://c.com");
+    }
+
+    [Test]
+    public async Task SearchAllAsync_NoAvailableProviders_ReturnsEmpty()
+    {
+        var unavailable = CreateMockProvider("p1", isAvailable: false, results: []);
+
+        var sut = new MultiProviderSearchService([unavailable], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" });
+
+        result.ProviderResults.ShouldBeEmpty();
+        result.MergedResults.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task SearchAllAsync_ProviderThrows_GracefullyHandled()
+    {
+        var good = CreateMockProvider("p1", isAvailable: true,
+            results: [new SearchResult { Url = "https://a.com", Title = "A", Position = 1 }]);
+        var throwing = Substitute.For<ISearchProvider>();
+        throwing.ProviderId.Returns("p2");
+        throwing.IsAvailable.Returns(true);
+        throwing.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Connection refused"));
+
+        var sut = new MultiProviderSearchService([good, throwing], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" });
+
+        // Should still return results from the working provider
+        result.MergedResults.Count.ShouldBe(1);
+        result.MergedResults[0].Url.ShouldBe("https://a.com");
+    }
+
+    [Test]
+    public async Task SearchAllAsync_DeduplicatesAcrossProviders()
+    {
+        var p1 = CreateMockProvider("p1", isAvailable: true,
+            results: [
+                new SearchResult { Url = "https://shared.com", Title = "Shared", Position = 1 },
+                new SearchResult { Url = "https://unique-p1.com", Title = "Unique P1", Position = 2 }
+            ]);
+        var p2 = CreateMockProvider("p2", isAvailable: true,
+            results: [
+                new SearchResult { Url = "https://shared.com", Title = "Shared", Position = 2 },
+                new SearchResult { Url = "https://unique-p2.com", Title = "Unique P2", Position = 1 }
+            ]);
+
+        var sut = new MultiProviderSearchService([p1, p2], CreateLogger<MultiProviderSearchService>());
+        var result = await sut.SearchAllAsync(new SearchQuery { Query = "test" });
+
+        result.MergedResults.Count.ShouldBe(3); // shared + unique-p1 + unique-p2
+        var shared = result.MergedResults.First(r => r.Url == "https://shared.com");
+        shared.ProviderCount.ShouldBe(2);
+    }
+
+    private static ISearchProvider CreateMockProvider(
+        string providerId, bool isAvailable, IReadOnlyList<SearchResult> results)
+    {
+        var provider = Substitute.For<ISearchProvider>();
+        provider.ProviderId.Returns(providerId);
+        provider.IsAvailable.Returns(isAvailable);
+        provider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new SearchResultSet
+            {
+                ProviderId = providerId,
+                Query = "test",
+                Results = results,
+                IsSuccess = true
+            });
+        return provider;
     }
 }
