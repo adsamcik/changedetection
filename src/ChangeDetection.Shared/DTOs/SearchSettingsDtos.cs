@@ -17,6 +17,9 @@ public class SearchSettingsDto
     /// <summary>Brave Search API subscription token.</summary>
     public string? BraveApiKey { get; set; }
 
+    /// <summary>NewsData.io API key for news searches.</summary>
+    public string? NewsDataApiKey { get; set; }
+
     /// <summary>Default search provider ID.</summary>
     public string DefaultProvider { get; set; } = "searxng";
 

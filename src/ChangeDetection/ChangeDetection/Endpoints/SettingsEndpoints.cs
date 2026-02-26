@@ -195,6 +195,7 @@ public static class SettingsEndpoints
             GoogleCseApiKey = settings.GoogleCseApiKey is not null ? "***configured***" : null,
             GoogleCseEngineId = settings.GoogleCseEngineId,
             BraveApiKey = settings.BraveApiKey is not null ? "***configured***" : null,
+            NewsDataApiKey = settings.NewsDataApiKey is not null ? "***configured***" : null,
             DefaultProvider = settings.DefaultProvider,
             DefaultMaxResults = settings.DefaultMaxResults,
             TimeoutSeconds = settings.TimeoutSeconds,
