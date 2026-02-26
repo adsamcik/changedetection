@@ -40,6 +40,12 @@ public static class ChangeEndpoints
             .Produces<QualityMetricsDto>()
             .Produces(404);
 
+        group.MapGet("/quality/{watchId}/recommendation", GetThresholdRecommendation)
+            .WithName("GetThresholdRecommendation")
+            .Produces<TrustRecommendation>()
+            .Produces(204)
+            .Produces(404);
+
         group.MapGet("/unviewed/count", GetUnviewedCount)
             .WithName("GetUnviewedCount")
             .Produces<int>()
@@ -551,6 +557,26 @@ public static class ChangeEndpoints
             AverageConfidence = events.Where(e => e.AnalysisConfidence.HasValue)
                 .Select(e => (double)e.AnalysisConfidence!.Value).DefaultIfEmpty().Average()
         });
+    }
+
+    private static async Task<IResult> GetThresholdRecommendation(
+        Guid watchId,
+        IRepository<ChangeEvent> eventRepo,
+        IRepository<WatchedSite> watchRepo,
+        ITrustAutopilot trustAutopilot,
+        CancellationToken ct)
+    {
+        var watch = await watchRepo.GetByIdAsync(watchId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        var events = (await eventRepo.FindAsync(e => e.WatchedSiteId == watchId, ct)).ToList();
+        var currentThreshold = watch.AnalysisSettings.MinRelevanceForNotification ?? 0.5f;
+
+        var recommendation = trustAutopilot.ComputeRecommendation(events, currentThreshold);
+        return recommendation is not null
+            ? Results.Ok(recommendation)
+            : Results.NoContent();
     }
 }
 

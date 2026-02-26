@@ -154,6 +154,12 @@ public class ChangeCheckBackgroundService : BackgroundService
                     await CheckWithLegacyServiceAsync(watchService, notificationService, eventRepo,
                         watch, hubContext, dashboardGroup, ct);
                 }
+
+                // If this watch belongs to a group, recompute aggregates and evaluate alerts
+                if (watch.GroupId.HasValue)
+                {
+                    await TryEvaluateGroupAggregateAsync(watchScope.ServiceProvider, watch, hubContext, dashboardGroup, ct);
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -188,7 +194,7 @@ public class ChangeCheckBackgroundService : BackgroundService
         }
     }
 
-    private static bool ShouldNotify(NotificationSettings settings, ChangeEvent change)
+    internal static bool ShouldNotify(NotificationSettings settings, ChangeEvent change, float? minRelevance = null)
     {
         // Check if any notification channel is enabled
         var hasChannel = settings.EmailEnabled || settings.WebhookEnabled || settings.DiscordEnabled;
@@ -196,7 +202,11 @@ public class ChangeCheckBackgroundService : BackgroundService
         // Check if change importance meets threshold
         var meetsThreshold = change.Importance >= settings.MinimumImportance;
 
-        return hasChannel && meetsThreshold;
+        // Check if change relevance meets the LLM-derived threshold (when both are set)
+        var meetsRelevance = minRelevance is null || change.RelevanceScore is null
+            || change.RelevanceScore >= minRelevance;
+
+        return hasChannel && meetsThreshold && meetsRelevance;
     }
 
     /// <summary>
@@ -238,7 +248,7 @@ public class ChangeCheckBackgroundService : BackgroundService
                 LinesRemoved = changeEvent.LinesRemoved
             }, ct);
 
-            if (updatedWatch != null && ShouldNotify(updatedWatch.Notifications, changeEvent))
+            if (updatedWatch != null && ShouldNotify(updatedWatch.Notifications, changeEvent, updatedWatch.AnalysisSettings.MinRelevanceForNotification))
             {
                 try
                 {
@@ -314,5 +324,79 @@ public class ChangeCheckBackgroundService : BackgroundService
         _logger.LogInformation(
             "Pipeline execution for watch {WatchId} completed: Success={Success}, Blocks={BlockCount}, Degraded={Degraded}",
             watch.Id, result.Success, result.BlockResults.Count, result.IsDegraded);
+    }
+
+    /// <summary>
+    /// After a member watch check, recomputes the group aggregate and evaluates cross-site alerts.
+    /// Broadcasts AggregateUpdated and AggregateAlertTriggered events via SignalR.
+    /// </summary>
+    private async Task TryEvaluateGroupAggregateAsync(
+        IServiceProvider sp,
+        WatchedSite watch,
+        IHubContext<ChangeDetectionHub> hubContext,
+        string dashboardGroup,
+        CancellationToken ct)
+    {
+        try
+        {
+            var groupService = sp.GetRequiredService<IWatchGroupService>();
+            var groupId = watch.GroupId!.Value;
+
+            var group = await groupService.GetByIdAsync(groupId, ct);
+            if (group is null)
+            {
+                _logger.LogDebug("Watch {WatchId} references group {GroupId} that no longer exists", watch.Id, groupId);
+                return;
+            }
+
+            var snapshot = await groupService.ComputeAggregateAsync(groupId, ct);
+
+            // Broadcast aggregate update to group subscribers and dashboard
+            var updateEvent = new AggregateUpdatedEvent(
+                GroupId: groupId,
+                GroupName: group.Name,
+                TriggerWatchId: watch.Id,
+                MemberCount: snapshot.Members.Count,
+                ErrorCount: snapshot.Members.Count(m => m.HasErrors),
+                ComputedAt: snapshot.ComputedAt);
+
+            await Task.WhenAll(
+                hubContext.Clients.Group($"group-{groupId}").SendAsync("AggregateUpdated", updateEvent, ct),
+                hubContext.Clients.Group(dashboardGroup).SendAsync("AggregateUpdated", updateEvent, ct));
+
+            // Evaluate aggregate alerts
+            if (group.AggregateAlerts.Any(a => a.IsEnabled))
+            {
+                var alertResult = await groupService.EvaluateAggregateAlertsAsync(groupId, ct);
+                foreach (var triggered in alertResult.TriggeredAlerts)
+                {
+                    var alertEvent = new AggregateAlertTriggeredEvent(
+                        GroupId: groupId,
+                        GroupName: group.Name,
+                        AlertId: triggered.AlertId,
+                        FieldName: triggered.FieldName,
+                        AggregatedValue: triggered.AggregatedValue,
+                        ThresholdValue: triggered.ThresholdValue,
+                        Message: triggered.Message,
+                        Importance: triggered.Importance.ToString());
+
+                    await Task.WhenAll(
+                        hubContext.Clients.Group($"group-{groupId}").SendAsync("AggregateAlertTriggered", alertEvent, ct),
+                        hubContext.Clients.Group(dashboardGroup).SendAsync("AggregateAlertTriggered", alertEvent, ct));
+                }
+
+                if (alertResult.TriggeredAlerts.Count > 0)
+                {
+                    _logger.LogInformation(
+                        "Group {GroupId} ({GroupName}): {AlertCount} aggregate alert(s) triggered after watch {WatchId} check",
+                        groupId, group.Name, alertResult.TriggeredAlerts.Count, watch.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to evaluate group aggregate for watch {WatchId} in group {GroupId}",
+                watch.Id, watch.GroupId);
+        }
     }
 }

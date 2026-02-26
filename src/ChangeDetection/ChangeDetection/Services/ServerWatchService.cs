@@ -29,6 +29,7 @@ public class ServerWatchService : IWatchService
     private readonly IContentEnricher _contentEnricher;
     private readonly IDeduplicationService _deduplicationService;
     private readonly IPriceTrackingService _priceTrackingService;
+    private readonly IPiiRedactor? _piiRedactor;
     private readonly ILogger<ServerWatchService> _logger;
 
     public ServerWatchService(
@@ -50,7 +51,8 @@ public class ServerWatchService : IWatchService
         IContentEnricher contentEnricher,
         IDeduplicationService deduplicationService,
         IPriceTrackingService priceTrackingService,
-        ILogger<ServerWatchService> logger)
+        ILogger<ServerWatchService> logger,
+        IPiiRedactor? piiRedactor = null)
     {
         _dbContext = dbContext;
         _watchRepo = watchRepo;
@@ -71,6 +73,7 @@ public class ServerWatchService : IWatchService
         _deduplicationService = deduplicationService;
         _priceTrackingService = priceTrackingService;
         _logger = logger;
+        _piiRedactor = piiRedactor;
     }
 
 
@@ -435,6 +438,20 @@ public class ServerWatchService : IWatchService
 
             // Save screenshots if captured
             await SaveScreenshotsAsync(snapshot, fetchResult, watch.FetchSettings.Screenshot, ct);
+
+            // Apply PII redaction before enrichment and storage
+            if (_piiRedactor is not null)
+            {
+                var piiResult = _piiRedactor.Redact(snapshot.Content);
+                if (piiResult.RedactionsApplied > 0)
+                {
+                    snapshot.Content = piiResult.RedactedContent;
+                    snapshot.PiiRedactionsApplied = piiResult.RedactionsApplied;
+                    snapshot.PiiTypesRedacted = string.Join(",", piiResult.RedactedTypes);
+                    _logger.LogInformation("Redacted {Count} PII items ({Types}) from watch {Id}",
+                        piiResult.RedactionsApplied, snapshot.PiiTypesRedacted, watch.Id);
+                }
+            }
 
             // Perform LLM-powered content enrichment if enabled
             if (watch.AnalysisSettings.EnableContentEnrichment)

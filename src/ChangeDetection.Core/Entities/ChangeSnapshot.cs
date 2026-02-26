@@ -150,4 +150,16 @@ public class ChangeSnapshot : IOwnedEntity
     /// Confidence in the enrichment analysis.
     /// </summary>
     public float? EnrichmentConfidence { get; set; }
+
+    // ========== PII Redaction ==========
+
+    /// <summary>
+    /// Number of PII items redacted from content before storage.
+    /// </summary>
+    public int PiiRedactionsApplied { get; set; }
+
+    /// <summary>
+    /// Types of PII detected and redacted (e.g. "Email,Phone,CreditCard").
+    /// </summary>
+    public string? PiiTypesRedacted { get; set; }
 }
