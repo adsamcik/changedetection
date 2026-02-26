@@ -257,6 +257,259 @@ public class WatchGroupServiceTests : TestBase
         result.TriggeredAlerts.Count.ShouldBe(0);
     }
 
+    // --- Rank-Switch Tests ---
+
+    [Test]
+    public async Task RankChanged_WhenLeaderChanges_TriggersAfterStability()
+    {
+        var (groupId, members) = SetupGroupWithMembers(3);
+        var fieldConfig = new AggregateFieldConfig
+        {
+            FieldName = "Price", Function = AggregateFunction.Min,
+            PreviousBestSource = "Site 0", RankStabilityRequired = 2, CurrentLeaderHoldCount = 0
+        };
+        var group = new WatchGroup
+        {
+            Id = groupId, Name = "Test",
+            AggregateFields = [fieldConfig],
+            AggregateAlerts = [new AggregateAlert
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                ConditionType = AlertConditionType.RankChanged, IsEnabled = true
+            }]
+        };
+        // Site 1 is now cheapest (was Site 0)
+        SetupPriceHistory(members[0].Id, "Price", 500m);
+        SetupPriceHistory(members[1].Id, "Price", 350m);
+        SetupPriceHistory(members[2].Id, "Price", 450m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        // First check: hold count = 1, stability requires 2 → should NOT trigger
+        var result1 = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result1.TriggeredAlerts.Count.ShouldBe(0);
+
+        // Second check: hold count = 2 → should trigger
+        var result2 = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result2.TriggeredAlerts.Count.ShouldBe(1);
+        result2.TriggeredAlerts[0].Message.ShouldContain("Site 1");
+    }
+
+    [Test]
+    public async Task RankChanged_WhenSameLeader_DoesNotTrigger()
+    {
+        var (groupId, members) = SetupGroupWithMembers(2);
+        var fieldConfig = new AggregateFieldConfig
+        {
+            FieldName = "Price", Function = AggregateFunction.Min,
+            PreviousBestSource = "Site 0", RankStabilityRequired = 1, CurrentLeaderHoldCount = 5
+        };
+        var group = new WatchGroup
+        {
+            Id = groupId, Name = "Test",
+            AggregateFields = [fieldConfig],
+            AggregateAlerts = [new AggregateAlert
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                ConditionType = AlertConditionType.RankChanged, IsEnabled = true
+            }]
+        };
+        // Site 0 is still cheapest
+        SetupPriceHistory(members[0].Id, "Price", 350m);
+        SetupPriceHistory(members[1].Id, "Price", 450m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var result = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result.TriggeredAlerts.Count.ShouldBe(0);
+    }
+
+    // --- Outlier Detection Tests ---
+
+    [Test]
+    public async Task OutlierDetected_WhenSiteDiverges_Triggers()
+    {
+        var (groupId, members) = SetupGroupWithMembers(4);
+        var group = new WatchGroup
+        {
+            Id = groupId, Name = "Test",
+            AggregateFields = [new AggregateFieldConfig
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                OutlierThresholdPercent = 15.0
+            }],
+            AggregateAlerts = [new AggregateAlert
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                ConditionType = AlertConditionType.OutlierDetected, IsEnabled = true
+            }]
+        };
+        // 3 sites at ~$460, one at $350 (>20% deviation from median)
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 460m);
+        SetupPriceHistory(members[2].Id, "Price", 470m);
+        SetupPriceHistory(members[3].Id, "Price", 350m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var result = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result.TriggeredAlerts.Count.ShouldBe(1);
+        result.TriggeredAlerts[0].Message.ShouldContain("Outlier");
+    }
+
+    [Test]
+    public async Task OutlierDetected_WhenAllClose_DoesNotTrigger()
+    {
+        var (groupId, members) = SetupGroupWithMembers(3);
+        var group = new WatchGroup
+        {
+            Id = groupId, Name = "Test",
+            AggregateFields = [new AggregateFieldConfig
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                OutlierThresholdPercent = 20.0
+            }],
+            AggregateAlerts = [new AggregateAlert
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                ConditionType = AlertConditionType.OutlierDetected, IsEnabled = true
+            }]
+        };
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 460m);
+        SetupPriceHistory(members[2].Id, "Price", 455m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var result = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result.TriggeredAlerts.Count.ShouldBe(0);
+    }
+
+    // --- Absence Detection Tests ---
+
+    [Test]
+    public async Task AbsenceDetection_ErrorStatus_MarksMissingPending()
+    {
+        var (groupId, members) = SetupGroupWithMembers(2);
+        members[1].Status = WatchStatus.Error;
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        // No price history for member 1 (error site)
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.AbsenceSummary.ShouldNotBeNull();
+        snapshot.AbsenceSummary.ConfirmedAbsentCount.ShouldBe(1);
+        snapshot.AbsenceSummary.AbsentWatchIds.ShouldContain(members[1].Id);
+    }
+
+    [Test]
+    public async Task SiteAbsentAlert_WhenAbsent_Triggers()
+    {
+        var (groupId, members) = SetupGroupWithMembers(2);
+        members[1].Status = WatchStatus.Error;
+        var group = new WatchGroup
+        {
+            Id = groupId, Name = "Test",
+            AggregateFields = [new AggregateFieldConfig { FieldName = "Price", Function = AggregateFunction.Min }],
+            AggregateAlerts = [new AggregateAlert
+            {
+                FieldName = "Price", Function = AggregateFunction.Min,
+                ConditionType = AlertConditionType.SiteAbsent, IsEnabled = true
+            }]
+        };
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var result = await _sut.EvaluateAggregateAlertsAsync(groupId);
+        result.TriggeredAlerts.Count.ShouldBe(1);
+        result.TriggeredAlerts[0].Message.ShouldContain("absent");
+    }
+
+    [Test]
+    public async Task AbsentSites_ExcludedFromAggregate()
+    {
+        var (groupId, members) = SetupGroupWithMembers(3);
+        members[2].Status = WatchStatus.Error;
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 400m);
+        // member 2 has no data (error status) — should be excluded from aggregate
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.Fields[0].AggregatedValue.ShouldNotBeNull();
+        snapshot.Fields[0].AggregatedValue.Value.ShouldBe(400.0, tolerance: 0.01);
+        snapshot.Fields[0].PerSiteValues
+            .First(p => p.WatchId == members[2].Id)
+            .AvailabilityState.ShouldBe(SiteAvailabilityState.ConfirmedAbsent);
+    }
+
+    // --- Sanity Guard Tests ---
+
+    [Test]
+    public async Task SanityGuard_ZeroValue_Quarantines()
+    {
+        var (groupId, members) = SetupGroupWithMembers(2);
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 0m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.DataQualityWarnings.Count.ShouldBe(1);
+        snapshot.DataQualityWarnings[0].Reason.ShouldContain("zero or negative");
+        snapshot.Fields[0].PerSiteValues
+            .First(p => p.WatchId == members[1].Id).IsQuarantined.ShouldBeTrue();
+        // Aggregate should use only the non-quarantined value
+        snapshot.Fields[0].AggregatedValue.ShouldNotBeNull();
+        snapshot.Fields[0].AggregatedValue.Value.ShouldBe(450.0, tolerance: 0.01);
+    }
+
+    [Test]
+    public async Task SanityGuard_NegativeValue_Quarantines()
+    {
+        var (groupId, members) = SetupGroupWithMembers(2);
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", -10m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.DataQualityWarnings.Count.ShouldBe(1);
+        snapshot.Fields[0].AggregatedValue.Value.ShouldBe(450.0, tolerance: 0.01);
+    }
+
+    [Test]
+    public async Task SanityGuard_ExtremeDeviation_Quarantines()
+    {
+        var (groupId, members) = SetupGroupWithMembers(3);
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 460m);
+        SetupPriceHistory(members[2].Id, "Price", 5000m); // >200% deviation
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.DataQualityWarnings.Count.ShouldBe(1);
+        snapshot.DataQualityWarnings[0].WatchId.ShouldBe(members[2].Id);
+        snapshot.Fields[0].PerSiteValues
+            .First(p => p.WatchId == members[2].Id).IsQuarantined.ShouldBeTrue();
+        // Aggregate uses only the 2 non-quarantined values
+        snapshot.Fields[0].AggregatedValue.Value.ShouldBe(450.0, tolerance: 0.01);
+    }
+
+    [Test]
+    public async Task SanityGuard_NormalValues_PassThrough()
+    {
+        var (groupId, members) = SetupGroupWithMembers(3);
+        var group = CreateGroupWithField(groupId, "Price", AggregateFunction.Min);
+        SetupPriceHistory(members[0].Id, "Price", 450m);
+        SetupPriceHistory(members[1].Id, "Price", 460m);
+        SetupPriceHistory(members[2].Id, "Price", 440m);
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>()).Returns(group);
+
+        var snapshot = await _sut.ComputeAggregateAsync(groupId);
+        snapshot.DataQualityWarnings.Count.ShouldBe(0);
+        snapshot.Fields[0].PerSiteValues.ShouldAllBe(p => !p.IsQuarantined);
+    }
+
     // --- Helpers ---
 
     private (Guid GroupId, List<WatchedSite> Members) SetupGroupWithMembers(int count)

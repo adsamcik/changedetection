@@ -34,6 +34,18 @@ public class AggregateFieldConfig
     public bool IsPrimary { get; set; }
     public string? Unit { get; set; }
     public string? CurrencyCode { get; set; }
+
+    /// <summary>Previous best source for rank-switch detection.</summary>
+    public string? PreviousBestSource { get; set; }
+
+    /// <summary>How many consecutive checks the current leader must hold before alerting.</summary>
+    public int RankStabilityRequired { get; set; } = 2;
+
+    /// <summary>How many consecutive checks the current leader has held.</summary>
+    public int CurrentLeaderHoldCount { get; set; }
+
+    /// <summary>Outlier threshold: flag sites deviating more than this % from group median.</summary>
+    public double OutlierThresholdPercent { get; set; } = 20.0;
 }
 
 public class AggregateAlert
@@ -59,6 +71,8 @@ public class AggregateSnapshot
     public DateTime ComputedAt { get; set; } = DateTime.UtcNow;
     public List<AggregateFieldValue> Fields { get; set; } = [];
     public List<AggregateSnapshotMember> Members { get; set; } = [];
+    public List<DataQualityWarning> DataQualityWarnings { get; set; } = [];
+    public AbsenceSummary? AbsenceSummary { get; set; }
 }
 
 public class AggregateFieldValue
@@ -79,6 +93,21 @@ public class PerSiteValue
     public string? FormattedValue { get; set; }
     public DateTime? LastUpdated { get; set; }
     public WatchStatus Status { get; set; }
+
+    /// <summary>Availability state for absence detection.</summary>
+    public SiteAvailabilityState AvailabilityState { get; set; } = SiteAvailabilityState.Available;
+
+    /// <summary>Number of consecutive check failures for this site.</summary>
+    public int ConsecutiveFailures { get; set; }
+
+    /// <summary>Whether this reading was quarantined by the sanity guard.</summary>
+    public bool IsQuarantined { get; set; }
+
+    /// <summary>Reason for quarantine, if any.</summary>
+    public string? QuarantineReason { get; set; }
+
+    /// <summary>Deviation from group median as a percentage (for outlier detection).</summary>
+    public double? DeviationFromMedianPercent { get; set; }
 }
 
 public class AggregateSnapshotMember
@@ -106,4 +135,33 @@ public class TriggeredAggregateAlert
     public double ThresholdValue { get; set; }
     public string? Message { get; set; }
     public ChangeImportance Importance { get; set; } = ChangeImportance.Medium;
+}
+
+/// <summary>Site availability states for absence detection.</summary>
+public enum SiteAvailabilityState
+{
+    Available,
+    MissingPending,
+    ConfirmedAbsent
+}
+
+/// <summary>Summary of site absences in a group.</summary>
+public class AbsenceSummary
+{
+    public int AvailableCount { get; set; }
+    public int MissingPendingCount { get; set; }
+    public int ConfirmedAbsentCount { get; set; }
+    public List<Guid> AbsentWatchIds { get; set; } = [];
+}
+
+/// <summary>Data quality warning from the sanity guard.</summary>
+public class DataQualityWarning
+{
+    public Guid WatchId { get; set; }
+    public string? WatchName { get; set; }
+    public required string FieldName { get; set; }
+    public double? ReportedValue { get; set; }
+    public double? PreviousValue { get; set; }
+    public required string Reason { get; set; }
+    public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
 }

@@ -307,7 +307,16 @@ public enum AlertConditionType
     ReturnsToBaseline,
 
     /// <summary>Value is at or below a specific target (e.g., target price reached).</summary>
-    TargetReached
+    TargetReached,
+
+    /// <summary>The best source (cheapest/highest) site changed to a different member.</summary>
+    RankChanged,
+
+    /// <summary>A site's value diverges significantly from the group consensus (outlier).</summary>
+    OutlierDetected,
+
+    /// <summary>A product was confirmed absent/disappeared from a site.</summary>
+    SiteAbsent
 }
 
 /// <summary>
