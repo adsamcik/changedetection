@@ -13,6 +13,15 @@ public class WatchGroup : IOwnedEntity
     public string? Description { get; set; }
     public string? Icon { get; set; }
     public string? UserIntent { get; set; }
+
+    /// <summary>
+    /// Structured analysis profile as JSON for LLM-powered evaluation of changes.
+    /// Used by ChangeAnalyzer to perform multi-dimensional matching (e.g., candidate
+    /// profile for job watches with education, skills, location, salary criteria).
+    /// When present, relevance scoring returns per-dimension match assessments.
+    /// </summary>
+    public string? AnalysisProfileJson { get; set; }
+
     public List<AggregateFieldConfig> AggregateFields { get; set; } = [];
     public List<AggregateAlert> AggregateAlerts { get; set; } = [];
     public List<string> Tags { get; set; } = [];

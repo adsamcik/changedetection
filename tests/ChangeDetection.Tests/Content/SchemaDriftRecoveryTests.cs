@@ -82,6 +82,7 @@ public class SchemaDriftRecoveryTests : TestBase
             _contentEnricher,
             _deduplicationService,
             _priceTrackingService,
+            Substitute.For<IRepository<WatchGroup>>(),
             CreateLogger<ServerWatchService>());
     }
 

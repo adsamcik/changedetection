@@ -372,6 +372,7 @@ builder.Services.AddScoped<IObjectExtractionService, ObjectExtractionService>();
 builder.Services.AddScoped<IObjectDiffService, ObjectDiffService>();
 builder.Services.AddScoped<IFilterEvaluationService, FilterEvaluationService>();
 builder.Services.AddScoped<IErrorResolutionService, ErrorResolutionService>();
+builder.Services.AddSingleton<IProfileFilterRuleGenerator, ProfileFilterRuleGenerator>();
 
 // Auto-healing services
 builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();

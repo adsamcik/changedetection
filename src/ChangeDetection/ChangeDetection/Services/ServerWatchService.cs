@@ -30,6 +30,7 @@ public class ServerWatchService : IWatchService
     private readonly IDeduplicationService _deduplicationService;
     private readonly IPriceTrackingService _priceTrackingService;
     private readonly IPiiRedactor? _piiRedactor;
+    private readonly IRepository<WatchGroup> _groupRepo;
     private readonly ILogger<ServerWatchService> _logger;
 
     public ServerWatchService(
@@ -51,6 +52,7 @@ public class ServerWatchService : IWatchService
         IContentEnricher contentEnricher,
         IDeduplicationService deduplicationService,
         IPriceTrackingService priceTrackingService,
+        IRepository<WatchGroup> groupRepo,
         ILogger<ServerWatchService> logger,
         IPiiRedactor? piiRedactor = null)
     {
@@ -72,6 +74,7 @@ public class ServerWatchService : IWatchService
         _contentEnricher = contentEnricher;
         _deduplicationService = deduplicationService;
         _priceTrackingService = priceTrackingService;
+        _groupRepo = groupRepo;
         _logger = logger;
         _piiRedactor = piiRedactor;
     }
@@ -929,6 +932,14 @@ public class ServerWatchService : IWatchService
             // Build diff content for analysis
             var diffContent = BuildDiffContentForAnalysis(diff);
 
+            // Resolve analysis profile from watch group (if any)
+            string? analysisProfileJson = null;
+            if (watch.GroupId.HasValue)
+            {
+                var group = await _groupRepo.GetByIdAsync(watch.GroupId.Value, ct);
+                analysisProfileJson = group?.AnalysisProfileJson;
+            }
+
             var request = new ChangeAnalysisRequest
             {
                 DiffContent = diffContent,
@@ -937,6 +948,7 @@ public class ServerWatchService : IWatchService
                 Url = watch.Url,
                 WatchName = watch.Name,
                 UserIntent = watch.UserIntent,
+                AnalysisProfileJson = analysisProfileJson,
                 Tags = watch.Tags,
                 WatchId = watch.Id,
                 LinesAdded = diff.LinesAdded,
@@ -956,6 +968,7 @@ public class ServerWatchService : IWatchService
                 changeEvent.RelevanceScore = result.RelevanceScore;
                 changeEvent.RelevanceReason = result.RelevanceReason;
                 changeEvent.AnalysisConfidence = result.Confidence;
+                changeEvent.MatchDimensionsJson = result.MatchDimensionsJson;
 
                 if (result.Categories.Count > 0)
                     changeEvent.CategoriesJson = JsonSerializer.Serialize(result.Categories);

@@ -70,6 +70,13 @@ public class ChangeAnalysisRequest
     public string? UserIntent { get; init; }
 
     /// <summary>
+    /// Structured analysis profile (JSON) for multi-dimensional matching.
+    /// When present, relevance scoring evaluates against specific criteria
+    /// (e.g., candidate profile for job watches: education, skills, location, salary).
+    /// </summary>
+    public string? AnalysisProfileJson { get; init; }
+
+    /// <summary>
     /// Categories/tags for context.
     /// </summary>
     public List<string> Tags { get; init; } = [];
@@ -171,6 +178,13 @@ public class ChangeAnalysisResult
     /// Confidence in the overall analysis.
     /// </summary>
     public float Confidence { get; init; }
+
+    /// <summary>
+    /// Per-dimension match scores when an analysis profile is provided.
+    /// JSON dictionary of dimension name → { score, reason, status }.
+    /// Example: { "education": { "score": 0.9, "status": "PASS", "reason": "MSc meets requirement" } }
+    /// </summary>
+    public string? MatchDimensionsJson { get; init; }
 
     /// <summary>
     /// Token usage for this analysis.

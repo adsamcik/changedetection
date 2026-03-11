@@ -20,6 +20,7 @@ public class WatchGroupDetailDto
     public string? Description { get; set; }
     public string? Icon { get; set; }
     public string? UserIntent { get; set; }
+    public string? AnalysisProfileJson { get; set; }
     public List<AggregateFieldConfigDto> AggregateFields { get; set; } = [];
     public List<AggregateAlertDto> AggregateAlerts { get; set; } = [];
     public List<WatchGroupMemberDto> Members { get; set; } = [];
@@ -42,6 +43,7 @@ public class WatchGroupUpdateDto
     public string? Description { get; set; }
     public string? Icon { get; set; }
     public List<string>? Tags { get; set; }
+    public string? AnalysisProfileJson { get; set; }
     public List<AggregateFieldConfigDto>? AggregateFields { get; set; }
     public List<AggregateAlertDto>? AggregateAlerts { get; set; }
 }

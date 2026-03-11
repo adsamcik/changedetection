@@ -76,15 +76,26 @@ public class ChangeAnalyzer(
 
         float relevanceScore = 0.5f;
         string? relevanceReason = null;
+        string? matchDimensionsJson = null;
         ChangeAnalysisProgress? step2Result;
 
-        if (!string.IsNullOrEmpty(request.UserIntent))
+        if (!string.IsNullOrEmpty(request.UserIntent) || !string.IsNullOrEmpty(request.AnalysisProfileJson))
         {
             try
             {
                 var relevanceResult = await CalculateRelevanceAsync(request, semanticSummary, ct);
                 relevanceScore = relevanceResult.Score;
                 relevanceReason = relevanceResult.Reason;
+
+                // Extract dimensions JSON if embedded in the reason by profile-aware scoring
+                const string dimensionsSeparator = "\n---DIMENSIONS---\n";
+                if (relevanceReason?.Contains(dimensionsSeparator) == true)
+                {
+                    var sepIndex = relevanceReason.IndexOf(dimensionsSeparator, StringComparison.Ordinal);
+                    matchDimensionsJson = relevanceReason[(sepIndex + dimensionsSeparator.Length)..];
+                    relevanceReason = relevanceReason[..sepIndex];
+                }
+
                 step2Result = new ChangeAnalysisProgress { Step = "RelevanceScoring", Status = "Completed" };
             }
             catch (Exception ex)
@@ -235,6 +246,7 @@ public class ChangeAnalyzer(
                 BriefSummary = briefSummary,
                 RelevanceScore = relevanceScore,
                 RelevanceReason = relevanceReason,
+                MatchDimensionsJson = matchDimensionsJson,
                 Categories = categories,
                 ExtractedEntities = entities,
                 Sentiment = sentiment,
@@ -371,6 +383,12 @@ public class ChangeAnalyzer(
         string? semanticSummary,
         CancellationToken ct)
     {
+        // When an analysis profile is present, use multi-dimensional matching
+        if (!string.IsNullOrEmpty(request.AnalysisProfileJson))
+        {
+            return await CalculateProfileRelevanceAsync(request, semanticSummary, ct);
+        }
+
         var prompt = $$"""
             Score how relevant this change is to the user's monitoring goal.
             
@@ -404,6 +422,101 @@ public class ChangeAnalyzer(
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
         return (result?.Score ?? 0.5f, result?.Reason);
+    }
+
+    /// <summary>
+    /// Profile-aware relevance scoring that evaluates changes against a structured analysis profile.
+    /// Returns multi-dimensional match assessment (education, skills, location, salary, etc.).
+    /// </summary>
+    private async Task<(float Score, string? Reason)> CalculateProfileRelevanceAsync(
+        ChangeAnalysisRequest request,
+        string? semanticSummary,
+        CancellationToken ct)
+    {
+        var changeSummary = semanticSummary ?? request.DiffContent[..Math.Min(1000, request.DiffContent.Length)];
+
+        var prompt = $$"""
+            You are evaluating a detected change against a structured candidate/matching profile.
+            Score how well this change matches the profile criteria across multiple dimensions.
+
+            ## Monitoring Goal
+            {{request.UserIntent ?? "Monitor for relevant changes"}}
+
+            ## Analysis Profile
+            {{request.AnalysisProfileJson}}
+
+            ## Detected Change
+            {{changeSummary}}
+
+            Evaluate each applicable dimension from the profile against the change content.
+            For each dimension, assign a status: PASS (meets criteria), FAIL (does not meet), 
+            STRETCH (partially meets or ambiguous — e.g., "PhD or equivalent experience"), 
+            or UNKNOWN (insufficient information to determine).
+
+            Common dimensions to check (use only those relevant to the profile):
+            - education: Does the change content require qualifications the profile holder has?
+            - skills: Are required skills present in the profile's strong/basic techniques?
+            - location: Is the location acceptable per the profile?
+            - salary: Is compensation above the profile's floor?
+            - experience: Does the experience level match?
+            - language: Can the profile holder work in the required language?
+            - dealbreakers: Does anything in the change trigger a dealbreaker from the profile?
+
+            Respond in JSON format:
+            {
+                "score": 0.0-1.0 (overall match quality: 1.0 = perfect match on all dimensions),
+                "reason": "One-line overall assessment",
+                "dimensions": {
+                    "dimension_name": {
+                        "score": 0.0-1.0,
+                        "status": "PASS|FAIL|STRETCH|UNKNOWN",
+                        "reason": "Brief explanation"
+                    }
+                },
+                "recommendation": "APPLY|REVIEW|SKIP — actionable one-word recommendation",
+                "urgency_note": "Any deadline or urgency information found, or null"
+            }
+            """;
+
+        var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        {
+            Temperature = 0.2f,
+            MaxTokens = 1024,
+            ExpectJson = true,
+            UsageType = LlmUsageType.RelevanceScoring,
+            WatchedSiteId = request.WatchId
+        }, ct);
+
+        if (!response.IsSuccess)
+        {
+            throw new InvalidOperationException(response.ErrorMessage);
+        }
+
+        var json = ExtractJson(response.Content ?? "");
+        var result = JsonSerializer.Deserialize<ProfileRelevanceResponse>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        if (result is null)
+            return (0.5f, "Profile relevance parsing failed");
+
+        // Store the full dimensions JSON for the ChangeEvent.MatchDimensionsJson
+        // We do this by building a summary reason that includes the recommendation
+        var reason = result.Reason ?? "Profile match evaluated";
+        if (result.Recommendation is not null)
+            reason = $"[{result.Recommendation}] {reason}";
+        if (result.UrgencyNote is not null)
+            reason = $"{reason} ⚠️ {result.UrgencyNote}";
+
+        // Attach dimensions JSON to the reason using a separator the caller can parse
+        // The dimensions are also stored separately via MatchDimensionsJson on the result
+        var dimensionsJson = result.Dimensions is not null
+            ? JsonSerializer.Serialize(result.Dimensions, new JsonSerializerOptions { WriteIndented = false })
+            : null;
+
+        if (dimensionsJson is not null)
+            reason = $"{reason}\n---DIMENSIONS---\n{dimensionsJson}";
+
+        return (result.Score, reason);
     }
 
     private async Task<List<ChangeCategory>> CategorizeChangeAsync(
@@ -720,6 +833,22 @@ internal class SemanticSummaryResponse
 internal class RelevanceResponse
 {
     public float Score { get; set; }
+    public string? Reason { get; set; }
+}
+
+internal class ProfileRelevanceResponse
+{
+    public float Score { get; set; }
+    public string? Reason { get; set; }
+    public Dictionary<string, ProfileDimensionScore>? Dimensions { get; set; }
+    public string? Recommendation { get; set; }
+    public string? UrgencyNote { get; set; }
+}
+
+internal class ProfileDimensionScore
+{
+    public float Score { get; set; }
+    public string? Status { get; set; }
     public string? Reason { get; set; }
 }
 

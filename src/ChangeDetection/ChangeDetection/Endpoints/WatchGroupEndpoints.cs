@@ -74,6 +74,7 @@ public static class WatchGroupEndpoints
         if (dto.Description is not null) g.Description = dto.Description;
         if (dto.Icon is not null) g.Icon = dto.Icon;
         if (dto.Tags is not null) g.Tags = dto.Tags;
+        if (dto.AnalysisProfileJson is not null) g.AnalysisProfileJson = dto.AnalysisProfileJson;
 
         if (dto.AggregateFields is not null)
             g.AggregateFields = dto.AggregateFields.Select(f => new AggregateFieldConfig
@@ -151,7 +152,8 @@ public static class WatchGroupEndpoints
 
     private static WatchGroupDetailDto MapDetailDto(WatchGroup g, List<WatchedSite> members, AggregateSnapshot snap) => new()
     {
-        Id = g.Id.ToString(), Name = g.Name, Description = g.Description, Icon = g.Icon, UserIntent = g.UserIntent,
+        Id = g.Id.ToString(), Name = g.Name, Description = g.Description, Icon = g.Icon,
+        UserIntent = g.UserIntent, AnalysisProfileJson = g.AnalysisProfileJson,
         AggregateFields = g.AggregateFields.Select(f => new AggregateFieldConfigDto
         {
             Id = f.Id.ToString(), FieldName = f.FieldName, Function = f.Function.ToString(),

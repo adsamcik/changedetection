@@ -77,6 +77,7 @@ public class ServerWatchServiceTests
             _contentEnricher,
             _deduplicationService,
             _priceTrackingService,
+            Substitute.For<IRepository<WatchGroup>>(),
             _logger);
     }
 

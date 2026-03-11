@@ -171,6 +171,13 @@ public class ChangeEvent : IOwnedEntity
     /// </summary>
     public bool HasLlmAnalysis { get; set; }
 
+    /// <summary>
+    /// Per-dimension match scores when an analysis profile was used.
+    /// JSON dictionary of dimension → { score, status, reason }.
+    /// Populated by ChangeAnalyzer when WatchGroup has AnalysisProfileJson.
+    /// </summary>
+    public string? MatchDimensionsJson { get; set; }
+
     // ========== User Quality Feedback ==========
 
     /// <summary>
