@@ -1,0 +1,207 @@
+@page "/jobwatch"
+@page "/jobwatch/setup"
+@rendermode InteractiveAuto
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Job Watch Setup - Change Detection</PageTitle>
+
+<div class="jobwatch-setup">
+    <header class="page-header">
+        <div class="header-content">
+            <h1>🔬 Job Watch Setup</h1>
+            <p class="subtitle">Configure automated monitoring of biotech job portals with profile-based matching</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-error" role="alert">
+            <strong>Error:</strong> @errorMessage
+        </div>
+    }
+
+    @if (isSeeded)
+    {
+        <div class="success-banner">
+            <div class="success-icon">✅</div>
+            <div class="success-content">
+                <h3>Job Watch Project Created!</h3>
+                <p>Monitoring @portalCount portals with your candidate profile. The system will check portals according to their configured schedule and alert you when matching jobs are found.</p>
+                <div class="success-actions">
+                    <a href="/" class="btn btn-primary">Go to Dashboard</a>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="setup-layout">
+            <div class="setup-main">
+                <ProfileEditor @bind-ProfileJson="profileJson" OnChanged="OnProfileChanged" />
+            </div>
+
+            <aside class="setup-sidebar">
+                <div class="sidebar-section">
+                    <h3>Monitored Portals</h3>
+                    <p class="sidebar-hint">@portalCount portals will be monitored across Prague and Copenhagen</p>
+
+                    @if (portals.Count > 0)
+                    {
+                        <div class="portal-list">
+                            @foreach (var portal in portals)
+                            {
+                                <div class="portal-item @portal.Tier">
+                                    <div class="portal-info">
+                                        <span class="portal-name">@portal.Name</span>
+                                        <span class="portal-meta">@portal.CheckIntervalLabel · @(portal.NeedsJavaScript ? "JS" : "HTML")</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-outline btn-sm" @onclick="LoadPortals">
+                            Load portal list
+                        </button>
+                    }
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>How It Works</h3>
+                    <div class="how-it-works">
+                        <div class="step">
+                            <span class="step-num">1</span>
+                            <span>Define your candidate profile</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">2</span>
+                            <span>System creates watches for all portals</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">3</span>
+                            <span>Each scan extracts new job listings</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">4</span>
+                            <span>LLM validates matches against your profile</span>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">5</span>
+                            <span>You get alerts only for qualified matches</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <button type="button" class="btn btn-primary btn-block"
+                            disabled="@(isSubmitting || string.IsNullOrWhiteSpace(profileJson))"
+                            @onclick="CreateJobWatch">
+                        @if (isSubmitting)
+                        {
+                            <span class="spinner-sm"></span>
+                            <span>Creating project...</span>
+                        }
+                        else
+                        {
+                            <span>🚀 Create Job Watch Project</span>
+                        }
+                    </button>
+                    @if (string.IsNullOrWhiteSpace(profileJson))
+                    {
+                        <p class="sidebar-hint">Fill in your profile to enable project creation</p>
+                    }
+                </div>
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    private string? profileJson;
+    private string? errorMessage;
+    private bool isSubmitting;
+    private bool isSeeded;
+    private int portalCount = 17;
+    private List<PortalInfo> portals = [];
+
+    private async Task LoadPortals()
+    {
+        try
+        {
+            var response = await Http.GetAsync("/api/jobwatch/portals");
+            if (response.IsSuccessStatusCode)
+            {
+                portals = await response.Content.ReadFromJsonAsync<List<PortalInfo>>() ?? [];
+                portalCount = portals.Count;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private void OnProfileChanged()
+    {
+        errorMessage = null;
+    }
+
+    private async Task CreateJobWatch()
+    {
+        if (string.IsNullOrWhiteSpace(profileJson))
+        {
+            errorMessage = "Please fill in your candidate profile before creating the project.";
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            var request = new
+            {
+                ProfileJson = profileJson,
+                UserIntent = "Monitor biotech/life-science job portals for matching positions based on candidate profile"
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/jobwatch/seed", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                isSeeded = true;
+            }
+            else
+            {
+                errorMessage = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to create project: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private class PortalInfo
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Tier { get; set; } = "";
+        public double CheckIntervalHours { get; set; }
+        public bool NeedsJavaScript { get; set; }
+
+        public string CheckIntervalLabel => CheckIntervalHours switch
+        {
+            <= 24 => "Daily",
+            <= 48 => "Every 2 days",
+            _ => "Weekly"
+        };
+    }
+}

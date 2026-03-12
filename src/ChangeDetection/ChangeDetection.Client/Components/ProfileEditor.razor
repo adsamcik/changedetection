@@ -1,0 +1,536 @@
+@using System.Text.Json
+@inject HttpClient Http
+
+<div class="profile-editor">
+    <div class="profile-header">
+        <h2>🔬 Candidate Profile</h2>
+        <p class="profile-subtitle">Define your qualifications for automated job matching</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-error" role="alert">@errorMessage</div>
+    }
+
+    <div class="profile-sections">
+        <!-- Education -->
+        <section class="form-section">
+            <h3>🎓 Education</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="edu-level">Degree Level</label>
+                    <select id="edu-level" class="form-control" @bind="model.EducationLevel" @bind:after="NotifyChanged">
+                        <option value="">Select...</option>
+                        <option value="BSc">BSc</option>
+                        <option value="MSc">MSc</option>
+                        <option value="PhD">PhD</option>
+                        <option value="MD">MD</option>
+                    </select>
+                    <p class="form-hint">Roles requiring a higher degree than yours will be auto-filtered</p>
+                </div>
+                <div class="form-group">
+                    <label for="edu-field">Field of Study</label>
+                    <input id="edu-field" type="text" class="form-control"
+                           placeholder="e.g. molecular and cell biology"
+                           @bind="model.EducationField" @bind:event="oninput" @bind:after="NotifyChanged" />
+                </div>
+            </div>
+        </section>
+
+        <!-- Experience -->
+        <section class="form-section">
+            <h3>💼 Experience</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="exp-years">Years of Experience</label>
+                    <input id="exp-years" type="text" class="form-control"
+                           placeholder="e.g. 1-3"
+                           @bind="model.ExperienceYears" @bind:event="oninput" @bind:after="NotifyChanged" />
+                </div>
+                <div class="form-group">
+                    <label for="current-role">Current Role (optional)</label>
+                    <input id="current-role" type="text" class="form-control"
+                           placeholder="e.g. Scientific Project Coordinator at ESGO"
+                           @bind="model.CurrentRole" @bind:event="oninput" @bind:after="NotifyChanged" />
+                </div>
+            </div>
+        </section>
+
+        <!-- Techniques -->
+        <section class="form-section">
+            <h3>🧬 Laboratory Techniques</h3>
+            <p class="section-description">Categorize your techniques by proficiency. Roles requiring skills in your "None" category will be automatically downgraded.</p>
+
+            <div class="technique-grid">
+                <div class="technique-column strong">
+                    <h4>✅ Strong <span class="count">(@model.TechniquesStrong.Count)</span></h4>
+                    <p class="column-hint">Hands-on, independent experience</p>
+                    <div class="tag-list">
+                        @foreach (var tech in model.TechniquesStrong)
+                        {
+                            <span class="tag tag-strong">
+                                @tech
+                                <button type="button" class="tag-remove" @onclick="() => RemoveTechnique(model.TechniquesStrong, tech)">×</button>
+                            </span>
+                        }
+                    </div>
+                    <div class="tag-input-wrapper">
+                        <input type="text" class="tag-input" placeholder="Add technique..."
+                               @bind="newTechStrong" @bind:event="oninput"
+                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesStrong, ref newTechStrong)" />
+                    </div>
+                </div>
+
+                <div class="technique-column basic">
+                    <h4>⚡ Basic <span class="count">(@model.TechniquesBasic.Count)</span></h4>
+                    <p class="column-hint">Some exposure, not independent</p>
+                    <div class="tag-list">
+                        @foreach (var tech in model.TechniquesBasic)
+                        {
+                            <span class="tag tag-basic">
+                                @tech
+                                <button type="button" class="tag-remove" @onclick="() => RemoveTechnique(model.TechniquesBasic, tech)">×</button>
+                            </span>
+                        }
+                    </div>
+                    <div class="tag-input-wrapper">
+                        <input type="text" class="tag-input" placeholder="Add technique..."
+                               @bind="newTechBasic" @bind:event="oninput"
+                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesBasic, ref newTechBasic)" />
+                    </div>
+                </div>
+
+                <div class="technique-column none">
+                    <h4>❌ None <span class="count">(@model.TechniquesNone.Count)</span></h4>
+                    <p class="column-hint">Not present — auto-filter if required</p>
+                    <div class="tag-list">
+                        @foreach (var tech in model.TechniquesNone)
+                        {
+                            <span class="tag tag-none">
+                                @tech
+                                <button type="button" class="tag-remove" @onclick="() => RemoveTechnique(model.TechniquesNone, tech)">×</button>
+                            </span>
+                        }
+                    </div>
+                    <div class="tag-input-wrapper">
+                        <input type="text" class="tag-input" placeholder="Add technique..."
+                               @bind="newTechNone" @bind:event="oninput"
+                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesNone, ref newTechNone)" />
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Target Locations -->
+        <section class="form-section">
+            <h3>📍 Target Locations</h3>
+            <p class="section-description">Roles outside these locations will be suppressed</p>
+            <div class="tag-list">
+                @foreach (var loc in model.TargetLocations)
+                {
+                    <span class="tag tag-location">
+                        @loc
+                        <button type="button" class="tag-remove" @onclick="() => RemoveLocation(loc)">×</button>
+                    </span>
+                }
+            </div>
+            <div class="tag-input-wrapper">
+                <input type="text" class="tag-input" placeholder="Add city (e.g. Prague, Copenhagen, Lyngby)..."
+                       @bind="newLocation" @bind:event="oninput"
+                       @onkeydown="HandleLocationKeyDown" />
+            </div>
+        </section>
+
+        <!-- Languages -->
+        <section class="form-section">
+            <h3>🌐 Languages</h3>
+            <div class="language-list">
+                @foreach (var lang in model.Languages)
+                {
+                    <div class="language-row">
+                        <input type="text" class="form-control lang-name" placeholder="Language"
+                               value="@lang.Key" disabled />
+                        <input type="text" class="form-control lang-level" placeholder="Level"
+                               value="@lang.Value" disabled />
+                        <button type="button" class="btn-icon" @onclick="() => RemoveLanguage(lang.Key)">×</button>
+                    </div>
+                }
+                <div class="language-row">
+                    <input type="text" class="form-control lang-name" placeholder="Language name"
+                           @bind="newLangName" @bind:event="oninput" />
+                    <input type="text" class="form-control lang-level" placeholder="Level (e.g. C1, native)"
+                           @bind="newLangLevel" @bind:event="oninput"
+                           @onkeydown="HandleLanguageKeyDown" />
+                    <button type="button" class="btn-icon btn-add" @onclick="AddLanguage">+</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Salary -->
+        <section class="form-section">
+            <h3>💰 Salary Floor</h3>
+            <p class="section-description">Minimum acceptable salary by region (roles below are flagged)</p>
+            <div class="form-row">
+                @foreach (var entry in model.SalaryFloor)
+                {
+                    <div class="form-group salary-entry">
+                        <label>@entry.Key</label>
+                        <input type="text" class="form-control" value="@entry.Value" disabled />
+                    </div>
+                }
+                <div class="form-group salary-entry">
+                    <label for="salary-region">Add region</label>
+                    <div class="salary-input-row">
+                        <input id="salary-region" type="text" class="form-control" placeholder="Region"
+                               @bind="newSalaryRegion" @bind:event="oninput" />
+                        <input type="text" class="form-control" placeholder="e.g. 50000 CZK"
+                               @bind="newSalaryValue" @bind:event="oninput"
+                               @onkeydown="HandleSalaryKeyDown" />
+                        <button type="button" class="btn-icon btn-add" @onclick="AddSalary">+</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dealbreakers -->
+        <section class="form-section">
+            <h3>🚫 Dealbreakers</h3>
+            <p class="section-description">Companies or role types to automatically exclude</p>
+            <div class="tag-list">
+                @foreach (var db in model.Dealbreakers)
+                {
+                    <span class="tag tag-dealbreaker">
+                        @db
+                        <button type="button" class="tag-remove" @onclick="() => RemoveDealbreaker(db)">×</button>
+                    </span>
+                }
+            </div>
+            <div class="tag-input-wrapper">
+                <input type="text" class="tag-input" placeholder="Add dealbreaker (company name or role type)..."
+                       @bind="newDealbreaker" @bind:event="oninput"
+                       @onkeydown="HandleDealbreakerKeyDown" />
+            </div>
+        </section>
+
+        <!-- Preferences -->
+        <section class="form-section">
+            <h3>⭐ Preferences</h3>
+            <p class="section-description">Not dealbreakers, but strongly preferred (used for LLM scoring)</p>
+            <div class="tag-list">
+                @foreach (var pref in model.Preferences)
+                {
+                    <span class="tag tag-preference">
+                        @pref
+                        <button type="button" class="tag-remove" @onclick="() => RemovePreference(pref)">×</button>
+                    </span>
+                }
+            </div>
+            <div class="tag-input-wrapper">
+                <input type="text" class="tag-input" placeholder="Add preference..."
+                       @bind="newPreference" @bind:event="oninput"
+                       @onkeydown="HandlePreferenceKeyDown" />
+            </div>
+        </section>
+    </div>
+
+    <!-- Generated rules preview -->
+    @if (generatedRulesPreview.Count > 0)
+    {
+        <section class="form-section rules-preview">
+            <h3>🤖 Auto-Generated Filter Rules</h3>
+            <p class="section-description">These rules will be applied to every portal watch</p>
+            <div class="rules-list">
+                @foreach (var rule in generatedRulesPreview)
+                {
+                    <div class="rule-badge @rule.Type">
+                        <span class="rule-icon">@rule.Icon</span>
+                        <span class="rule-text">@rule.Text</span>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string? ProfileJson { get; set; }
+
+    [Parameter]
+    public EventCallback<string> ProfileJsonChanged { get; set; }
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private ProfileModel model = new();
+    private string? errorMessage;
+
+    // Tag input state
+    private string newTechStrong = "";
+    private string newTechBasic = "";
+    private string newTechNone = "";
+    private string newLocation = "";
+    private string newDealbreaker = "";
+    private string newPreference = "";
+    private string newLangName = "";
+    private string newLangLevel = "";
+    private string newSalaryRegion = "";
+    private string newSalaryValue = "";
+
+    private List<RulePreview> generatedRulesPreview = [];
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(ProfileJson))
+        {
+            try
+            {
+                model = ProfileModel.FromJson(ProfileJson);
+                UpdateRulesPreview();
+            }
+            catch { /* Keep default model on parse failure */ }
+        }
+    }
+
+    private async Task NotifyChanged()
+    {
+        var json = model.ToJson();
+        await ProfileJsonChanged.InvokeAsync(json);
+        await OnChanged.InvokeAsync();
+        UpdateRulesPreview();
+    }
+
+    private void UpdateRulesPreview()
+    {
+        generatedRulesPreview.Clear();
+
+        if (!string.IsNullOrEmpty(model.EducationLevel) && model.EducationLevel != "PhD")
+            generatedRulesPreview.Add(new("suppress", "🎓", $"PhD-required roles → auto-rejected (you have {model.EducationLevel})"));
+
+        foreach (var db in model.Dealbreakers)
+            generatedRulesPreview.Add(new("suppress", "🚫", $"\"{db}\" → dealbreaker, auto-rejected"));
+
+        foreach (var tech in model.TechniquesNone)
+            generatedRulesPreview.Add(new("downgrade", "⬇️", $"If requires \"{tech}\" → downgraded (skill gap)"));
+
+        if (model.TargetLocations.Count > 0)
+            generatedRulesPreview.Add(new("suppress", "📍", $"Locations not matching [{string.Join(", ", model.TargetLocations.Take(3))}{(model.TargetLocations.Count > 3 ? "..." : "")}] → suppressed"));
+    }
+
+    // Tag management helpers
+    private void HandleTechKeyDown(KeyboardEventArgs e, List<string> list, ref string input)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(input))
+        {
+            AddTechnique(list, ref input);
+        }
+    }
+
+    private void AddTechnique(List<string> list, ref string input)
+    {
+        var value = input.Trim();
+        if (!string.IsNullOrEmpty(value) && !list.Contains(value, StringComparer.OrdinalIgnoreCase))
+        {
+            list.Add(value);
+            input = "";
+            _ = NotifyChanged();
+        }
+    }
+
+    private void RemoveTechnique(List<string> list, string tech)
+    {
+        list.Remove(tech);
+        _ = NotifyChanged();
+    }
+
+    private void HandleLocationKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newLocation))
+        {
+            if (!model.TargetLocations.Contains(newLocation.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                model.TargetLocations.Add(newLocation.Trim());
+                newLocation = "";
+                _ = NotifyChanged();
+            }
+        }
+    }
+
+    private void RemoveLocation(string loc)
+    {
+        model.TargetLocations.Remove(loc);
+        _ = NotifyChanged();
+    }
+
+    private void HandleDealbreakerKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newDealbreaker))
+        {
+            if (!model.Dealbreakers.Contains(newDealbreaker.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                model.Dealbreakers.Add(newDealbreaker.Trim());
+                newDealbreaker = "";
+                _ = NotifyChanged();
+            }
+        }
+    }
+
+    private void RemoveDealbreaker(string db)
+    {
+        model.Dealbreakers.Remove(db);
+        _ = NotifyChanged();
+    }
+
+    private void HandlePreferenceKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newPreference))
+        {
+            if (!model.Preferences.Contains(newPreference.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                model.Preferences.Add(newPreference.Trim());
+                newPreference = "";
+                _ = NotifyChanged();
+            }
+        }
+    }
+
+    private void RemovePreference(string pref)
+    {
+        model.Preferences.Remove(pref);
+        _ = NotifyChanged();
+    }
+
+    private void HandleLanguageKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddLanguage();
+    }
+
+    private void AddLanguage()
+    {
+        if (!string.IsNullOrWhiteSpace(newLangName) && !string.IsNullOrWhiteSpace(newLangLevel))
+        {
+            model.Languages[newLangName.Trim()] = newLangLevel.Trim();
+            newLangName = "";
+            newLangLevel = "";
+            _ = NotifyChanged();
+        }
+    }
+
+    private void RemoveLanguage(string key)
+    {
+        model.Languages.Remove(key);
+        _ = NotifyChanged();
+    }
+
+    private void HandleSalaryKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddSalary();
+    }
+
+    private void AddSalary()
+    {
+        if (!string.IsNullOrWhiteSpace(newSalaryRegion) && !string.IsNullOrWhiteSpace(newSalaryValue))
+        {
+            model.SalaryFloor[newSalaryRegion.Trim()] = newSalaryValue.Trim();
+            newSalaryRegion = "";
+            newSalaryValue = "";
+            _ = NotifyChanged();
+        }
+    }
+
+    private record RulePreview(string Type, string Icon, string Text);
+
+    /// <summary>
+    /// Client-side model that maps to/from the AnalysisProfileJson structure.
+    /// </summary>
+    public class ProfileModel
+    {
+        public string EducationLevel { get; set; } = "";
+        public string EducationField { get; set; } = "";
+        public string ExperienceYears { get; set; } = "";
+        public string CurrentRole { get; set; } = "";
+        public List<string> TechniquesStrong { get; set; } = [];
+        public List<string> TechniquesBasic { get; set; } = [];
+        public List<string> TechniquesNone { get; set; } = [];
+        public List<string> TargetLocations { get; set; } = [];
+        public Dictionary<string, string> Languages { get; set; } = [];
+        public Dictionary<string, string> SalaryFloor { get; set; } = [];
+        public List<string> Dealbreakers { get; set; } = [];
+        public List<string> Preferences { get; set; } = [];
+
+        public string ToJson()
+        {
+            var obj = new Dictionary<string, object>();
+
+            if (!string.IsNullOrEmpty(EducationLevel) || !string.IsNullOrEmpty(EducationField))
+            {
+                obj["education"] = new { level = EducationLevel, field = EducationField };
+            }
+            if (!string.IsNullOrEmpty(ExperienceYears))
+                obj["experience_years"] = ExperienceYears;
+            if (!string.IsNullOrEmpty(CurrentRole))
+                obj["current_role"] = CurrentRole;
+            if (TechniquesStrong.Count > 0)
+                obj["techniques_strong"] = TechniquesStrong;
+            if (TechniquesBasic.Count > 0)
+                obj["techniques_basic"] = TechniquesBasic;
+            if (TechniquesNone.Count > 0)
+                obj["techniques_none"] = TechniquesNone;
+            if (TargetLocations.Count > 0)
+                obj["target_locations"] = TargetLocations;
+            if (Languages.Count > 0)
+                obj["languages"] = Languages;
+            if (SalaryFloor.Count > 0)
+                obj["salary_floor"] = SalaryFloor;
+            if (Dealbreakers.Count > 0)
+                obj["dealbreakers"] = Dealbreakers;
+            if (Preferences.Count > 0)
+                obj["preferences"] = Preferences;
+
+            return JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
+        }
+
+        public static ProfileModel FromJson(string json)
+        {
+            var model = new ProfileModel();
+            var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("education", out var edu))
+            {
+                if (edu.TryGetProperty("level", out var lvl)) model.EducationLevel = lvl.GetString() ?? "";
+                if (edu.TryGetProperty("field", out var fld)) model.EducationField = fld.GetString() ?? "";
+            }
+            if (root.TryGetProperty("experience_years", out var exp))
+                model.ExperienceYears = exp.GetString() ?? "";
+            if (root.TryGetProperty("current_role", out var role))
+                model.CurrentRole = role.GetString() ?? "";
+
+            model.TechniquesStrong = GetStringList(root, "techniques_strong");
+            model.TechniquesBasic = GetStringList(root, "techniques_basic");
+            model.TechniquesNone = GetStringList(root, "techniques_none");
+            model.TargetLocations = GetStringList(root, "target_locations");
+            model.Dealbreakers = GetStringList(root, "dealbreakers");
+            model.Preferences = GetStringList(root, "preferences");
+
+            if (root.TryGetProperty("languages", out var langs) && langs.ValueKind == JsonValueKind.Object)
+                foreach (var prop in langs.EnumerateObject())
+                    model.Languages[prop.Name] = prop.Value.GetString() ?? "";
+
+            if (root.TryGetProperty("salary_floor", out var sal) && sal.ValueKind == JsonValueKind.Object)
+                foreach (var prop in sal.EnumerateObject())
+                    model.SalaryFloor[prop.Name] = prop.Value.ValueKind == JsonValueKind.Number
+                        ? prop.Value.GetInt64().ToString()
+                        : prop.Value.GetString() ?? "";
+
+            return model;
+        }
+
+        private static List<string> GetStringList(JsonElement root, string prop)
+        {
+            if (root.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                return arr.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s != "").ToList();
+            return [];
+        }
+    }
+}
