@@ -31,6 +31,12 @@ public interface ILlmProviderChain
     /// Checks whether any enabled, healthy provider uses a non-small (large) model.
     /// </summary>
     Task<bool> HasLargeModelAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Resets a provider's circuit breaker and health status, allowing it to be retried.
+    /// Use after fixing the underlying issue (e.g., updating an SDK version).
+    /// </summary>
+    Task ResetProviderHealthAsync(Guid providerId, CancellationToken ct = default);
 }
 
 /// <summary>

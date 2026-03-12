@@ -358,9 +358,11 @@ public class LlmProviderChain : ILlmProviderChain
     private async Task<IEnumerable<LlmProviderConfig>> GetProvidersToTryAsync(string? specificProvider, CancellationToken ct, bool preferLargeModel = false)
     {
         var allProviders = await _providerRepo.GetAllAsync(ct);
+        // Include unhealthy providers so Polly circuit breaker can attempt half-open recovery
         var enabledProviders = allProviders
-            .Where(p => p.IsEnabled && p.IsHealthy)
-            .OrderBy(p => p.Priority)
+            .Where(p => p.IsEnabled)
+            .OrderBy(p => p.IsHealthy ? 0 : 1) // Healthy providers first, unhealthy last
+            .ThenBy(p => p.Priority)
             .ToList();
 
         if (!string.IsNullOrEmpty(specificProvider))
@@ -681,6 +683,34 @@ public class LlmProviderChain : ILlmProviderChain
             LastError = p.LastError,
             LastErrorAt = p.LastErrorAt
         });
+    }
+
+    public async Task ResetProviderHealthAsync(Guid providerId, CancellationToken ct = default)
+    {
+        var provider = await _providerRepo.GetByIdAsync(providerId, ct)
+            ?? throw new KeyNotFoundException($"Provider {providerId} not found");
+
+        // Reset health status in database
+        provider.IsHealthy = true;
+        provider.LastError = null;
+        provider.LastErrorAt = null;
+        provider.UpdatedAt = DateTime.UtcNow;
+        await _providerRepo.UpdateAsync(provider, ct);
+
+        // Remove the cached circuit breaker so a fresh one is created on next use
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _circuitBreakers.Remove(providerId);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        _logger.LogInformation(
+            "Reset health and circuit breaker for provider '{Name}' ({Id})",
+            provider.Name, provider.Id);
     }
 
     /// <summary>

@@ -47,6 +47,11 @@ public static class LlmEndpoints
             .WithName("DisableProvider")
             .Produces(204);
 
+        group.MapPost("/providers/{id}/reset-health", ResetProviderHealth)
+            .WithName("ResetProviderHealth")
+            .Produces(204)
+            .Produces(404);
+
         group.MapGet("/providers/health", GetProviderHealth)
             .WithName("GetProviderHealth")
             .Produces<List<ProviderHealthStatus>>();
@@ -554,6 +559,26 @@ public static class LlmEndpoints
         provider.UpdatedAt = DateTime.UtcNow;
         await providerRepo.UpdateAsync(provider, ct);
 
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ResetProviderHealth(
+        string id,
+        ILlmProviderChain llmChain,
+        IRepository<LlmProviderConfig> providerRepo,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out var guidId))
+            return Results.BadRequest("Invalid provider ID");
+
+        var provider = await providerRepo.GetByIdAsync(guidId, ct);
+        if (provider == null) return Results.NotFound();
+
+        await llmChain.ResetProviderHealthAsync(guidId, ct);
+
+        var logger = loggerFactory.CreateLogger(typeof(LlmEndpoints).FullName!);
+        logger.LogInformation("Provider '{Name}' health reset via API", provider.Name);
         return Results.NoContent();
     }
 

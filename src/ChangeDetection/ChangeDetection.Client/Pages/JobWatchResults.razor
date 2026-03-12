@@ -112,9 +112,30 @@
         @if (llmUnavailable)
         {
             <div class="alert alert-warning" role="alert">
-                <strong>⚠️ LLM scoring unavailable</strong> — No LLM provider is configured (e.g., Ollama). 
-                Match scores show as 50% (default). Configure an LLM provider in 
-                <a href="/settings">Settings</a> to enable profile-based job matching.
+                @if (hasUnhealthyProviders)
+                {
+                    <p><strong>⚠️ LLM provider unhealthy</strong> - A configured provider has tripped its circuit breaker.</p>
+                    <p>
+                        Match scores show as 50% (default). <a href="/settings">Reset the provider</a>
+                        in Settings after resolving the underlying issue.
+                    </p>
+                }
+                else if (hasConfiguredProviders)
+                {
+                    <p><strong>⚠️ LLM scoring unavailable</strong> - Providers are configured but none could be reached.</p>
+                    <p>
+                        Match scores show as 50% (default). Check <a href="/settings">Settings</a>
+                        to verify provider status.
+                    </p>
+                }
+                else
+                {
+                    <p><strong>⚠️ No LLM provider configured</strong> - Configure a provider to enable scoring.</p>
+                    <p>
+                        Match scores show as 50% (default). Configure a provider in
+                        <a href="/settings">Settings</a> to enable profile-based job matching.
+                    </p>
+                }
             </div>
         }
 
@@ -233,6 +254,8 @@
     private string? checkStatusMessage;
     private string? currentPortalName;
     private bool llmUnavailable;
+    private bool hasConfiguredProviders;
+    private bool hasUnhealthyProviders;
     private WatchGroupDetailDto? group;
     private List<MatchResult> allChanges = [];
     private List<MatchResult> filteredChanges = [];
@@ -313,10 +336,25 @@
 
         allChanges = results.OrderByDescending(r => r.Score ?? 0).ThenByDescending(r => r.DetectedAt).ToList();
 
-        // Detect if LLM scoring is unavailable (all scores = default 0.5, no dimensions)
+        // Detect if LLM scoring appears unavailable (fallback scores only, no dimensions)
         llmUnavailable = allChanges.Count > 0 &&
             allChanges.All(c => c.Score is null or 0.5f) &&
             allChanges.All(c => c.Dimensions.Count == 0);
+
+        // Fetch provider status to differentiate no-provider vs unhealthy-provider
+        if (llmUnavailable)
+        {
+            try
+            {
+                var providers = await Http.GetFromJsonAsync<List<LlmProviderDto>>("/api/llm/providers") ?? [];
+                hasConfiguredProviders = providers.Count > 0;
+                hasUnhealthyProviders = providers.Any(p => p.IsEnabled && !p.IsHealthy);
+            }
+            catch
+            {
+                // If we can't fetch provider status, fall back to generic message
+            }
+        }
 
         ApplyFilter();
     }
