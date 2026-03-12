@@ -1,0 +1,379 @@
+@page "/jobwatch/results"
+@rendermode InteractiveServer
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@using System.Text.Json
+@using ChangeDetection.Shared.Dtos
+
+<PageTitle>Job Watch Results - Change Detection</PageTitle>
+
+<div class="jobwatch-results">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading job watch results...</span>
+        </div>
+    }
+    else if (group is null)
+    {
+        <div class="empty-state">
+            <div class="empty-icon">🔬</div>
+            <h2>No Job Watch configured</h2>
+            <p>Set up automated monitoring of biotech job portals with profile-based matching to get started.</p>
+            <a href="/jobwatch/setup" class="btn btn-primary">Get Started</a>
+        </div>
+    }
+    else
+    {
+        <header class="page-header">
+            <div class="header-content">
+                <h1>🔬 @group.Name</h1>
+                <p class="subtitle">
+                    Monitoring @group.Members.Count portals
+                    @if (allChanges.Count > 0)
+                    {
+                        <span> · @allChanges.Count matches found</span>
+                    }
+                </p>
+            </div>
+            <div class="header-actions">
+                <a href="/jobwatch/setup?groupId=@group.Id" class="btn btn-outline btn-sm">⚙️ Edit Profile</a>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-error" role="alert">@errorMessage</div>
+        }
+
+        <div class="filter-bar">
+            <button class="filter-btn @(activeFilter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>
+                All <span class="filter-count">@allChanges.Count</span>
+            </button>
+            <button class="filter-btn @(activeFilter == "high" ? "active" : "")" @onclick='() => SetFilter("high")'>
+                High Match <span class="filter-count">@CountByTier("high")</span>
+            </button>
+            <button class="filter-btn @(activeFilter == "medium" ? "active" : "")" @onclick='() => SetFilter("medium")'>
+                Medium <span class="filter-count">@CountByTier("medium")</span>
+            </button>
+            <button class="filter-btn @(activeFilter == "low" ? "active" : "")" @onclick='() => SetFilter("low")'>
+                Low <span class="filter-count">@CountByTier("low")</span>
+            </button>
+        </div>
+
+        @if (filteredChanges.Count == 0)
+        {
+            <div class="no-results">
+                <p>No matches in this category yet. Portals are checked on their configured schedule — results will appear here as new jobs are detected.</p>
+            </div>
+        }
+        else
+        {
+            <div class="results-grid">
+                @foreach (var item in filteredChanges)
+                {
+                    <div class="result-card">
+                        <div class="card-header">
+                            <div class="card-title-row">
+                                <h3 class="job-title">@item.Title</h3>
+                                <span class="recommendation-badge badge-@item.Recommendation.ToLowerInvariant()">
+                                    @item.Recommendation
+                                </span>
+                            </div>
+                            <span class="portal-name">@item.PortalName</span>
+                        </div>
+
+                        <div class="card-body">
+                            @if (item.Score.HasValue)
+                            {
+                                <div class="score-row">
+                                    <span class="score-label">Match</span>
+                                    <div class="score-bar">
+                                        <div class="score-fill score-@item.ScoreTier" style="width: @($"{item.Score.Value * 100:F0}%")"></div>
+                                    </div>
+                                    <span class="score-value">@($"{item.Score.Value * 100:F0}%")</span>
+                                </div>
+                            }
+
+                            @if (item.Dimensions.Count > 0)
+                            {
+                                <div class="dimensions">
+                                    @foreach (var dim in item.Dimensions)
+                                    {
+                                        <span class="dim-badge dim-@dim.Level" title="@dim.Name: @dim.Level">
+                                            @dim.Icon @dim.Name
+                                        </span>
+                                    }
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrEmpty(item.Reason))
+                            {
+                                <p class="reason-text">@item.Reason</p>
+                            }
+                        </div>
+
+                        <div class="card-footer">
+                            <span class="detected-date" title="@item.DetectedAt.ToString("yyyy-MM-dd HH:mm")">
+                                @FormatRelativeDate(item.DetectedAt)
+                            </span>
+                            <a href="/changes/@item.ChangeId" class="detail-link">View details →</a>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool isLoading = true;
+    private string? errorMessage;
+    private WatchGroupDetailDto? group;
+    private List<MatchResult> allChanges = [];
+    private List<MatchResult> filteredChanges = [];
+    private string activeFilter = "all";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var groups = await Http.GetFromJsonAsync<List<WatchGroupListItemDto>>("/api/groups") ?? [];
+            var jobGroup = groups.FirstOrDefault(g => g.Tags.Contains("job-search"));
+
+            if (jobGroup is null)
+            {
+                isLoading = false;
+                return;
+            }
+
+            var response = await Http.GetAsync($"/api/groups/{jobGroup.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                isLoading = false;
+                return;
+            }
+
+            group = await response.Content.ReadFromJsonAsync<WatchGroupDetailDto>();
+            if (group is null)
+            {
+                isLoading = false;
+                return;
+            }
+
+            await LoadChanges();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load results: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadChanges()
+    {
+        if (group is null) return;
+
+        var results = new List<MatchResult>();
+
+        foreach (var member in group.Members)
+        {
+            try
+            {
+                var changes = await Http.GetFromJsonAsync<List<ChangeListItemDto>>(
+                    $"/api/changes?watchId={member.WatchId}&limit=50") ?? [];
+
+                foreach (var c in changes)
+                {
+                    results.Add(new MatchResult
+                    {
+                        ChangeId = c.Id,
+                        Title = ExtractTitle(c.Summary),
+                        PortalName = member.Name ?? "Unknown portal",
+                        DetectedAt = c.DetectedAt,
+                        Score = c.RelevanceScore,
+                        Reason = c.RelevanceReason,
+                        Recommendation = ExtractRecommendation(c.RelevanceReason, c.RelevanceScore),
+                        Dimensions = ParseDimensions(c.MatchDimensionsJson)
+                    });
+                }
+            }
+            catch
+            {
+                // Skip portal if changes can't be loaded
+            }
+        }
+
+        allChanges = results.OrderByDescending(r => r.Score ?? 0).ThenByDescending(r => r.DetectedAt).ToList();
+        ApplyFilter();
+    }
+
+    private void SetFilter(string filter)
+    {
+        activeFilter = filter;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        filteredChanges = activeFilter switch
+        {
+            "high" => allChanges.Where(c => c.ScoreTier == "high").ToList(),
+            "medium" => allChanges.Where(c => c.ScoreTier == "medium").ToList(),
+            "low" => allChanges.Where(c => c.ScoreTier == "low").ToList(),
+            _ => allChanges
+        };
+    }
+
+    private int CountByTier(string tier) => allChanges.Count(c => c.ScoreTier == tier);
+
+    private static string ExtractTitle(string summary)
+    {
+        if (string.IsNullOrWhiteSpace(summary)) return "New change detected";
+        // Take first line or first 80 characters
+        var firstLine = summary.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? summary;
+        return firstLine.Length > 80 ? firstLine[..77] + "..." : firstLine;
+    }
+
+    private static string ExtractRecommendation(string? reason, float? score)
+    {
+        if (!string.IsNullOrEmpty(reason))
+        {
+            var upper = reason.ToUpperInvariant();
+            if (upper.Contains("APPLY")) return "APPLY";
+            if (upper.Contains("SKIP")) return "SKIP";
+            if (upper.Contains("REVIEW")) return "REVIEW";
+        }
+
+        return score switch
+        {
+            >= 0.7f => "APPLY",
+            >= 0.4f => "REVIEW",
+            _ => "SKIP"
+        };
+    }
+
+    private static List<DimensionInfo> ParseDimensions(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var dims = new List<DimensionInfo>();
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var name = prop.Name;
+                string level;
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                {
+                    // Try to read a "score" or "match" field
+                    if (prop.Value.TryGetProperty("score", out var scoreProp) && scoreProp.TryGetDouble(out var s))
+                    {
+                        level = s >= 0.7 ? "pass" : s >= 0.4 ? "partial" : "fail";
+                    }
+                    else if (prop.Value.TryGetProperty("match", out var matchProp))
+                    {
+                        var m = matchProp.GetString()?.ToLowerInvariant() ?? "";
+                        level = m switch
+                        {
+                            "full" or "strong" or "yes" => "pass",
+                            "partial" or "moderate" or "some" => "partial",
+                            _ => "fail"
+                        };
+                    }
+                    else
+                    {
+                        level = "partial";
+                    }
+                }
+                else if (prop.Value.ValueKind == JsonValueKind.Number && prop.Value.TryGetDouble(out var numScore))
+                {
+                    level = numScore >= 0.7 ? "pass" : numScore >= 0.4 ? "partial" : "fail";
+                }
+                else if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    var sv = prop.Value.GetString()?.ToLowerInvariant() ?? "";
+                    level = sv switch
+                    {
+                        "full" or "strong" or "yes" or "pass" => "pass",
+                        "partial" or "moderate" or "some" => "partial",
+                        _ => "fail"
+                    };
+                }
+                else
+                {
+                    level = "partial";
+                }
+
+                dims.Add(new DimensionInfo
+                {
+                    Name = FormatDimensionName(name),
+                    Level = level,
+                    Icon = level switch { "pass" => "✅", "partial" => "⚠️", _ => "❌" }
+                });
+            }
+
+            return dims;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static string FormatDimensionName(string name)
+    {
+        // Convert camelCase/snake_case to Title Case
+        var result = System.Text.RegularExpressions.Regex.Replace(name, "([a-z])([A-Z])", "$1 $2");
+        result = result.Replace('_', ' ');
+        return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(result.ToLowerInvariant());
+    }
+
+    private static string FormatRelativeDate(DateTime date)
+    {
+        var diff = DateTime.UtcNow - date;
+        var mins = (int)diff.TotalMinutes;
+        var hours = (int)diff.TotalHours;
+        var days = (int)diff.TotalDays;
+        
+        if (mins < 60) return $"{mins}m ago";
+        if (hours < 24) return $"{hours}h ago";
+        if (days < 7) return $"{days}d ago";
+        return date.ToString("MMM dd");
+    }
+
+    private class MatchResult
+    {
+        public string ChangeId { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string PortalName { get; set; } = "";
+        public DateTime DetectedAt { get; set; }
+        public float? Score { get; set; }
+        public string? Reason { get; set; }
+        public string Recommendation { get; set; } = "REVIEW";
+        public List<DimensionInfo> Dimensions { get; set; } = [];
+
+        public string ScoreTier
+        {
+            get
+            {
+                if (Score >= 0.7f) return "high";
+                if (Score >= 0.4f) return "medium";
+                return "low";
+            }
+        }
+    }
+
+    private class DimensionInfo
+    {
+        public string Name { get; set; } = "";
+        public string Level { get; set; } = "partial";
+        public string Icon { get; set; } = "⚠️";
+    }
+}

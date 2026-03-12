@@ -111,6 +111,11 @@ public static class ChangeEndpoints
                 dto.ObjectsModified = e.ObjectsDiff.ModifiedItems.Count;
             }
             
+            // Profile match data
+            dto.RelevanceScore = e.RelevanceScore;
+            dto.RelevanceReason = e.RelevanceReason;
+            dto.MatchDimensionsJson = e.MatchDimensionsJson;
+            
             return dto;
         }).ToList();
 
@@ -182,6 +187,11 @@ public static class ChangeEndpoints
             dto.Schema = MapToSchemaDto(watch.Schema);
             dto.ObjectDiff = MapToObjectDiffDto(change.ObjectsDiff, watch.Schema);
         }
+        
+        // Profile match data
+        dto.RelevanceScore = change.RelevanceScore;
+        dto.RelevanceReason = change.RelevanceReason;
+        dto.MatchDimensionsJson = change.MatchDimensionsJson;
 
         return Results.Ok(dto);
     }

@@ -3,6 +3,8 @@
 @rendermode InteractiveAuto
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@using System.Text.Json
+@using ChangeDetection.Shared.Dtos
 
 <PageTitle>Job Watch Setup - Change Detection</PageTitle>
 
@@ -12,6 +14,10 @@
             <h1>🔬 Job Watch Setup</h1>
             <p class="subtitle">Configure automated monitoring of biotech job portals with profile-based matching</p>
         </div>
+        @if (existingGroupId is not null)
+        {
+            <a href="/jobwatch/results" class="btn btn-outline btn-sm">← View Results</a>
+        }
     </header>
 
     @if (!string.IsNullOrEmpty(errorMessage))
@@ -29,9 +35,17 @@
                 <h3>Job Watch Project Created!</h3>
                 <p>Monitoring @portalCount portals with your candidate profile. The system will check portals according to their configured schedule and alert you when matching jobs are found.</p>
                 <div class="success-actions">
-                    <a href="/" class="btn btn-primary">Go to Dashboard</a>
+                    <a href="/jobwatch/results" class="btn btn-primary">View Results</a>
+                    <a href="/" class="btn btn-outline">Go to Dashboard</a>
                 </div>
             </div>
+        </div>
+    }
+    else if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner-sm"></div>
+            <span>Loading configuration...</span>
         </div>
     }
     else
@@ -95,19 +109,38 @@
                 </div>
 
                 <div class="sidebar-section">
-                    <button type="button" class="btn btn-primary btn-block"
-                            disabled="@(isSubmitting || string.IsNullOrWhiteSpace(profileJson))"
-                            @onclick="CreateJobWatch">
-                        @if (isSubmitting)
-                        {
-                            <span class="spinner-sm"></span>
-                            <span>Creating project...</span>
-                        }
-                        else
-                        {
-                            <span>🚀 Create Job Watch Project</span>
-                        }
-                    </button>
+                    @if (existingGroupId is not null)
+                    {
+                        <button type="button" class="btn btn-primary btn-block"
+                                disabled="@(isSubmitting || string.IsNullOrWhiteSpace(profileJson))"
+                                @onclick="UpdateProfile">
+                            @if (isSubmitting)
+                            {
+                                <span class="spinner-sm"></span>
+                                <span>Updating profile...</span>
+                            }
+                            else
+                            {
+                                <span>✏️ Update Profile</span>
+                            }
+                        </button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-primary btn-block"
+                                disabled="@(isSubmitting || string.IsNullOrWhiteSpace(profileJson))"
+                                @onclick="CreateJobWatch">
+                            @if (isSubmitting)
+                            {
+                                <span class="spinner-sm"></span>
+                                <span>Creating project...</span>
+                            }
+                            else
+                            {
+                                <span>🚀 Create Job Watch Project</span>
+                            }
+                        </button>
+                    }
                     @if (string.IsNullOrWhiteSpace(profileJson))
                     {
                         <p class="sidebar-hint">Fill in your profile to enable project creation</p>
@@ -119,12 +152,71 @@
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "groupId")]
+    public string? GroupIdParam { get; set; }
+
     private string? profileJson;
     private string? errorMessage;
     private bool isSubmitting;
     private bool isSeeded;
+    private bool isLoading = true;
     private int portalCount = 17;
     private List<PortalInfo> portals = [];
+    private string? existingGroupId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(GroupIdParam))
+            {
+                await LoadExistingGroup(GroupIdParam);
+            }
+            else
+            {
+                await AutoDetectExistingGroup();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load configuration: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task AutoDetectExistingGroup()
+    {
+        try
+        {
+            var groups = await Http.GetFromJsonAsync<List<WatchGroupListItemDto>>("/api/groups");
+            var jobGroup = groups?.FirstOrDefault(g => g.Tags.Contains("job-search"));
+            if (jobGroup is not null)
+            {
+                await LoadExistingGroup(jobGroup.Id);
+            }
+        }
+        catch
+        {
+            // No existing group found — that's fine, show create mode
+        }
+    }
+
+    private async Task LoadExistingGroup(string groupId)
+    {
+        var response = await Http.GetAsync($"/api/groups/{groupId}");
+        if (response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadFromJsonAsync<WatchGroupDetailDto>();
+            if (detail is not null)
+            {
+                existingGroupId = detail.Id;
+                profileJson = detail.AnalysisProfileJson;
+            }
+        }
+    }
 
     private async Task LoadPortals()
     {
@@ -146,6 +238,38 @@
     private void OnProfileChanged()
     {
         errorMessage = null;
+    }
+
+    private async Task UpdateProfile()
+    {
+        if (string.IsNullOrWhiteSpace(profileJson) || existingGroupId is null)
+            return;
+
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            var update = new WatchGroupUpdateDto { AnalysisProfileJson = profileJson };
+            var response = await Http.PutAsJsonAsync($"/api/groups/{existingGroupId}", update);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Navigation.NavigateTo("/jobwatch/results");
+            }
+            else
+            {
+                errorMessage = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to update profile: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
     }
 
     private async Task CreateJobWatch()

@@ -232,3 +232,25 @@
     color: #991b1b;
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
+
+/* Loading */
+.loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-3, 0.75rem);
+    padding: var(--spacing-8, 2rem);
+    color: var(--color-text-muted, #475569);
+    font-size: var(--font-size-sm, 0.875rem);
+}
+
+.header-content {
+    flex: 1;
+}
+
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-4, 1rem);
+}

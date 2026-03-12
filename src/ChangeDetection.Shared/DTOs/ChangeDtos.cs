@@ -27,6 +27,15 @@ public class ChangeListItemDto
     public int ObjectsAdded { get; set; }
     public int ObjectsRemoved { get; set; }
     public int ObjectsModified { get; set; }
+    
+    /// <summary>Relevance score (0-1) from profile matching.</summary>
+    public float? RelevanceScore { get; set; }
+    
+    /// <summary>LLM-generated relevance reason for the change.</summary>
+    public string? RelevanceReason { get; set; }
+    
+    /// <summary>Profile match dimensions for job-watch changes (JSON).</summary>
+    public string? MatchDimensionsJson { get; set; }
 }
 
 /// <summary>
@@ -65,6 +74,17 @@ public class ChangeDetailDto
     /// The schema used for extraction (for displaying field metadata).
     /// </summary>
     public ExtractionSchemaDto? Schema { get; set; }
+    
+    // ========== Profile Match Data ==========
+    
+    /// <summary>Profile match dimensions for job-watch changes (JSON).</summary>
+    public string? MatchDimensionsJson { get; set; }
+
+    /// <summary>LLM-generated relevance reason for the change.</summary>
+    public string? RelevanceReason { get; set; }
+
+    /// <summary>Relevance score (0-1) from profile matching.</summary>
+    public float? RelevanceScore { get; set; }
 }
 
 /// <summary>
