@@ -78,6 +78,7 @@ public class SchemaDriftRecoveryTests : TestBase
             _objectExtractionService,
             _objectDiffService,
             _errorResolutionService,
+            Substitute.For<IFilterEvaluationService>(),
             _changeAnalyzer,
             _contentEnricher,
             _deduplicationService,

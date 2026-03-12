@@ -25,6 +25,7 @@ public class ServerWatchService : IWatchService
     private readonly IObjectExtractionService _objectExtractionService;
     private readonly IObjectDiffService _objectDiffService;
     private readonly IErrorResolutionService _errorResolutionService;
+    private readonly IFilterEvaluationService _filterEvaluationService;
     private readonly IChangeAnalyzer _changeAnalyzer;
     private readonly IContentEnricher _contentEnricher;
     private readonly IDeduplicationService _deduplicationService;
@@ -48,6 +49,7 @@ public class ServerWatchService : IWatchService
         IObjectExtractionService objectExtractionService,
         IObjectDiffService objectDiffService,
         IErrorResolutionService errorResolutionService,
+        IFilterEvaluationService filterEvaluationService,
         IChangeAnalyzer changeAnalyzer,
         IContentEnricher contentEnricher,
         IDeduplicationService deduplicationService,
@@ -70,6 +72,7 @@ public class ServerWatchService : IWatchService
         _objectExtractionService = objectExtractionService;
         _objectDiffService = objectDiffService;
         _errorResolutionService = errorResolutionService;
+        _filterEvaluationService = filterEvaluationService;
         _changeAnalyzer = changeAnalyzer;
         _contentEnricher = contentEnricher;
         _deduplicationService = deduplicationService;
@@ -544,6 +547,20 @@ public class ServerWatchService : IWatchService
                             watch, changeEvent, diff, previousSnapshot.Content, extractedContent, ct);
                     }
 
+                    // Apply filter rules when object diff and rules are available
+                    if (changeEvent.ObjectsDiff is not null && watch.FilterRules.Count > 0)
+                    {
+                        var filterResult = await _filterEvaluationService.EvaluateAsync(
+                            changeEvent.ObjectsDiff, watch.FilterRules, ct);
+
+                        changeEvent.AppliedActions = filterResult.Actions;
+
+                        if (filterResult.SuppressNotification)
+                        {
+                            changeEvent.IsNotified = true; // mark as already notified to suppress
+                        }
+                    }
+
                     await _eventRepo.InsertAsync(changeEvent, ct);
                     
                     // Update adaptive scheduling metrics when a change is detected
@@ -943,7 +960,7 @@ public class ServerWatchService : IWatchService
             _logger.LogDebug("Performing change analysis for watch {Id}", watch.Id);
 
             // Build diff content for analysis
-            var diffContent = BuildDiffContentForAnalysis(diff);
+            var (diffContent, _) = BuildDiffContentForAnalysis(diff);
 
             // Resolve analysis profile from watch group (if any)
             string? analysisProfileJson = null;
@@ -1103,11 +1120,17 @@ public class ServerWatchService : IWatchService
     /// <summary>
     /// Builds a text representation of the diff for LLM analysis.
     /// </summary>
-    private static string BuildDiffContentForAnalysis(DiffResult diff)
+    private static (string Content, bool WasTruncated) BuildDiffContentForAnalysis(DiffResult diff)
     {
+        const int maxLines = 500;
+        var changedLines = diff.Lines
+            .Where(l => l.Type != DiffLineType.Unchanged)
+            .ToList();
+
+        var wasTruncated = changedLines.Count > maxLines;
         var sb = new System.Text.StringBuilder();
 
-        foreach (var line in diff.Lines.Take(200)) // Limit to prevent token overflow
+        foreach (var line in changedLines.Take(maxLines))
         {
             var prefix = line.Type switch
             {
@@ -1117,13 +1140,15 @@ public class ServerWatchService : IWatchService
                 _ => "  "
             };
 
-            if (line.Type != DiffLineType.Unchanged)
-            {
-                sb.AppendLine($"{prefix}{line.Text}");
-            }
+            sb.AppendLine($"{prefix}{line.Text}");
         }
 
-        return sb.ToString();
+        if (wasTruncated)
+        {
+            sb.AppendLine($"... [{changedLines.Count - maxLines} more changed lines truncated]");
+        }
+
+        return (sb.ToString(), wasTruncated);
     }
     
     /// <summary>

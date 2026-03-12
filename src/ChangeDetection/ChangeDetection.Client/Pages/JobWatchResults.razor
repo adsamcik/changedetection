@@ -34,7 +34,14 @@
                     Monitoring @group.Members.Count portals
                     @if (allChanges.Count > 0)
                     {
-                        <span> · @allChanges.Count matches found</span>
+                        @if (llmUnavailable)
+                        {
+                            <span> · @allChanges.Count changes detected</span>
+                        }
+                        else
+                        {
+                            <span> · @allChanges.Count matches found</span>
+                        }
                     }
                 </p>
             </div>
@@ -140,20 +147,29 @@
             </div>
         }
 
-        <div class="filter-bar">
-            <button class="filter-btn @(activeFilter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>
-                All <span class="filter-count">@allChanges.Count</span>
-            </button>
-            <button class="filter-btn @(activeFilter == "high" ? "active" : "")" @onclick='() => SetFilter("high")'>
-                High Match <span class="filter-count">@CountByTier("high")</span>
-            </button>
-            <button class="filter-btn @(activeFilter == "medium" ? "active" : "")" @onclick='() => SetFilter("medium")'>
-                Medium <span class="filter-count">@CountByTier("medium")</span>
-            </button>
-            <button class="filter-btn @(activeFilter == "low" ? "active" : "")" @onclick='() => SetFilter("low")'>
-                Low <span class="filter-count">@CountByTier("low")</span>
-            </button>
-        </div>
+        @if (!llmUnavailable)
+        {
+            <div class="filter-bar">
+                <button class="filter-btn @(activeFilter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>
+                    All <span class="filter-count">@allChanges.Count</span>
+                </button>
+                <button class="filter-btn @(activeFilter == "high" ? "active" : "")" @onclick='() => SetFilter("high")'>
+                    High Match <span class="filter-count">@CountByTier("high")</span>
+                </button>
+                <button class="filter-btn @(activeFilter == "medium" ? "active" : "")" @onclick='() => SetFilter("medium")'>
+                    Medium <span class="filter-count">@CountByTier("medium")</span>
+                </button>
+                <button class="filter-btn @(activeFilter == "low" ? "active" : "")" @onclick='() => SetFilter("low")'>
+                    Low <span class="filter-count">@CountByTier("low")</span>
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="filter-bar filter-bar-disabled">
+                <span class="filter-disabled-note">Match scoring unavailable — configure an LLM provider in <a href="/settings">Settings</a></span>
+            </div>
+        }
 
         @if (filteredChanges.Count == 0)
         {
@@ -202,6 +218,10 @@
                                 }
                             </div>
                             <span class="change-summary">@item.Title</span>
+                            @if (llmUnavailable)
+                            {
+                                <span class="ai-badge" title="Scores are estimated — no LLM provider configured">⚠ AI unavailable</span>
+                            }
                         </div>
 
                         <div class="card-body">
@@ -287,6 +307,11 @@
                                                         <span class="listing-skill">@skill</span>
                                                     }
                                                 </div>
+                                            }
+
+                                            @if (!string.IsNullOrWhiteSpace(listing.Url))
+                                            {
+                                                <a href="@listing.Url" target="_blank" rel="noopener noreferrer" class="listing-verify-link">Verify →</a>
                                             }
                                         </article>
                                     }
