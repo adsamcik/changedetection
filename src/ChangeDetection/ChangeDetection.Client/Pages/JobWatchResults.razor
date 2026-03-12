@@ -42,7 +42,7 @@
                     @if (isRunningChecks)
                     {
                         <span class="spinner-sm"></span>
-                        <span>Checking @checksCompleted/@group.Members.Count...</span>
+                        <span>Checking @checksCompleted/@group.Members.Count@(currentPortalName != null ? $" ({currentPortalName})" : "")...</span>
                     }
                     else
                     {
@@ -83,6 +83,15 @@
             <div class="alert alert-error" role="alert">@errorMessage</div>
         }
 
+        @if (llmUnavailable)
+        {
+            <div class="alert alert-warning" role="alert">
+                <strong>⚠️ LLM scoring unavailable</strong> — No LLM provider is configured (e.g., Ollama). 
+                Match scores show as 50% (default). Configure an LLM provider in 
+                <a href="/settings">Settings</a> to enable profile-based job matching.
+            </div>
+        }
+
         <div class="filter-bar">
             <button class="filter-btn @(activeFilter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>
                 All <span class="filter-count">@allChanges.Count</span>
@@ -112,16 +121,19 @@
                     <div class="result-card">
                         <div class="card-header">
                             <div class="card-title-row">
-                                <h3 class="job-title">@item.Title</h3>
-                                <span class="recommendation-badge badge-@item.Recommendation.ToLowerInvariant()">
-                                    @item.Recommendation
-                                </span>
+                                <h3 class="job-title">@item.PortalName</h3>
+                                @if (!llmUnavailable)
+                                {
+                                    <span class="recommendation-badge badge-@item.Recommendation.ToLowerInvariant()">
+                                        @item.Recommendation
+                                    </span>
+                                }
                             </div>
-                            <span class="portal-name">@item.PortalName</span>
+                            <span class="change-summary">@item.Title</span>
                         </div>
 
                         <div class="card-body">
-                            @if (item.Score.HasValue)
+                            @if (item.Score.HasValue && !llmUnavailable)
                             {
                                 <div class="score-row">
                                     <span class="score-label">Match</span>
@@ -169,6 +181,8 @@
     private int checksCompleted;
     private string? errorMessage;
     private string? checkStatusMessage;
+    private string? currentPortalName;
+    private bool llmUnavailable;
     private WatchGroupDetailDto? group;
     private List<MatchResult> allChanges = [];
     private List<MatchResult> filteredChanges = [];
@@ -248,6 +262,12 @@
         }
 
         allChanges = results.OrderByDescending(r => r.Score ?? 0).ThenByDescending(r => r.DetectedAt).ToList();
+
+        // Detect if LLM scoring is unavailable (all scores = default 0.5, no dimensions)
+        llmUnavailable = allChanges.Count > 0 &&
+            allChanges.All(c => c.Score is null or 0.5f) &&
+            allChanges.All(c => c.Dimensions.Count == 0);
+
         ApplyFilter();
     }
 
@@ -256,23 +276,40 @@
         if (group is null || isRunningChecks) return;
         isRunningChecks = true;
         checksCompleted = 0;
+        currentPortalName = null;
         checkStatusMessage = null;
         StateHasChanged();
 
         var errors = 0;
-        foreach (var member in group.Members)
+        var members = group.Members.ToList();
+        const int batchSize = 4;
+
+        // Run checks in parallel batches of 4
+        for (var i = 0; i < members.Count; i += batchSize)
         {
-            try
+            var batch = members.Skip(i).Take(batchSize).ToList();
+            currentPortalName = string.Join(", ", batch.Select(m => m.Name?.Split(' ')[0] ?? "..."));
+            StateHasChanged();
+            await Task.Delay(1); // Allow UI to update
+
+            var tasks = batch.Select(async member =>
             {
-                await Http.PostAsync($"/api/watches/{member.WatchId}/check", null);
-            }
-            catch
-            {
-                errors++;
-            }
-            checksCompleted++;
+                try
+                {
+                    await Http.PostAsync($"/api/watches/{member.WatchId}/check", null);
+                }
+                catch
+                {
+                    Interlocked.Increment(ref errors);
+                }
+                Interlocked.Increment(ref checksCompleted);
+            });
+
+            await Task.WhenAll(tasks);
             StateHasChanged();
         }
+
+        currentPortalName = null;
 
         // Reload group status and changes
         try
@@ -416,11 +453,15 @@
 
     private static string FormatRelativeDate(DateTime date)
     {
-        var diff = DateTime.UtcNow - date;
+        // Treat stored dates as local time (server returns local DateTimes)
+        var now = DateTime.Now;
+        var diff = now - date;
+        if (diff.TotalSeconds < 0) diff = TimeSpan.Zero; // Guard against clock skew
         var mins = (int)diff.TotalMinutes;
         var hours = (int)diff.TotalHours;
         var days = (int)diff.TotalDays;
         
+        if (mins < 1) return "just now";
         if (mins < 60) return $"{mins}m ago";
         if (hours < 24) return $"{hours}h ago";
         if (days < 7) return $"{days}d ago";

@@ -71,6 +71,30 @@
     margin-right: 4px;
 }
 
+/* Alerts */
+.alert-warning {
+    background: #fffbeb;
+    border: 1px solid #fbbf24;
+    color: #92400e;
+    padding: var(--spacing-3, 0.75rem) var(--spacing-4, 1rem);
+    border-radius: 8px;
+    margin-bottom: var(--spacing-4, 1rem);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.alert-warning a {
+    color: #92400e;
+    font-weight: 600;
+    text-decoration: underline;
+}
+
+.change-summary {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted, #475569);
+    margin-top: 2px;
+}
+
 /* Loading */
 .loading-state {
     display: flex;
