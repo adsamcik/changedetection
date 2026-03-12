@@ -32,4 +32,5 @@ public record ProfileRelevanceResult(
     float Score,
     string? Reason,
     string? DimensionsJson,
-    string? ExtractedEntitiesJson = null);
+    string? ExtractedEntitiesJson = null,
+    string? BriefSummary = null);

@@ -156,13 +156,32 @@ public class JobMatchRelevanceScorer(
             ? JsonSerializer.Serialize(result.ExtractedListings)
             : null;
 
+        // Generate a job-specific brief summary from extracted listings
+        string? briefSummary = null;
+        if (result.ExtractedListings?.Count > 0)
+        {
+            var listings = result.ExtractedListings;
+            var titles = listings
+                .Where(l => !string.IsNullOrWhiteSpace(l.Title))
+                .Select(l => l.Title!)
+                .ToList();
+
+            briefSummary = titles.Count switch
+            {
+                0 => null,
+                1 => $"New position: {titles[0]}",
+                2 => $"2 new positions: {titles[0]}, {titles[1]}",
+                _ => $"{titles.Count} new positions: {string.Join(", ", titles.Take(3))}{(titles.Count > 3 ? $" (+{titles.Count - 3} more)" : "")}"
+            };
+        }
+
         logger.LogDebug(
             "Scored job watch change for watch {WatchId} with recommendation {Recommendation} and {ListingCount} extracted listings",
             request.WatchId,
             result.Recommendation,
             result.ExtractedListings?.Count ?? 0);
 
-        return new ProfileRelevanceResult(score, reason, dimensionsJson, extractedListingsJson);
+        return new ProfileRelevanceResult(score, reason, dimensionsJson, extractedListingsJson, briefSummary);
     }
 
     #region Profile Sanitization
