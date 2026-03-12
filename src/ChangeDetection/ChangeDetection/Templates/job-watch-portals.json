@@ -16,14 +16,13 @@
         "waitAfterLoadMs": null
       },
       "schema": {
-        "itemSelector": "table.table tbody tr, .vacancy-list .vacancy-item, article.vacancy",
+        "itemSelector": "table.vacancies tr.vacancy-specs",
         "fields": [
-          { "name": "title", "selector": "td:first-child a, .vacancy-title a, h2 a", "type": "String", "isRequired": true, "isIdentityField": true },
-          { "name": "url", "selector": "td:first-child a, .vacancy-title a", "type": "Url", "isRequired": true },
-          { "name": "company", "selector": "td:nth-child(2), .department, .faculty", "type": "String", "isIdentityField": true },
-          { "name": "location", "selector": "td:nth-child(3), .location", "type": "String" },
-          { "name": "posted_date", "selector": "td:last-child, .date, time", "type": "Date" },
-          { "name": "deadline", "selector": ".deadline, .application-deadline", "type": "Date", "trackHistory": false }
+          { "name": "title", "selector": "td:first-child a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "td:first-child a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "td:nth-child(2)", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "td:nth-child(3)", "type": "String" },
+          { "name": "deadline", "selector": "td:nth-child(4)", "type": "Date" }
         ],
         "identityFields": ["title", "company"]
       }
