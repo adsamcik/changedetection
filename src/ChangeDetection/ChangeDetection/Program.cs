@@ -281,6 +281,7 @@ builder.Services.AddScoped<ISessionPersistenceService, SessionPersistenceService
 
 // LLM-powered content analysis services
 builder.Services.AddScoped<IChangeAnalyzer, ChangeAnalyzer>();
+builder.Services.AddScoped<IProfileRelevanceScorer, JobMatchRelevanceScorer>();
 builder.Services.AddScoped<IContentEnricher, ContentEnricher>();
 builder.Services.AddScoped<IDeduplicationService, DeduplicationService>();
 

@@ -1,0 +1,419 @@
+{
+  "templateId": "job-watch-biotech",
+  "templateVersion": 1,
+  "portals": [
+    {
+      "id": "watch-ucph",
+      "name": "University of Copenhagen Vacancies",
+      "description": "Lab/research roles in Faculty of Health, BRIC, NNF Center at UCPH",
+      "url": "https://employment.ku.dk/all-vacancies/",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["denmark", "academia"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": "table.table tbody tr, .vacancy-list .vacancy-item, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "td:first-child a, .vacancy-title a, h2 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "td:first-child a, .vacancy-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "td:nth-child(2), .department, .faculty", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "td:nth-child(3), .location", "type": "String" },
+          { "name": "posted_date", "selector": "td:last-child, .date, time", "type": "Date" },
+          { "name": "deadline", "selector": ".deadline, .application-deadline", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-novo",
+      "name": "Novo Nordisk Denmark",
+      "description": "Scientist/lab tech roles at Novo Nordisk Denmark sites",
+      "url": "https://careers.novonordisk.com/global/en/search-results?keywords=laboratory%20scientist&location=Denmark",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["denmark", "pharma", "novo-nordisk"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 60,
+        "waitAfterLoadMs": 5000
+      },
+      "schema": {
+        "itemSelector": ".job-card, .search-result-item, [data-ph-at-id='job-card']",
+        "fields": [
+          { "name": "title", "selector": ".job-title a, .job-card-title, [data-ph-at-id='job-title']", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": ".job-title a, [data-ph-at-id='job-title'] a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".job-location, [data-ph-at-id='job-location']", "type": "String" },
+          { "name": "posted_date", "selector": ".job-date, .posted-date", "type": "Date" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-novonesis",
+      "name": "Novonesis Careers Denmark",
+      "description": "R&D/lab roles at Novonesis Denmark",
+      "url": "https://www.novonesis.com/en/careers/jobs?location=Denmark",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["denmark", "biotech"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, .job-list-item, article.job",
+        "fields": [
+          { "name": "title", "selector": ".job-title, h3, h2 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a.job-title, a.job-link, h3 a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".job-location, .location", "type": "String" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-szu",
+      "name": "SZÚ Kariéra (Czech State Health Institute)",
+      "description": "Diagnostics/lab roles at Czech State Health Institute",
+      "url": "https://szu.gov.cz/statni-zdravotni-ustav-starame-se-o-zdrave-cesko/kariera/",
+      "tier": "tier-1",
+      "checkIntervalHours": 48,
+      "extraTags": ["czech", "public-sector", "diagnostics"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": "article, .career-item, .job-listing, li.vacancy, .wp-block-list li",
+        "fields": [
+          { "name": "title", "selector": "h2 a, h3 a, a.career-link, a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, h3 a, a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".location, .mesto", "type": "String" },
+          { "name": "posted_date", "selector": ".date, time, .datum", "type": "Date" },
+          { "name": "deadline", "selector": ".deadline, .uzaverka", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-img",
+      "name": "IMG / CCP Careers (Academy of Sciences)",
+      "description": "Positions at Academy of Sciences / Czech Centre for Phenogenomics",
+      "url": "https://www.img.cas.cz/kariera/volna-mista/",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["czech", "academia", "phenogenomics"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": "article, .position-item, li.vacancy, .career-list li",
+        "fields": [
+          { "name": "title", "selector": "h2 a, h3 a, a, .position-title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, h3 a, a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".department, .oddeleni", "type": "String", "isIdentityField": true },
+          { "name": "posted_date", "selector": ".date, time", "type": "Date" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-jobscz",
+      "name": "Jobs.cz Lab/Chemistry Prague",
+      "description": "Lab/chemist/analyst roles in Prague from Jobs.cz",
+      "url": "https://www.jobs.cz/prace/?profession%5B0%5D=201100032&profession%5B1%5D=201100139&locality%5Bcode%5D=3468",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["czech", "prague", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".search-list__item, article.job, .standalone-search-item",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .search-list__main-info__title a, .job-title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .search-list__main-info__title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".search-list__main-info__company, .company-name", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".search-list__main-info__address, .location", "type": "String" },
+          { "name": "posted_date", "selector": ".search-list__advert-age, .date", "type": "Date" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-lund",
+      "name": "Lund University Vacancies",
+      "description": "Research/lab positions at Lund University (Medicon Valley)",
+      "url": "https://www.lunduniversity.lu.se/vacancies",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["sweden", "academia", "medicon-valley"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": "table tbody tr, .vacancy-row, .job-list-item",
+        "fields": [
+          { "name": "title", "selector": "td a, .title a, h3 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "td a, .title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".department, .faculty, td:nth-child(2)", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "td:nth-child(3), .location", "type": "String" },
+          { "name": "posted_date", "selector": "td:nth-child(4), .date", "type": "Date" },
+          { "name": "deadline", "selector": "td:last-child, .deadline", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-gcr",
+      "name": "Greater Copenhagen Region Careers",
+      "description": "Cross-border DK+SE life-science roles for internationals",
+      "url": "https://careerportal.greatercphregion.com/",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["denmark", "sweden", "cross-border"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, article.job, .listing-item",
+        "fields": [
+          { "name": "title", "selector": "h2, h3, .job-title, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a.job-link, h2 a, h3 a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-medicon-village",
+      "name": "Medicon Village Open Positions",
+      "description": "Lab/science positions in Medicon Village cluster (Lund, Sweden)",
+      "url": "https://www.mediconvillage.se/open-positions/",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["sweden", "medicon-valley", "biotech-cluster"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": "article, .position-item, .job-listing, li.job",
+        "fields": [
+          { "name": "title", "selector": "h2 a, h3 a, .title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, h3 a, a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .organization", "type": "String", "isIdentityField": true }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-lundbeck",
+      "name": "Lundbeck Careers Copenhagen",
+      "description": "Scientist/lab roles at Lundbeck Copenhagen",
+      "url": "https://jobs.lundbeck.com/search/?q=scientist+laboratory&locationsearch=copenhagen",
+      "tier": "tier-1",
+      "checkIntervalHours": 24,
+      "extraTags": ["denmark", "pharma", "neuroscience"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, .search-result, tr.job-row, .job-listing",
+        "fields": [
+          { "name": "title", "selector": ".job-title a, td.title a, h3 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": ".job-title a, td.title a, h3 a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".job-location, td.location, .location", "type": "String" },
+          { "name": "posted_date", "selector": ".date, td.date", "type": "Date" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-bavarian",
+      "name": "Bavarian Nordic Careers (Workday)",
+      "description": "Lab/QC roles at vaccine company near Copenhagen",
+      "url": "https://bavariannordic.wd103.myworkdayjobs.com/en-US/BavarianNordic",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "vaccines", "workday"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 60,
+        "waitAfterLoadMs": 5000
+      },
+      "schema": {
+        "itemSelector": "[data-automation-id='jobItem'], .job-card, li.css-1q2dra3",
+        "fields": [
+          { "name": "title", "selector": "a[data-automation-id='jobTitle'], .job-title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a[data-automation-id='jobTitle']", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": "[data-automation-id='locations'], .location", "type": "String" },
+          { "name": "posted_date", "selector": "[data-automation-id='postedOn'], .date", "type": "Date" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-genmab",
+      "name": "Genmab Careers Copenhagen",
+      "description": "Lab roles at antibody biotech (watch for non-senior roles)",
+      "url": "https://careers.genmab.com/search/?searchby=location&d=10&lat=55.6761&lon=12.5683",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "antibody", "biotech"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, .search-result-item, tr.job-row",
+        "fields": [
+          { "name": "title", "selector": ".job-title a, td a, h3 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": ".job-title a, td a, h3 a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".job-location, .location", "type": "String" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-ferring",
+      "name": "Ferring Pharmaceuticals Careers",
+      "description": "Lab roles at Ferring Copenhagen",
+      "url": "https://careers.ferring.com/search/?q=scientist&locationsearch=copenhagen",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "pharma"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, .search-result, tr.job-row",
+        "fields": [
+          { "name": "title", "selector": ".job-title a, td a, h3 a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": ".job-title a, td a, h3 a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".job-location, .location", "type": "String" }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-alk",
+      "name": "ALK-Abelló Careers (Hørsholm)",
+      "description": "Lab/immunology roles at ALK",
+      "url": "https://alkabello.easycruit.com/index.html",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "allergy", "immunotherapy"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".vacancy-item, .job-listing, tr.vacancy, li.position",
+        "fields": [
+          { "name": "title", "selector": "a.vacancy-title, .title a, td a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a.vacancy-title, .title a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": ".location, .region", "type": "String" },
+          { "name": "deadline", "selector": ".deadline", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title"]
+      }
+    },
+    {
+      "id": "watch-ssi",
+      "name": "Statens Serum Institut Jobs",
+      "description": "Virology/diagnostics lab roles at Danish SSI",
+      "url": "https://www.ssi.dk/om-ssi/job-i-ssi",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "public-sector", "virology"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": "article, .job-item, li.vacancy, .content-list li",
+        "fields": [
+          { "name": "title", "selector": "h2 a, h3 a, a.job-link", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, h3 a, a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".department", "type": "String", "isIdentityField": true },
+          { "name": "posted_date", "selector": ".date, time", "type": "Date" },
+          { "name": "deadline", "selector": ".deadline, .ansogningsfrist", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-eures",
+      "name": "EURES Life Science Jobs",
+      "description": "EU cross-border life-science positions via EURES",
+      "url": "https://eures.europa.eu/eures-services/eures-targeted-mobility-scheme_en",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["eu", "cross-border", "mobility"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-card, article.job, .listing-item, .search-result",
+        "fields": [
+          { "name": "title", "selector": "h2 a, h3 a, .job-title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a.job-link, h2 a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .country", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-jobindex",
+      "name": "Jobindex Life Science Denmark",
+      "description": "Broad Danish lab/science job board",
+      "url": "https://www.jobindex.dk/jobsoegning?q=laboratory+scientist&area=2",
+      "tier": "tier-2",
+      "checkIntervalHours": 168,
+      "extraTags": ["denmark", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".jobsearch-result, .PaidJob, article.job, div.jix_robotjob",
+        "fields": [
+          { "name": "title", "selector": "h4 a, .jix_robotjob--link, .job-title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h4 a, .jix_robotjob--link a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".jix_robotjob--company, .company a", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".jix_robotjob--area, .location", "type": "String" },
+          { "name": "posted_date", "selector": ".jix_robotjob--published-date, .date", "type": "Date" },
+          { "name": "deadline", "selector": ".deadline, .ansogningsfrist", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    }
+  ]
+}

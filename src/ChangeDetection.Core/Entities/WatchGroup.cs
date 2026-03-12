@@ -22,6 +22,17 @@ public class WatchGroup : IOwnedEntity
     /// </summary>
     public string? AnalysisProfileJson { get; set; }
 
+    /// <summary>
+    /// Identifies the template this group was created from (e.g., "job-watch-biotech").
+    /// Null for manually created groups.
+    /// </summary>
+    public string? TemplateId { get; set; }
+
+    /// <summary>
+    /// Version of the template used to create this group.
+    /// </summary>
+    public int? TemplateVersion { get; set; }
+
     public List<AggregateFieldConfig> AggregateFields { get; set; } = [];
     public List<AggregateAlert> AggregateAlerts { get; set; } = [];
     public List<string> Tags { get; set; } = [];

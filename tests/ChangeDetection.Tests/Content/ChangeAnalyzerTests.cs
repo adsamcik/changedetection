@@ -20,7 +20,7 @@ public class ChangeAnalyzerTests : TestBase
     public ChangeAnalyzerTests()
     {
         _llmChain = Substitute.For<ILlmProviderChain>();
-        _sut = new ChangeAnalyzer(_llmChain, CreateLogger<ChangeAnalyzer>());
+        _sut = new ChangeAnalyzer(_llmChain, [], CreateLogger<ChangeAnalyzer>());
     }
 
     [Test]

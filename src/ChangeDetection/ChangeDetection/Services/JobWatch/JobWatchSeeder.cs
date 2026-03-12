@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 
@@ -33,6 +34,8 @@ public class JobWatchSeeder(
             Icon = "🔬",
             UserIntent = userIntent,
             AnalysisProfileJson = profileJson,
+            TemplateId = "job-watch-biotech",
+            TemplateVersion = 1,
             Tags = ["job-search", "biotech", "life-science", "prague", "copenhagen"]
         }, ct);
 
@@ -97,372 +100,65 @@ public class JobWatchSeeder(
     }
 
     /// <summary>
-    /// Returns all portal definitions with their extraction schemas.
+    /// Returns all portal definitions loaded from the JSON template file.
     /// </summary>
     public static List<PortalDefinition> GetAllPortalDefinitions()
     {
-        var daily = TimeSpan.FromHours(24);
-        var twoDays = TimeSpan.FromHours(48);
-        var weekly = TimeSpan.FromDays(7);
-
-        var standardFetch = new FetchSettings { TimeoutSeconds = 30 };
-        var jsFetch = new FetchSettings
+        try
         {
-            UseJavaScript = true,
-            TimeoutSeconds = 45,
-            WaitAfterLoadMs = 3000
-        };
-        var heavyJsFetch = new FetchSettings
+            var templatePath = Path.Combine(AppContext.BaseDirectory, "Templates", "job-watch-portals.json");
+            if (!File.Exists(templatePath))
+                return [];
+
+            var json = File.ReadAllText(templatePath);
+            var template = JsonSerializer.Deserialize<PortalTemplate>(json, PortalTemplateJsonContext.Default.PortalTemplate);
+            if (template?.Portals is null)
+                return [];
+
+            return template.Portals.Select(p => new PortalDefinition
+            {
+                Id = p.Id,
+                Name = p.Name,
+                Description = p.Description,
+                Url = p.Url,
+                Tier = p.Tier,
+                CheckInterval = TimeSpan.FromHours(p.CheckIntervalHours),
+                ExtraTags = p.ExtraTags ?? [],
+                FetchSettings = new FetchSettings
+                {
+                    UseJavaScript = p.FetchSettings?.UseJavaScript ?? false,
+                    TimeoutSeconds = p.FetchSettings?.TimeoutSeconds ?? 30,
+                    WaitAfterLoadMs = p.FetchSettings?.WaitAfterLoadMs ?? 0
+                },
+                Schema = BuildSchemaFromTemplate(p.Schema)
+            }).ToList();
+        }
+        catch
         {
-            UseJavaScript = true,
-            TimeoutSeconds = 60,
-            WaitAfterLoadMs = 5000
-        };
-
-        return
-        [
-            // ===== TIER 1: Primary portals (daily / every-2-days) =====
-
-            new()
-            {
-                Id = "watch-ucph",
-                Name = "University of Copenhagen Vacancies",
-                Description = "Lab/research roles in Faculty of Health, BRIC, NNF Center at UCPH",
-                Url = "https://employment.ku.dk/all-vacancies/",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = standardFetch,
-                Schema = BuildJobSchema(
-                    "table.table tbody tr, .vacancy-list .vacancy-item, article.vacancy",
-                    "td:first-child a, .vacancy-title a, h2 a",
-                    company: "td:nth-child(2), .department, .faculty",
-                    location: "td:nth-child(3), .location",
-                    url: "td:first-child a, .vacancy-title a",
-                    posted: "td:last-child, .date, time",
-                    deadline: ".deadline, .application-deadline"),
-                ExtraTags = ["denmark", "academia"]
-            },
-            new()
-            {
-                Id = "watch-novo",
-                Name = "Novo Nordisk Denmark",
-                Description = "Scientist/lab tech roles at Novo Nordisk Denmark sites",
-                Url = "https://careers.novonordisk.com/global/en/search-results?keywords=laboratory%20scientist&location=Denmark",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = heavyJsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, .search-result-item, [data-ph-at-id='job-card']",
-                    ".job-title a, .job-card-title, [data-ph-at-id='job-title']",
-                    location: ".job-location, [data-ph-at-id='job-location']",
-                    url: ".job-title a, [data-ph-at-id='job-title'] a",
-                    posted: ".job-date, .posted-date"),
-                ExtraTags = ["denmark", "pharma", "novo-nordisk"]
-            },
-            new()
-            {
-                Id = "watch-novonesis",
-                Name = "Novonesis Careers Denmark",
-                Description = "R&D/lab roles at Novonesis Denmark",
-                Url = "https://www.novonesis.com/en/careers/jobs?location=Denmark",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, .job-list-item, article.job",
-                    ".job-title, h3, h2 a",
-                    location: ".job-location, .location",
-                    url: "a.job-title, a.job-link, h3 a"),
-                ExtraTags = ["denmark", "biotech"]
-            },
-            new()
-            {
-                Id = "watch-szu",
-                Name = "SZÚ Kariéra (Czech State Health Institute)",
-                Description = "Diagnostics/lab roles at Czech State Health Institute",
-                Url = "https://szu.gov.cz/statni-zdravotni-ustav-starame-se-o-zdrave-cesko/kariera/",
-                Tier = "tier-1",
-                CheckInterval = twoDays,
-                FetchSettings = standardFetch,
-                Schema = BuildJobSchema(
-                    "article, .career-item, .job-listing, li.vacancy, .wp-block-list li",
-                    "h2 a, h3 a, a.career-link, a",
-                    location: ".location, .mesto",
-                    url: "h2 a, h3 a, a",
-                    posted: ".date, time, .datum",
-                    deadline: ".deadline, .uzaverka"),
-                ExtraTags = ["czech", "public-sector", "diagnostics"]
-            },
-            new()
-            {
-                Id = "watch-img",
-                Name = "IMG / CCP Careers (Academy of Sciences)",
-                Description = "Positions at Academy of Sciences / Czech Centre for Phenogenomics",
-                Url = "https://www.img.cas.cz/kariera/volna-mista/",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = standardFetch,
-                Schema = BuildJobSchema(
-                    "article, .position-item, li.vacancy, .career-list li",
-                    "h2 a, h3 a, a, .position-title",
-                    company: ".department, .oddeleni",
-                    url: "h2 a, h3 a, a",
-                    posted: ".date, time"),
-                ExtraTags = ["czech", "academia", "phenogenomics"]
-            },
-            new()
-            {
-                Id = "watch-jobscz",
-                Name = "Jobs.cz Lab/Chemistry Prague",
-                Description = "Lab/chemist/analyst roles in Prague from Jobs.cz",
-                Url = "https://www.jobs.cz/prace/?profession%5B0%5D=201100032&profession%5B1%5D=201100139&locality%5Bcode%5D=3468",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".search-list__item, article.job, .standalone-search-item",
-                    "h2 a, .search-list__main-info__title a, .job-title a",
-                    company: ".search-list__main-info__company, .company-name",
-                    location: ".search-list__main-info__address, .location",
-                    url: "h2 a, .search-list__main-info__title a",
-                    posted: ".search-list__advert-age, .date"),
-                ExtraTags = ["czech", "prague", "job-board"]
-            },
-            new()
-            {
-                Id = "watch-lund",
-                Name = "Lund University Vacancies",
-                Description = "Research/lab positions at Lund University (Medicon Valley)",
-                Url = "https://www.lunduniversity.lu.se/vacancies",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    "table tbody tr, .vacancy-row, .job-list-item",
-                    "td a, .title a, h3 a",
-                    company: ".department, .faculty, td:nth-child(2)",
-                    location: "td:nth-child(3), .location",
-                    url: "td a, .title a",
-                    posted: "td:nth-child(4), .date",
-                    deadline: "td:last-child, .deadline"),
-                ExtraTags = ["sweden", "academia", "medicon-valley"]
-            },
-            new()
-            {
-                Id = "watch-gcr",
-                Name = "Greater Copenhagen Region Careers",
-                Description = "Cross-border DK+SE life-science roles for internationals",
-                Url = "https://careerportal.greatercphregion.com/",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, article.job, .listing-item",
-                    "h2, h3, .job-title, a.title",
-                    company: ".company, .employer",
-                    location: ".location, .city",
-                    url: "a.job-link, h2 a, h3 a"),
-                ExtraTags = ["denmark", "sweden", "cross-border"]
-            },
-            new()
-            {
-                Id = "watch-medicon-village",
-                Name = "Medicon Village Open Positions",
-                Description = "Lab/science positions in Medicon Village cluster (Lund, Sweden)",
-                Url = "https://www.mediconvillage.se/open-positions/",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = standardFetch,
-                Schema = BuildJobSchema(
-                    "article, .position-item, .job-listing, li.job",
-                    "h2 a, h3 a, .title a",
-                    company: ".company, .organization",
-                    url: "h2 a, h3 a, a"),
-                ExtraTags = ["sweden", "medicon-valley", "biotech-cluster"]
-            },
-            new()
-            {
-                Id = "watch-lundbeck",
-                Name = "Lundbeck Careers Copenhagen",
-                Description = "Scientist/lab roles at Lundbeck Copenhagen",
-                Url = "https://jobs.lundbeck.com/search/?q=scientist+laboratory&locationsearch=copenhagen",
-                Tier = "tier-1",
-                CheckInterval = daily,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, .search-result, tr.job-row, .job-listing",
-                    ".job-title a, td.title a, h3 a",
-                    location: ".job-location, td.location, .location",
-                    url: ".job-title a, td.title a, h3 a",
-                    posted: ".date, td.date"),
-                ExtraTags = ["denmark", "pharma", "neuroscience"]
-            },
-
-            // ===== TIER 2: Supplementary portals (weekly) =====
-
-            new()
-            {
-                Id = "watch-bavarian",
-                Name = "Bavarian Nordic Careers (Workday)",
-                Description = "Lab/QC roles at vaccine company near Copenhagen",
-                Url = "https://bavariannordic.wd103.myworkdayjobs.com/en-US/BavarianNordic",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = heavyJsFetch,
-                Schema = BuildJobSchema(
-                    "[data-automation-id='jobItem'], .job-card, li.css-1q2dra3",
-                    "a[data-automation-id='jobTitle'], .job-title a",
-                    location: "[data-automation-id='locations'], .location",
-                    url: "a[data-automation-id='jobTitle']",
-                    posted: "[data-automation-id='postedOn'], .date"),
-                ExtraTags = ["denmark", "vaccines", "workday"]
-            },
-            new()
-            {
-                Id = "watch-genmab",
-                Name = "Genmab Careers Copenhagen",
-                Description = "Lab roles at antibody biotech (watch for non-senior roles)",
-                Url = "https://careers.genmab.com/search/?searchby=location&d=10&lat=55.6761&lon=12.5683",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, .search-result-item, tr.job-row",
-                    ".job-title a, td a, h3 a",
-                    location: ".job-location, .location",
-                    url: ".job-title a, td a, h3 a"),
-                ExtraTags = ["denmark", "antibody", "biotech"]
-            },
-            new()
-            {
-                Id = "watch-ferring",
-                Name = "Ferring Pharmaceuticals Careers",
-                Description = "Lab roles at Ferring Copenhagen",
-                Url = "https://careers.ferring.com/search/?q=scientist&locationsearch=copenhagen",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, .search-result, tr.job-row",
-                    ".job-title a, td a, h3 a",
-                    location: ".job-location, .location",
-                    url: ".job-title a, td a, h3 a"),
-                ExtraTags = ["denmark", "pharma"]
-            },
-            new()
-            {
-                Id = "watch-alk",
-                Name = "ALK-Abelló Careers (Hørsholm)",
-                Description = "Lab/immunology roles at ALK",
-                Url = "https://alkabello.easycruit.com/index.html",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".vacancy-item, .job-listing, tr.vacancy, li.position",
-                    "a.vacancy-title, .title a, td a",
-                    location: ".location, .region",
-                    url: "a.vacancy-title, .title a",
-                    deadline: ".deadline"),
-                ExtraTags = ["denmark", "allergy", "immunotherapy"]
-            },
-            new()
-            {
-                Id = "watch-ssi",
-                Name = "Statens Serum Institut Jobs",
-                Description = "Virology/diagnostics lab roles at Danish SSI",
-                Url = "https://www.ssi.dk/om-ssi/job-i-ssi",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = standardFetch,
-                Schema = BuildJobSchema(
-                    "article, .job-item, li.vacancy, .content-list li",
-                    "h2 a, h3 a, a.job-link",
-                    company: ".department",
-                    url: "h2 a, h3 a, a",
-                    posted: ".date, time",
-                    deadline: ".deadline, .ansogningsfrist"),
-                ExtraTags = ["denmark", "public-sector", "virology"]
-            },
-            new()
-            {
-                Id = "watch-eures",
-                Name = "EURES Life Science Jobs",
-                Description = "EU cross-border life-science positions via EURES",
-                Url = "https://eures.europa.eu/eures-services/eures-targeted-mobility-scheme_en",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".job-card, article.job, .listing-item, .search-result",
-                    "h2 a, h3 a, .job-title",
-                    company: ".company, .employer",
-                    location: ".location, .country",
-                    url: "a.job-link, h2 a"),
-                ExtraTags = ["eu", "cross-border", "mobility"]
-            },
-            new()
-            {
-                Id = "watch-jobindex",
-                Name = "Jobindex Life Science Denmark",
-                Description = "Broad Danish lab/science job board",
-                Url = "https://www.jobindex.dk/jobsoegning?q=laboratory+scientist&area=2",
-                Tier = "tier-2",
-                CheckInterval = weekly,
-                FetchSettings = jsFetch,
-                Schema = BuildJobSchema(
-                    ".jobsearch-result, .PaidJob, article.job, div.jix_robotjob",
-                    "h4 a, .jix_robotjob--link, .job-title a",
-                    company: ".jix_robotjob--company, .company a",
-                    location: ".jix_robotjob--area, .location",
-                    url: "h4 a, .jix_robotjob--link a",
-                    posted: ".jix_robotjob--published-date, .date",
-                    deadline: ".deadline, .ansogningsfrist"),
-                ExtraTags = ["denmark", "job-board"]
-            }
-        ];
+            return [];
+        }
     }
 
-    /// <summary>
-    /// Build a job listing ExtractionSchema with fallback CSS selectors.
-    /// </summary>
-    private static ExtractionSchema BuildJobSchema(
-        string itemSelector,
-        string titleSelector,
-        string? company = null,
-        string? location = null,
-        string? url = null,
-        string? posted = null,
-        string? deadline = null)
+    private static ExtractionSchema BuildSchemaFromTemplate(PortalSchemaDto? schema)
     {
-        var fields = new List<SchemaField>
+        if (schema is null)
+            return new ExtractionSchema { ItemSelector = "" };
+
+        var fields = (schema.Fields ?? []).Select(f => new SchemaField
         {
-            new() { Name = "title", Type = FieldType.String, Selector = titleSelector, IsRequired = true, IsIdentityField = true }
-        };
-
-        if (url is not null)
-            fields.Add(new() { Name = "url", Type = FieldType.Url, Selector = url, IsRequired = true });
-
-        if (company is not null)
-            fields.Add(new() { Name = "company", Type = FieldType.String, Selector = company, IsIdentityField = true });
-
-        if (location is not null)
-            fields.Add(new() { Name = "location", Type = FieldType.String, Selector = location });
-
-        if (posted is not null)
-            fields.Add(new() { Name = "posted_date", Type = FieldType.Date, Selector = posted });
-
-        if (deadline is not null)
-            fields.Add(new() { Name = "deadline", Type = FieldType.Date, Selector = deadline, TrackHistory = false });
-
-        var identityFields = new List<string> { "title" };
-        if (company is not null) identityFields.Add("company");
+            Name = f.Name,
+            Selector = f.Selector,
+            Type = Enum.TryParse<FieldType>(f.Type, ignoreCase: true, out var ft) ? ft : FieldType.String,
+            IsRequired = f.IsRequired ?? false,
+            IsIdentityField = f.IsIdentityField ?? false,
+            TrackHistory = f.TrackHistory ?? true
+        }).ToList();
 
         return new ExtractionSchema
         {
-            ItemSelector = itemSelector,
+            ItemSelector = schema.ItemSelector ?? "",
             Fields = fields,
-            IdentityFieldNames = identityFields,
+            IdentityFieldNames = schema.IdentityFields ?? [],
             DiffSettings = new ObjectDiffSettings
             {
                 Granularity = DiffGranularity.Both,
@@ -505,3 +201,96 @@ public class PortalDefinition
     public required ExtractionSchema Schema { get; init; }
     public List<string> ExtraTags { get; init; } = [];
 }
+
+// JSON template DTOs for deserialization from job-watch-portals.json
+
+public class PortalTemplate
+{
+    [JsonPropertyName("templateId")]
+    public string? TemplateId { get; set; }
+
+    [JsonPropertyName("templateVersion")]
+    public int TemplateVersion { get; set; }
+
+    [JsonPropertyName("portals")]
+    public List<PortalDto>? Portals { get; set; }
+}
+
+public class PortalDto
+{
+    [JsonPropertyName("id")]
+    public required string Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public required string Name { get; set; }
+
+    [JsonPropertyName("description")]
+    public required string Description { get; set; }
+
+    [JsonPropertyName("url")]
+    public required string Url { get; set; }
+
+    [JsonPropertyName("tier")]
+    public required string Tier { get; set; }
+
+    [JsonPropertyName("checkIntervalHours")]
+    public double CheckIntervalHours { get; set; }
+
+    [JsonPropertyName("extraTags")]
+    public List<string>? ExtraTags { get; set; }
+
+    [JsonPropertyName("fetchSettings")]
+    public FetchSettingsDto? FetchSettings { get; set; }
+
+    [JsonPropertyName("schema")]
+    public PortalSchemaDto? Schema { get; set; }
+}
+
+public class FetchSettingsDto
+{
+    [JsonPropertyName("useJavaScript")]
+    public bool UseJavaScript { get; set; }
+
+    [JsonPropertyName("timeoutSeconds")]
+    public int TimeoutSeconds { get; set; } = 30;
+
+    [JsonPropertyName("waitAfterLoadMs")]
+    public int? WaitAfterLoadMs { get; set; }
+}
+
+public class PortalSchemaDto
+{
+    [JsonPropertyName("itemSelector")]
+    public string? ItemSelector { get; set; }
+
+    [JsonPropertyName("fields")]
+    public List<SchemaFieldDto>? Fields { get; set; }
+
+    [JsonPropertyName("identityFields")]
+    public List<string>? IdentityFields { get; set; }
+}
+
+public class SchemaFieldDto
+{
+    [JsonPropertyName("name")]
+    public required string Name { get; set; }
+
+    [JsonPropertyName("selector")]
+    public required string Selector { get; set; }
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "String";
+
+    [JsonPropertyName("isRequired")]
+    public bool? IsRequired { get; set; }
+
+    [JsonPropertyName("isIdentityField")]
+    public bool? IsIdentityField { get; set; }
+
+    [JsonPropertyName("trackHistory")]
+    public bool? TrackHistory { get; set; }
+}
+
+[JsonSerializable(typeof(PortalTemplate))]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+internal partial class PortalTemplateJsonContext : JsonSerializerContext;

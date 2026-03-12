@@ -36,4 +36,10 @@
     <ProjectReference Include="..\..\ChangeDetection.Shared\ChangeDetection.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Templates\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

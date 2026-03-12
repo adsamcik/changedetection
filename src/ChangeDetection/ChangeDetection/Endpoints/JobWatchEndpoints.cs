@@ -56,8 +56,7 @@ public static class JobWatchEndpoints
         {
             // Idempotency: check if a job watch group already exists (inside lock)
             var existingGroups = await groupService.GetAllAsync(ct);
-            var existing = existingGroups.FirstOrDefault(g =>
-                g.Tags.Contains("job-search") && g.AnalysisProfileJson is not null);
+            var existing = existingGroups.FirstOrDefault(g => g.TemplateId == "job-watch-biotech");
             if (existing is not null)
             {
                 return Results.Conflict(new

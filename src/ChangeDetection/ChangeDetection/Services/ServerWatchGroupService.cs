@@ -28,6 +28,8 @@ public class ServerWatchGroupService(
             Icon = request.Icon,
             UserIntent = request.UserIntent,
             AnalysisProfileJson = request.AnalysisProfileJson,
+            TemplateId = request.TemplateId,
+            TemplateVersion = request.TemplateVersion,
             Tags = request.Tags
         };
         await groupRepo.InsertAsync(group, ct);

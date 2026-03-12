@@ -23,5 +23,7 @@ public class WatchGroupCreateRequest
     public string? Icon { get; set; }
     public string? UserIntent { get; set; }
     public string? AnalysisProfileJson { get; set; }
+    public string? TemplateId { get; set; }
+    public int? TemplateVersion { get; set; }
     public List<string> Tags { get; set; } = [];
 }
