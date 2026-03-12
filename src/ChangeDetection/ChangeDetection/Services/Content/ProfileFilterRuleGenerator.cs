@@ -77,7 +77,7 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                 rules.Add(new FilterRule
                 {
                     Name = "Disqualify: PhD required",
-                    Description = "Auto-generated: candidate has {candidateLevel}, PhD-required roles are disqualified",
+                    Description = $"Auto-generated: candidate has {candidateLevel}, PhD-required roles are disqualified",
                     Priority = priority--,
                     StopProcessing = true,
                     Logic = FilterLogic.Or,

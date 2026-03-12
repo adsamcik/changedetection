@@ -77,7 +77,7 @@
                     <div class="tag-input-wrapper">
                         <input type="text" class="tag-input" placeholder="Add technique..."
                                @bind="newTechStrong" @bind:event="oninput"
-                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesStrong, ref newTechStrong)" />
+                               @onkeydown="HandleTechStrongKeyDown" />
                     </div>
                 </div>
 
@@ -96,7 +96,7 @@
                     <div class="tag-input-wrapper">
                         <input type="text" class="tag-input" placeholder="Add technique..."
                                @bind="newTechBasic" @bind:event="oninput"
-                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesBasic, ref newTechBasic)" />
+                               @onkeydown="HandleTechBasicKeyDown" />
                     </div>
                 </div>
 
@@ -115,7 +115,7 @@
                     <div class="tag-input-wrapper">
                         <input type="text" class="tag-input" placeholder="Add technique..."
                                @bind="newTechNone" @bind:event="oninput"
-                               @onkeydown="e => HandleTechKeyDown(e, model.TechniquesNone, ref newTechNone)" />
+                               @onkeydown="HandleTechNoneKeyDown" />
                     </div>
                 </div>
             </div>
@@ -318,32 +318,50 @@
     }
 
     // Tag management helpers
-    private void HandleTechKeyDown(KeyboardEventArgs e, List<string> list, ref string input)
+    private async Task HandleTechStrongKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(input))
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newTechStrong))
         {
-            AddTechnique(list, ref input);
+            await AddTechnique(model.TechniquesStrong, newTechStrong);
+            newTechStrong = "";
         }
     }
 
-    private void AddTechnique(List<string> list, ref string input)
+    private async Task HandleTechBasicKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newTechBasic))
+        {
+            await AddTechnique(model.TechniquesBasic, newTechBasic);
+            newTechBasic = "";
+        }
+    }
+
+    private async Task HandleTechNoneKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newTechNone))
+        {
+            await AddTechnique(model.TechniquesNone, newTechNone);
+            newTechNone = "";
+        }
+    }
+
+    private async Task AddTechnique(List<string> list, string input)
     {
         var value = input.Trim();
         if (!string.IsNullOrEmpty(value) && !list.Contains(value, StringComparer.OrdinalIgnoreCase))
         {
             list.Add(value);
-            input = "";
-            _ = NotifyChanged();
+            await NotifyChanged();
         }
     }
 
-    private void RemoveTechnique(List<string> list, string tech)
+    private async Task RemoveTechnique(List<string> list, string tech)
     {
         list.Remove(tech);
-        _ = NotifyChanged();
+        await NotifyChanged();
     }
 
-    private void HandleLocationKeyDown(KeyboardEventArgs e)
+    private async Task HandleLocationKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newLocation))
         {
@@ -351,18 +369,18 @@
             {
                 model.TargetLocations.Add(newLocation.Trim());
                 newLocation = "";
-                _ = NotifyChanged();
+                await NotifyChanged();
             }
         }
     }
 
-    private void RemoveLocation(string loc)
+    private async Task RemoveLocation(string loc)
     {
         model.TargetLocations.Remove(loc);
-        _ = NotifyChanged();
+        await NotifyChanged();
     }
 
-    private void HandleDealbreakerKeyDown(KeyboardEventArgs e)
+    private async Task HandleDealbreakerKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newDealbreaker))
         {
@@ -370,18 +388,18 @@
             {
                 model.Dealbreakers.Add(newDealbreaker.Trim());
                 newDealbreaker = "";
-                _ = NotifyChanged();
+                await NotifyChanged();
             }
         }
     }
 
-    private void RemoveDealbreaker(string db)
+    private async Task RemoveDealbreaker(string db)
     {
         model.Dealbreakers.Remove(db);
-        _ = NotifyChanged();
+        await NotifyChanged();
     }
 
-    private void HandlePreferenceKeyDown(KeyboardEventArgs e)
+    private async Task HandlePreferenceKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newPreference))
         {
@@ -389,52 +407,52 @@
             {
                 model.Preferences.Add(newPreference.Trim());
                 newPreference = "";
-                _ = NotifyChanged();
+                await NotifyChanged();
             }
         }
     }
 
-    private void RemovePreference(string pref)
+    private async Task RemovePreference(string pref)
     {
         model.Preferences.Remove(pref);
-        _ = NotifyChanged();
+        await NotifyChanged();
     }
 
-    private void HandleLanguageKeyDown(KeyboardEventArgs e)
+    private async Task HandleLanguageKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter") AddLanguage();
+        if (e.Key == "Enter") await AddLanguage();
     }
 
-    private void AddLanguage()
+    private async Task AddLanguage()
     {
         if (!string.IsNullOrWhiteSpace(newLangName) && !string.IsNullOrWhiteSpace(newLangLevel))
         {
             model.Languages[newLangName.Trim()] = newLangLevel.Trim();
             newLangName = "";
             newLangLevel = "";
-            _ = NotifyChanged();
+            await NotifyChanged();
         }
     }
 
-    private void RemoveLanguage(string key)
+    private async Task RemoveLanguage(string key)
     {
         model.Languages.Remove(key);
-        _ = NotifyChanged();
+        await NotifyChanged();
     }
 
-    private void HandleSalaryKeyDown(KeyboardEventArgs e)
+    private async Task HandleSalaryKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter") AddSalary();
+        if (e.Key == "Enter") await AddSalary();
     }
 
-    private void AddSalary()
+    private async Task AddSalary()
     {
         if (!string.IsNullOrWhiteSpace(newSalaryRegion) && !string.IsNullOrWhiteSpace(newSalaryValue))
         {
             model.SalaryFloor[newSalaryRegion.Trim()] = newSalaryValue.Trim();
             newSalaryRegion = "";
             newSalaryValue = "";
-            _ = NotifyChanged();
+            await NotifyChanged();
         }
     }
 

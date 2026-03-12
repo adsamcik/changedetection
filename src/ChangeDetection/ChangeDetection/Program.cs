@@ -506,7 +506,9 @@ app.MapGroup("/api/health")
     .MapDatabaseHealthEndpoints();
 
 // Job Watch feature
-app.MapJobWatchEndpoints();
+app.MapGroup("/api/jobwatch")
+    .RequireAuthenticationInSsoMode(builder.Configuration)
+    .MapJobWatchEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")

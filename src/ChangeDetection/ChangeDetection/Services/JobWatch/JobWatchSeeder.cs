@@ -17,8 +17,9 @@ public class JobWatchSeeder(
 {
     /// <summary>
     /// Create the full job watch project: group + profile + watches + filter rules.
+    /// Returns the group and the actual number of watches created.
     /// </summary>
-    public async Task<WatchGroup> SeedAsync(
+    public async Task<(WatchGroup Group, int CreatedCount)> SeedAsync(
         string profileJson,
         string userIntent,
         CancellationToken ct = default)
@@ -38,11 +39,13 @@ public class JobWatchSeeder(
         var profileRules = filterRuleGenerator.GenerateRules(profileJson);
 
         var portals = GetAllPortalDefinitions();
+        var createdCount = 0;
         foreach (var portal in portals)
         {
             try
             {
                 await CreatePortalWatchAsync(group.Id, portal, userIntent, profileRules, ct);
+                createdCount++;
                 logger.LogInformation("Created portal watch: {Name} ({Url})", portal.Name, portal.Url);
             }
             catch (Exception ex)
@@ -51,8 +54,8 @@ public class JobWatchSeeder(
             }
         }
 
-        logger.LogInformation("Job search project seeded with {Count} portal watches", portals.Count);
-        return group;
+        logger.LogInformation("Job search project seeded: {Created}/{Total} portal watches", createdCount, portals.Count);
+        return (group, createdCount);
     }
 
     private async Task CreatePortalWatchAsync(
@@ -79,7 +82,8 @@ public class JobWatchSeeder(
             FetchSettings = portal.FetchSettings,
             SchemaEnabled = true,
             Schema = portal.Schema,
-            FilterRules = profileRules.Select(CloneRule).ToList()
+            FilterRules = profileRules.Select(CloneRule).ToList(),
+            SkipInitialCheck = true // Avoid blocking on 17 fetches during seed
         }, ct);
     }
 

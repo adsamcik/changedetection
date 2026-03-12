@@ -1,3 +1,5 @@
+using System.Text.Json;
+using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.JobWatch;
 
 namespace ChangeDetection.Endpoints;
@@ -8,11 +10,10 @@ namespace ChangeDetection.Endpoints;
 /// </summary>
 public static class JobWatchEndpoints
 {
-    public static void MapJobWatchEndpoints(this IEndpointRouteBuilder routes)
-    {
-        var group = routes.MapGroup("/api/jobwatch")
-            .WithTags("JobWatch");
+    private const int MaxProfileJsonLength = 65_536; // 64KB
 
+    public static RouteGroupBuilder MapJobWatchEndpoints(this RouteGroupBuilder group)
+    {
         group.MapPost("/seed", SeedJobWatch)
             .WithName("SeedJobWatch")
             .WithDescription("Create a complete job watch project with all portal configurations");
@@ -20,17 +21,47 @@ public static class JobWatchEndpoints
         group.MapGet("/portals", GetPortalDefinitions)
             .WithName("GetPortalDefinitions")
             .WithDescription("List all configured portal definitions and their schemas");
+
+        return group;
     }
 
     private static async Task<IResult> SeedJobWatch(
         JobWatchSeedRequest request,
         JobWatchSeeder seeder,
+        IWatchGroupService groupService,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ProfileJson))
             return Results.BadRequest("ProfileJson is required");
 
-        var group = await seeder.SeedAsync(
+        if (request.ProfileJson.Length > MaxProfileJsonLength)
+            return Results.BadRequest($"ProfileJson exceeds maximum length of {MaxProfileJsonLength} characters");
+
+        // Validate JSON is parseable
+        try
+        {
+            JsonDocument.Parse(request.ProfileJson);
+        }
+        catch (JsonException)
+        {
+            return Results.BadRequest("ProfileJson is not valid JSON");
+        }
+
+        // Idempotency: check if a job watch group already exists
+        var existingGroups = await groupService.GetAllAsync(ct);
+        var existing = existingGroups.FirstOrDefault(g =>
+            g.Tags.Contains("job-search") && g.AnalysisProfileJson is not null);
+        if (existing is not null)
+        {
+            return Results.Conflict(new
+            {
+                Message = "A job watch project already exists. Delete the existing group first or update its profile via PUT /api/groups/{id}.",
+                ExistingGroupId = existing.Id.ToString(),
+                existing.Name
+            });
+        }
+
+        var (group, createdCount) = await seeder.SeedAsync(
             request.ProfileJson,
             request.UserIntent ?? "Monitor biotech/life-science job portals for matching positions",
             ct);
@@ -39,7 +70,7 @@ public static class JobWatchEndpoints
         {
             GroupId = group.Id.ToString(),
             group.Name,
-            PortalCount = JobWatchSeeder.GetAllPortalDefinitions().Count
+            PortalCount = createdCount
         });
     }
 

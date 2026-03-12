@@ -79,4 +79,10 @@ public class CreateWatchRequest
     /// Configuration for search-based watches (when SourceType is Search).
     /// </summary>
     public SearchConfig? SearchConfig { get; set; }
+
+    /// <summary>
+    /// Skip the initial check when creating the watch.
+    /// Useful for batch creation (e.g., seeding) to avoid blocking on N fetches.
+    /// </summary>
+    public bool SkipInitialCheck { get; set; }
 }

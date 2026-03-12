@@ -133,8 +133,11 @@ public class ServerWatchService : IWatchService
         await _watchRepo.InsertAsync(watch, ct);
         _logger.LogInformation("Created watch {Id} for {Url}", watch.Id, watch.Url);
 
-        // Perform initial check
-        await CheckForChangesAsync(watch.Id, ct);
+        // Perform initial check unless explicitly skipped (e.g., batch seeding)
+        if (!request.SkipInitialCheck)
+        {
+            await CheckForChangesAsync(watch.Id, ct);
+        }
 
         return watch;
     }

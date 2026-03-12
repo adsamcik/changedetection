@@ -182,7 +182,8 @@ public class JobWatchSeederTests : TestBase
 
         var result = await seeder.SeedAsync(TestProfile, "Monitor biotech jobs");
 
-        result.ShouldNotBeNull();
+        result.Group.ShouldNotBeNull();
+        result.CreatedCount.ShouldBe(17);
 
         // Group created once
         await groupService.Received(1).CreateGroupAsync(

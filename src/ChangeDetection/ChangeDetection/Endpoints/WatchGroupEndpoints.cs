@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
@@ -74,7 +75,18 @@ public static class WatchGroupEndpoints
         if (dto.Description is not null) g.Description = dto.Description;
         if (dto.Icon is not null) g.Icon = dto.Icon;
         if (dto.Tags is not null) g.Tags = dto.Tags;
-        if (dto.AnalysisProfileJson is not null) g.AnalysisProfileJson = dto.AnalysisProfileJson;
+        if (dto.AnalysisProfileJson is not null)
+        {
+            try
+            {
+                JsonDocument.Parse(dto.AnalysisProfileJson);
+                g.AnalysisProfileJson = dto.AnalysisProfileJson;
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest("AnalysisProfileJson is not valid JSON");
+            }
+        }
 
         if (dto.AggregateFields is not null)
             g.AggregateFields = dto.AggregateFields.Select(f => new AggregateFieldConfig
