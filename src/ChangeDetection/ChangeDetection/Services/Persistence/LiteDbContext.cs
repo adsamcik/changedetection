@@ -123,6 +123,44 @@ public class LiteDbContext : IDisposable
                 .Field(x => x.OwnerId, "OwnerId")
                 .Field(x => x.OperationType, "OperationType")
                 .Field(x => x.Status, "Status");
+
+            // FieldValueHistory
+            mapper.Entity<Core.Entities.FieldValueHistory>()
+                .Id(x => x.Id)
+                .Field(x => x.WatchedSiteId, "WatchedSiteId")
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.ObjectIdentity, "ObjectIdentity")
+                .Field(x => x.FieldName, "FieldName")
+                .Field(x => x.CapturedAt, "CapturedAt");
+
+            // WatchGroup
+            mapper.Entity<Core.Entities.WatchGroup>()
+                .Id(x => x.Id)
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.Name, "Name");
+
+            // NotificationOutboxEntry
+            mapper.Entity<Core.Entities.NotificationOutboxEntry>()
+                .Id(x => x.Id)
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.WatchedSiteId, "WatchedSiteId")
+                .Field(x => x.NotificationType, "NotificationType")
+                .Field(x => x.Destination, "Destination")
+                .Field(x => x.PayloadJson, "PayloadJson")
+                .Field(x => x.Status, "Status");
+
+            // NotificationTemplate
+            mapper.Entity<Core.Entities.NotificationTemplate>()
+                .Id(x => x.Id)
+                .Field(x => x.Name, "Name")
+                .Field(x => x.Type, "Type");
+
+            // BlockExecutionSnapshotEntity
+            mapper.Entity<Core.Entities.BlockExecutionSnapshotEntity>()
+                .Id(x => x.Id)
+                .Field(x => x.WatchId, "WatchId")
+                .Field(x => x.BlockInstanceId, "BlockInstanceId")
+                .Field(x => x.OutputJson, "OutputJson");
             
             _mapperConfigured = true;
         }

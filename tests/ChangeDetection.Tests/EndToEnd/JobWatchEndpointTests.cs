@@ -123,35 +123,34 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
     }
 
     [Test]
-    public async Task SeedJobWatch_WatchesHaveCorrectSchemas()
+    public async Task SeedJobWatch_WatchesAccessible()
     {
         var request = new { ProfileJson = TestProfile };
         var seedResponse = await _client.PostAsJsonAsync("/api/jobwatch/seed", request);
-        var seedResult = await seedResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var groupId = seedResult.GetProperty("groupId").GetString();
+        seedResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
 
-        var groupResponse = await _client.GetAsync($"/api/groups/{groupId}");
-        var group = await groupResponse.Content.ReadFromJsonAsync<WatchGroupDetailDto>();
-        group.ShouldNotBeNull();
+        // Verify watches are accessible via the list endpoint
+        var watchesResponse = await _client.GetAsync("/api/watches");
+        watchesResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        // Pick a known watch and verify its details
-        foreach (var member in group.Members.Take(3))
+        var watches = await watchesResponse.Content.ReadFromJsonAsync<List<JsonElement>>();
+        watches.ShouldNotBeNull();
+        Log($"Total watches: {watches.Count}");
+        watches.Count.ShouldBeGreaterThanOrEqualTo(15, "Most portal watches should be created");
+
+        // Spot-check that at least one has job-search tags
+        // WatchListItemDto.Tags is List<TagDto> where TagDto has { name, color }
+        var jobWatches = watches.Where(w =>
         {
-            var watchResponse = await _client.GetAsync($"/api/watches/{member.WatchId}");
-            if (watchResponse.StatusCode == HttpStatusCode.OK)
+            if (w.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array)
             {
-                var watchJson = await watchResponse.Content.ReadAsStringAsync();
-                Log($"Watch response: {watchJson[..Math.Min(200, watchJson.Length)]}...");
-
-                var watch = JsonSerializer.Deserialize<JsonElement>(watchJson);
-
-                // Try both casings for robustness
-                var name = watch.TryGetProperty("name", out var n) ? n.GetString()
-                    : watch.TryGetProperty("Name", out var n2) ? n2.GetString() : null;
-                Log($"Watch name: {name}");
-                name.ShouldNotBeNullOrWhiteSpace();
+                return tags.EnumerateArray().Any(t =>
+                    t.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String && n.GetString() == "job-search");
             }
-        }
+            return false;
+        }).ToList();
+
+        jobWatches.Count.ShouldBeGreaterThanOrEqualTo(10, "Most watches should be tagged 'job-search'");
     }
 
     #endregion
