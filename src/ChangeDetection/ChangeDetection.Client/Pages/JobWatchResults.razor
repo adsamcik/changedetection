@@ -78,6 +78,32 @@
             }
         </div>
 
+        @* Expandable portal detail *@
+        <details class="portal-details">
+            <summary class="portal-details-toggle">
+                📡 Portal Status Details
+            </summary>
+            <div class="portal-list">
+                @foreach (var m in group.Members.OrderBy(m => m.HasErrors ? 0 : 1).ThenBy(m => m.Name))
+                {
+                    <div class="portal-row @(m.HasErrors ? "portal-error" : "portal-ok")">
+                        <span class="portal-status-icon">@(m.HasErrors ? "⚠️" : "✅")</span>
+                        <span class="portal-name-cell">@m.Name</span>
+                        <span class="portal-last-check">
+                            @if (m.LastChecked.HasValue)
+                            {
+                                @FormatRelativeDate(m.LastChecked.Value)
+                            }
+                            else
+                            {
+                                <span class="pending-text">Not checked</span>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+        </details>
+
         @if (!string.IsNullOrEmpty(errorMessage))
         {
             <div class="alert alert-error" role="alert">@errorMessage</div>
@@ -110,7 +136,31 @@
         @if (filteredChanges.Count == 0)
         {
             <div class="no-results">
-                <p>No matches in this category yet. Portals are checked on their configured schedule — results will appear here as new jobs are detected.</p>
+                @{
+                    var checkedCount = group.Members.Count(m => m.LastChecked.HasValue);
+                    var errCount = group.Members.Count(m => m.HasErrors);
+                    var lastCheckTime = group.Members
+                        .Where(m => m.LastChecked.HasValue)
+                        .Select(m => m.LastChecked!.Value)
+                        .DefaultIfEmpty()
+                        .Max();
+                }
+                <p>
+                    <strong>@checkedCount portals checked</strong>, 0 new listings detected.
+                    @if (errCount > 0)
+                    {
+                        <span>@errCount portal(s) had errors.</span>
+                    }
+                    @if (lastCheckTime != default)
+                    {
+                        <span>Last check: @FormatRelativeDate(lastCheckTime).</span>
+                    }
+                </p>
+                <p class="no-results-hint">
+                    Portals are checked on their configured schedule (daily/weekly). 
+                    Use <strong>▶ Run All Checks</strong> above to scan now, or check 
+                    <strong>📡 Portal Status Details</strong> for per-portal health.
+                </p>
             </div>
         }
         else
