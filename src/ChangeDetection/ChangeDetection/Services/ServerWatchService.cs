@@ -985,7 +985,9 @@ public class ServerWatchService : IWatchService
 
                 if (result.Categories.Count > 0)
                     changeEvent.CategoriesJson = JsonSerializer.Serialize(result.Categories);
-                if (result.ExtractedEntities.Count > 0)
+                if (!string.IsNullOrWhiteSpace(result.ExtractedEntitiesJson))
+                    changeEvent.ExtractedEntitiesJson = result.ExtractedEntitiesJson;
+                else if (result.ExtractedEntities.Count > 0)
                     changeEvent.ExtractedEntitiesJson = JsonSerializer.Serialize(result.ExtractedEntities);
                 if (result.KeyFacts.Count > 0)
                     changeEvent.KeyFactsJson = JsonSerializer.Serialize(result.KeyFacts);

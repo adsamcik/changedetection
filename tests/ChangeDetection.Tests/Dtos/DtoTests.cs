@@ -95,6 +95,7 @@ public class ChangeDtoTests
         dto.Importance.ShouldBe("Low");
         dto.IsViewed.ShouldBeFalse();
         dto.IsNotified.ShouldBeFalse();
+        dto.ExtractedEntitiesJson.ShouldBeNull();
         await Task.CompletedTask;
     }
 
@@ -110,6 +111,7 @@ public class ChangeDtoTests
         dto.Summary.ShouldBe("");
         dto.Importance.ShouldBe("Low");
         dto.IsViewed.ShouldBeFalse();
+        dto.ExtractedEntitiesJson.ShouldBeNull();
         await Task.CompletedTask;
     }
 

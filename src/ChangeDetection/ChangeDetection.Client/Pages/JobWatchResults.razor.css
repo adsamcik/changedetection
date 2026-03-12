@@ -441,6 +441,86 @@
     overflow: hidden;
 }
 
+.listing-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2, 0.5rem);
+}
+
+.listing-card {
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: var(--radius-md, 10px);
+    padding: var(--spacing-3, 0.75rem);
+    background: rgba(248, 250, 252, 0.8);
+}
+
+.listing-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-3, 0.75rem);
+    align-items: flex-start;
+}
+
+.listing-title {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text, #0f172a);
+}
+
+.listing-company {
+    margin: 0.25rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--color-text-muted, #475569);
+}
+
+.listing-match {
+    flex-shrink: 0;
+}
+
+.listing-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--spacing-2, 0.5rem);
+    margin: var(--spacing-3, 0.75rem) 0 0;
+}
+
+.listing-meta div {
+    min-width: 0;
+}
+
+.listing-meta dt {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    margin: 0 0 0.1875rem;
+}
+
+.listing-meta dd {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--color-text, #0f172a);
+}
+
+.listing-skills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-1, 0.25rem);
+    margin-top: var(--spacing-3, 0.75rem);
+}
+
+.listing-skill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(13, 148, 136, 0.08);
+    color: #0f766e;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
 /* Card footer */
 .card-footer {
     display: flex;
@@ -464,6 +544,12 @@
 
 .detail-link:hover {
     text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+    .listing-meta {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* Buttons */

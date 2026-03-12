@@ -95,7 +95,7 @@ public static class ChangeEndpoints
                 WatchId = e.WatchedSiteId.ToString(),
                 WatchTitle = watch?.Name,
                 DetectedAt = e.DetectedAt,
-                Summary = e.DiffSummary ?? "Changes detected",
+                Summary = e.BriefSummary ?? e.SemanticSummary ?? e.DiffSummary ?? "Changes detected",
                 Importance = e.Importance.ToString(),
                 LinesAdded = e.LinesAdded,
                 LinesRemoved = e.LinesRemoved,
@@ -115,6 +115,7 @@ public static class ChangeEndpoints
             dto.RelevanceScore = e.RelevanceScore;
             dto.RelevanceReason = e.RelevanceReason;
             dto.MatchDimensionsJson = e.MatchDimensionsJson;
+            dto.ExtractedEntitiesJson = e.ExtractedEntitiesJson;
             
             return dto;
         }).ToList();
@@ -153,7 +154,7 @@ public static class ChangeEndpoints
             WatchTitle = watch?.Name,
             WatchUrl = watch?.Url,
             DetectedAt = change.DetectedAt,
-            Summary = change.DiffSummary ?? "Changes detected",
+            Summary = change.BriefSummary ?? change.SemanticSummary ?? change.DiffSummary ?? "Changes detected",
             DiffText = diffText,
             DiffHtml = change.DiffHtml,
             Importance = change.Importance.ToString(),
@@ -192,6 +193,7 @@ public static class ChangeEndpoints
         dto.RelevanceScore = change.RelevanceScore;
         dto.RelevanceReason = change.RelevanceReason;
         dto.MatchDimensionsJson = change.MatchDimensionsJson;
+        dto.ExtractedEntitiesJson = change.ExtractedEntitiesJson;
 
         return Results.Ok(dto);
     }

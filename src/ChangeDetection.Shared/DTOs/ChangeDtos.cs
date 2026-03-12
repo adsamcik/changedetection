@@ -36,6 +36,9 @@ public class ChangeListItemDto
     
     /// <summary>Profile match dimensions for job-watch changes (JSON).</summary>
     public string? MatchDimensionsJson { get; set; }
+
+    /// <summary>Structured extracted entities or listings for enriched result cards (JSON).</summary>
+    public string? ExtractedEntitiesJson { get; set; }
 }
 
 /// <summary>
@@ -85,6 +88,9 @@ public class ChangeDetailDto
 
     /// <summary>Relevance score (0-1) from profile matching.</summary>
     public float? RelevanceScore { get; set; }
+
+    /// <summary>Structured extracted entities or listings for enriched displays (JSON).</summary>
+    public string? ExtractedEntitiesJson { get; set; }
 }
 
 /// <summary>

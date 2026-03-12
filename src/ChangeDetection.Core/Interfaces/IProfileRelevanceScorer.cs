@@ -31,4 +31,5 @@ public interface IProfileRelevanceScorer
 public record ProfileRelevanceResult(
     float Score,
     string? Reason,
-    string? DimensionsJson);
+    string? DimensionsJson,
+    string? ExtractedEntitiesJson = null);

@@ -318,4 +318,65 @@ public class ChangeAnalyzerTests : TestBase
         progressUpdates.Any(p => p.Step == "Complete").ShouldBeTrue();
         progressUpdates.Last().Result.ShouldNotBeNull();
     }
+
+    [Test]
+    [Category("Unit")]
+    public async Task AnalyzeChangeAsync_WithProfileScorer_CarriesStructuredExtractedEntitiesJson()
+    {
+        var request = new ChangeAnalysisRequest
+        {
+            DiffContent = "+ New opening: Laboratory Assistant",
+            Url = "https://example.com/jobs",
+            UserIntent = "Track biotech jobs",
+            AnalysisProfileJson = """{"education":{"level":"BSc"},"target_locations":["Copenhagen"]}""",
+            LinesAdded = 1,
+            LinesRemoved = 0,
+            CategorizeChange = false,
+            ExtractEntities = false,
+            AnalyzeSentiment = false
+        };
+
+        var llmChain = Substitute.For<ILlmProviderChain>();
+        llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse
+            {
+                IsSuccess = true,
+                Content = """
+                {
+                    "semanticSummary": "A new Laboratory Assistant role was posted.",
+                    "briefSummary": "New Laboratory Assistant role posted",
+                    "confidence": 0.92
+                }
+                """
+            });
+
+        var scorer = new StubProfileRelevanceScorer();
+        var sut = new ChangeAnalyzer(llmChain, [scorer], CreateLogger<ChangeAnalyzer>());
+
+        var result = await sut.AnalyzeChangeAsync(request);
+
+        result.IsSuccess.ShouldBeTrue();
+        result.ExtractedEntitiesJson.ShouldNotBeNull();
+        result.ExtractedEntitiesJson.ShouldContain("Laboratory Assistant");
+        result.MatchDimensionsJson.ShouldBe("""{"education":{"score":1.0,"status":"PASS","reason":"BSc fits"}}""");
+    }
+
+    private class StubProfileRelevanceScorer : IProfileRelevanceScorer
+    {
+        public bool CanScore(string analysisProfileJson) => true;
+
+        public Task<ProfileRelevanceResult> ScoreAsync(
+            ChangeAnalysisRequest request,
+            string? semanticSummary,
+            CancellationToken ct)
+        {
+            return Task.FromResult(new ProfileRelevanceResult(
+                0.91f,
+                "[APPLY] Strong fit",
+                """{"education":{"score":1.0,"status":"PASS","reason":"BSc fits"}}""",
+                """
+                [{"title":"Laboratory Assistant","company":"Department of Drug Design and Pharmacology","deadline":"2026-03-13","education_required":"BSc","match_assessment":"PASS - all requirements met"}]
+                """));
+        }
+    }
 }

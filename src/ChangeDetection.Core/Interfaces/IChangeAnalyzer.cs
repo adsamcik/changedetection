@@ -160,6 +160,12 @@ public class ChangeAnalysisResult
     public List<ExtractedEntity> ExtractedEntities { get; init; } = [];
 
     /// <summary>
+    /// Raw JSON for structured extracted entities when a scorer returns richer domain data
+    /// (for example, job listings extracted during profile matching).
+    /// </summary>
+    public string? ExtractedEntitiesJson { get; init; }
+
+    /// <summary>
     /// Sentiment shift detected (if applicable).
     /// </summary>
     public SentimentAnalysis? Sentiment { get; init; }

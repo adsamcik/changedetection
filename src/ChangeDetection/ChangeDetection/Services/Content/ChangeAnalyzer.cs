@@ -78,6 +78,7 @@ public class ChangeAnalyzer(
         float relevanceScore = 0.5f;
         string? relevanceReason = null;
         string? matchDimensionsJson = null;
+        string? extractedEntitiesJson = null;
         ChangeAnalysisProgress? step2Result;
 
         if (!string.IsNullOrEmpty(request.UserIntent) || !string.IsNullOrEmpty(request.AnalysisProfileJson))
@@ -88,6 +89,7 @@ public class ChangeAnalyzer(
                 relevanceScore = relevanceResult.Score;
                 relevanceReason = relevanceResult.Reason;
                 matchDimensionsJson = relevanceResult.DimensionsJson;
+                extractedEntitiesJson = relevanceResult.ExtractedEntitiesJson;
 
                 step2Result = new ChangeAnalysisProgress { Step = "RelevanceScoring", Status = "Completed" };
             }
@@ -242,6 +244,7 @@ public class ChangeAnalyzer(
                 MatchDimensionsJson = matchDimensionsJson,
                 Categories = categories,
                 ExtractedEntities = entities,
+                ExtractedEntitiesJson = extractedEntitiesJson,
                 Sentiment = sentiment,
                 KeyFacts = keyFacts,
                 SuggestedActions = suggestedActions,
@@ -371,7 +374,7 @@ public class ChangeAnalyzer(
         return (result?.SemanticSummary, result?.BriefSummary, result?.Confidence ?? 0.5f);
     }
 
-    private async Task<(float Score, string? Reason, string? DimensionsJson)> CalculateRelevanceAsync(
+    private async Task<(float Score, string? Reason, string? DimensionsJson, string? ExtractedEntitiesJson)> CalculateRelevanceAsync(
         ChangeAnalysisRequest request,
         string? semanticSummary,
         CancellationToken ct)
@@ -383,7 +386,11 @@ public class ChangeAnalyzer(
             if (scorer is not null)
             {
                 var profileResult = await scorer.ScoreAsync(request, semanticSummary, ct);
-                return (Math.Clamp(profileResult.Score, 0f, 1f), profileResult.Reason, profileResult.DimensionsJson);
+                return (
+                    Math.Clamp(profileResult.Score, 0f, 1f),
+                    profileResult.Reason,
+                    profileResult.DimensionsJson,
+                    profileResult.ExtractedEntitiesJson);
             }
             logger.LogWarning("No profile relevance scorer found for the given profile");
         }
@@ -420,7 +427,7 @@ public class ChangeAnalyzer(
             ExtractJson(response.Content ?? ""),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-        return (Math.Clamp(result?.Score ?? 0.5f, 0f, 1f), result?.Reason, null);
+        return (Math.Clamp(result?.Score ?? 0.5f, 0f, 1f), result?.Reason, null, null);
     }
 
     private async Task<List<ChangeCategory>> CategorizeChangeAsync(

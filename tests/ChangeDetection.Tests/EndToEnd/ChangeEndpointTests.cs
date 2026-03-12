@@ -109,6 +109,40 @@ public class ChangeEndpointTests : TestBase, IAsyncDisposable
     }
 
     [Test]
+    public async Task ChangeEndpoints_IncludeExtractedEntitiesJson()
+    {
+        var (watchId, prevSnapshotId, currSnapshotId) = await SeedWatchWithSnapshots();
+        var eventRepo = _factory.Services.GetRequiredService<IRepository<ChangeEvent>>();
+
+        var listingsJson = """
+            [{"title":"Postdoc in Biomedicine","company":"Department of Chemistry","deadline":"2026-03-13","education_required":"PhD","match_assessment":"PASS - strong fit"}]
+            """;
+
+        var ev = CreateChangeEvent(watchId, prevSnapshotId, currSnapshotId);
+        ev.BriefSummary = "1 new position found: Postdoc in Biomedicine";
+        ev.DiffSummary = "41 lines added, 43 lines removed";
+        ev.ExtractedEntitiesJson = listingsJson;
+        await eventRepo.InsertAsync(ev);
+
+        var listResponse = await _client.GetAsync($"/api/changes?watchId={watchId}");
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var changes = await listResponse.Content.ReadFromJsonAsync<List<ChangeListItemDto>>();
+
+        changes.ShouldNotBeNull();
+        changes.Count.ShouldBe(1);
+        changes[0].Summary.ShouldBe("1 new position found: Postdoc in Biomedicine");
+        changes[0].ExtractedEntitiesJson.ShouldBe(listingsJson);
+
+        var detailResponse = await _client.GetAsync($"/api/changes/{ev.Id}");
+        detailResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var detail = await detailResponse.Content.ReadFromJsonAsync<ChangeDetailDto>();
+
+        detail.ShouldNotBeNull();
+        detail.Summary.ShouldBe("1 new position found: Postdoc in Biomedicine");
+        detail.ExtractedEntitiesJson.ShouldBe(listingsJson);
+    }
+
+    [Test]
     public async Task GetById_NonExistent_Returns404()
     {
         var response = await _client.GetAsync($"/api/changes/{Guid.NewGuid()}");

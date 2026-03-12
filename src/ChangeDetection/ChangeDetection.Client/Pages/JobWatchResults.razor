@@ -3,6 +3,7 @@
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @using System.Text.Json
+@using System.Text.Json.Serialization
 @using ChangeDetection.Shared.Dtos
 
 <PageTitle>Job Watch Results - Change Detection</PageTitle>
@@ -231,6 +232,66 @@
                             {
                                 <p class="reason-text">@item.Reason</p>
                             }
+
+                            @if (item.Listings.Count > 0)
+                            {
+                                <div class="listing-stack">
+                                    @foreach (var listing in item.Listings)
+                                    {
+                                        <article class="listing-card">
+                                            <div class="listing-header">
+                                                <div>
+                                                    <h4 class="listing-title">@listing.Title</h4>
+                                                    @if (!string.IsNullOrWhiteSpace(listing.Company))
+                                                    {
+                                                        <p class="listing-company">@listing.Company</p>
+                                                    }
+                                                </div>
+                                                @if (!llmUnavailable && !string.IsNullOrWhiteSpace(listing.MatchAssessment))
+                                                {
+                                                    <span class="recommendation-badge listing-match badge-@GetListingAssessmentTier(listing.MatchAssessment)">
+                                                        @GetListingAssessmentLabel(listing.MatchAssessment)
+                                                    </span>
+                                                }
+                                            </div>
+
+                                            <dl class="listing-meta">
+                                                @if (!string.IsNullOrWhiteSpace(listing.Location))
+                                                {
+                                                    <div>
+                                                        <dt>Location</dt>
+                                                        <dd>@listing.Location</dd>
+                                                    </div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(listing.Deadline))
+                                                {
+                                                    <div>
+                                                        <dt>Deadline</dt>
+                                                        <dd>@FormatDeadline(listing.Deadline)</dd>
+                                                    </div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(listing.EducationRequired))
+                                                {
+                                                    <div>
+                                                        <dt>Education</dt>
+                                                        <dd>@listing.EducationRequired</dd>
+                                                    </div>
+                                                }
+                                            </dl>
+
+                                            @if (listing.KeySkills.Count > 0)
+                                            {
+                                                <div class="listing-skills">
+                                                    @foreach (var skill in listing.KeySkills)
+                                                    {
+                                                        <span class="listing-skill">@skill</span>
+                                                    }
+                                                </div>
+                                            }
+                                        </article>
+                                    }
+                                </div>
+                            }
                         </div>
 
                         <div class="card-footer">
@@ -315,16 +376,18 @@
 
                 foreach (var c in changes)
                 {
+                    var listings = ParseJobListings(c.ExtractedEntitiesJson);
                     results.Add(new MatchResult
                     {
                         ChangeId = c.Id,
-                        Title = ExtractTitle(c.Summary),
+                        Title = BuildHeadline(c.Summary, listings),
                         PortalName = member.Name ?? "Unknown portal",
                         DetectedAt = c.DetectedAt,
                         Score = c.RelevanceScore,
                         Reason = c.RelevanceReason,
                         Recommendation = ExtractRecommendation(c.RelevanceReason, c.RelevanceScore),
-                        Dimensions = ParseDimensions(c.MatchDimensionsJson)
+                        Dimensions = ParseDimensions(c.MatchDimensionsJson),
+                        Listings = listings
                     });
                 }
             }
@@ -435,10 +498,28 @@
 
     private int CountByTier(string tier) => allChanges.Count(c => c.ScoreTier == tier);
 
-    private static string ExtractTitle(string summary)
+    private static string BuildHeadline(string summary, List<JobListingInfo> listings)
     {
+        if (listings.Count > 0)
+        {
+            var snippets = listings
+                .Select(l => string.IsNullOrWhiteSpace(l.Company) ? l.Title : $"{l.Title} at {l.Company}")
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Take(3)
+                .ToList();
+
+            var headline = $"{listings.Count} new position{(listings.Count == 1 ? "" : "s")} found";
+            if (snippets.Count > 0)
+            {
+                headline = $"{headline}: {string.Join(", ", snippets)}";
+                if (listings.Count > snippets.Count)
+                    headline = $"{headline}, +{listings.Count - snippets.Count} more";
+            }
+
+            return headline;
+        }
+
         if (string.IsNullOrWhiteSpace(summary)) return "New change detected";
-        // Take first line or first 80 characters
         var firstLine = summary.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? summary;
         return firstLine.Length > 80 ? firstLine[..77] + "..." : firstLine;
     }
@@ -531,6 +612,28 @@
         }
     }
 
+    private static List<JobListingInfo> ParseJobListings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        try
+        {
+            var listings = JsonSerializer.Deserialize<List<JobListingInfo>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            return listings?
+                .Where(l => !string.IsNullOrWhiteSpace(l.Title))
+                .ToList() ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     private static string FormatDimensionName(string name)
     {
         // Convert camelCase/snake_case to Title Case
@@ -556,6 +659,32 @@
         return date.ToString("MMM dd");
     }
 
+    private static string FormatDeadline(string deadline)
+    {
+        return DateTime.TryParse(deadline, out var parsed)
+            ? parsed.ToString("MMM dd, yyyy")
+            : deadline;
+    }
+
+    private static string GetListingAssessmentTier(string? assessment)
+    {
+        var upper = assessment?.ToUpperInvariant() ?? "";
+        if (upper.StartsWith("PASS"))
+            return "apply";
+        if (upper.StartsWith("SKIP"))
+            return "skip";
+        return "review";
+    }
+
+    private static string GetListingAssessmentLabel(string? assessment)
+    {
+        if (string.IsNullOrWhiteSpace(assessment))
+            return "Review";
+
+        var separator = assessment.IndexOf(" - ", StringComparison.Ordinal);
+        return separator > 0 ? assessment[..separator] : assessment;
+    }
+
     private class MatchResult
     {
         public string ChangeId { get; set; } = "";
@@ -566,6 +695,7 @@
         public string? Reason { get; set; }
         public string Recommendation { get; set; } = "REVIEW";
         public List<DimensionInfo> Dimensions { get; set; } = [];
+        public List<JobListingInfo> Listings { get; set; } = [];
 
         public string ScoreTier
         {
@@ -583,5 +713,32 @@
         public string Name { get; set; } = "";
         public string Level { get; set; } = "partial";
         public string Icon { get; set; } = "⚠️";
+    }
+
+    private class JobListingInfo
+    {
+        [JsonPropertyName("title")]
+        public string Title { get; set; } = "";
+
+        [JsonPropertyName("company")]
+        public string? Company { get; set; }
+
+        [JsonPropertyName("location")]
+        public string? Location { get; set; }
+
+        [JsonPropertyName("deadline")]
+        public string? Deadline { get; set; }
+
+        [JsonPropertyName("education_required")]
+        public string? EducationRequired { get; set; }
+
+        [JsonPropertyName("key_skills")]
+        public List<string> KeySkills { get; set; } = [];
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("match_assessment")]
+        public string? MatchAssessment { get; set; }
     }
 }
