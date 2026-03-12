@@ -104,7 +104,10 @@ public enum NotificationTemplateType
     ItemRemoved = 5,
 
     /// <summary>Schema drift detected (page structure changed).</summary>
-    SchemaDrift = 6
+    SchemaDrift = 6,
+
+    /// <summary>Job match alert from profile-based evaluation.</summary>
+    JobMatch = 7
 }
 
 /// <summary>

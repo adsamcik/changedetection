@@ -196,6 +196,31 @@ public partial class NotificationTemplateEngine(
             EmailBodyTextTemplate = "Page structure changed for {Watch.Name}. Selectors may need updating.",
             DiscordTitleTemplate = "⚙️ {Watch.Name}",
             DiscordBodyTemplate = "Page structure changed - selectors may need updating"
+        },
+        [NotificationTemplateType.JobMatch] = new NotificationTemplate
+        {
+            Id = Guid.Parse("00000000-0000-0000-0001-000000000008"),
+            Name = "Default Job Match",
+            Type = NotificationTemplateType.JobMatch,
+            IsBuiltIn = true,
+            EmailSubjectTemplate = "🔬 Job Match: {NewValue} at {OldValue}",
+            EmailBodyHtmlTemplate = """
+                <h2>🔬 New Job Match Found</h2>
+                <p><strong>Source:</strong> {Watch.Name}</p>
+                <p><strong>URL:</strong> <a href="{Watch.Url}">{Watch.Url}</a></p>
+                <hr>
+                <h3>Match Details</h3>
+                <p>{LlmSummary}</p>
+                <hr>
+                <p><em>Detected at {Change.DetectedAt}</em></p>
+                """,
+            EmailBodyTextTemplate = """
+                Job Match Found — {Watch.Name}
+                {LlmSummary}
+                URL: {Watch.Url}
+                """,
+            DiscordTitleTemplate = "🔬 Job Match — {Watch.Name}",
+            DiscordBodyTemplate = "{LlmSummary}"
         }
     };
 
