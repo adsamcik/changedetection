@@ -1,0 +1,28 @@
+Build started 22/02/2026 14:37:07.
+     1>Project "G:\Github\changedetection\ChangeDetection.slnx" on node 1 (VSTest target(s)).
+     1>ValidateSolutionConfiguration:
+         Building solution configuration "Debug|Any CPU".
+     1>Project "G:\Github\changedetection\ChangeDetection.slnx" (1) is building "G:\Github\changedetection\tests\ChangeDetection.Core.Tests\ChangeDetection.Core.Tests.csproj" (5) on node 5 (VSTest target(s)).
+     5>C:\Users\adam-\.nuget\packages\microsoft.testing.platform.msbuild\2.0.2\buildMultiTargeting\Microsoft.Testing.Platform.MSBuild.targets(263,5): error : Testing with VSTest target is no longer supported by Microsoft.Testing.Platform on .NET 10 SDK and later. If you use dotnet test, you should opt-in to the new dotnet test experience. For more information, see https://aka.ms/dotnet-test-mtp-error [G:\Github\changedetection\tests\ChangeDetection.Core.Tests\ChangeDetection.Core.Tests.csproj]
+     5>Done Building Project "G:\Github\changedetection\tests\ChangeDetection.Core.Tests\ChangeDetection.Core.Tests.csproj" (VSTest target(s)) -- FAILED.
+     1>Project "G:\Github\changedetection\ChangeDetection.slnx" (1) is building "G:\Github\changedetection\tests\ChangeDetection.Tests\ChangeDetection.Tests.csproj" (7) on node 6 (VSTest target(s)).
+     7>C:\Users\adam-\.nuget\packages\microsoft.testing.platform.msbuild\2.0.2\buildMultiTargeting\Microsoft.Testing.Platform.MSBuild.targets(263,5): error : Testing with VSTest target is no longer supported by Microsoft.Testing.Platform on .NET 10 SDK and later. If you use dotnet test, you should opt-in to the new dotnet test experience. For more information, see https://aka.ms/dotnet-test-mtp-error [G:\Github\changedetection\tests\ChangeDetection.Tests\ChangeDetection.Tests.csproj]
+     7>Done Building Project "G:\Github\changedetection\tests\ChangeDetection.Tests\ChangeDetection.Tests.csproj" (VSTest target(s)) -- FAILED.
+     1>Done Building Project "G:\Github\changedetection\ChangeDetection.slnx" (VSTest target(s)) -- FAILED.
+
+Build FAILED.
+
+       "G:\Github\changedetection\ChangeDetection.slnx" (VSTest target) (1) ->
+       "G:\Github\changedetection\tests\ChangeDetection.Core.Tests\ChangeDetection.Core.Tests.csproj" (VSTest target) (5) ->
+       (_MTPBeforeVSTest target) -> 
+         C:\Users\adam-\.nuget\packages\microsoft.testing.platform.msbuild\2.0.2\buildMultiTargeting\Microsoft.Testing.Platform.MSBuild.targets(263,5): error : Testing with VSTest target is no longer supported by Microsoft.Testing.Platform on .NET 10 SDK and later. If you use dotnet test, you should opt-in to the new dotnet test experience. For more information, see https://aka.ms/dotnet-test-mtp-error [G:\Github\changedetection\tests\ChangeDetection.Core.Tests\ChangeDetection.Core.Tests.csproj]
+
+
+       "G:\Github\changedetection\ChangeDetection.slnx" (VSTest target) (1) ->
+       "G:\Github\changedetection\tests\ChangeDetection.Tests\ChangeDetection.Tests.csproj" (VSTest target) (7) ->
+         C:\Users\adam-\.nuget\packages\microsoft.testing.platform.msbuild\2.0.2\buildMultiTargeting\Microsoft.Testing.Platform.MSBuild.targets(263,5): error : Testing with VSTest target is no longer supported by Microsoft.Testing.Platform on .NET 10 SDK and later. If you use dotnet test, you should opt-in to the new dotnet test experience. For more information, see https://aka.ms/dotnet-test-mtp-error [G:\Github\changedetection\tests\ChangeDetection.Tests\ChangeDetection.Tests.csproj]
+
+    0 Warning(s)
+    2 Error(s)
+
+Time Elapsed 00:00:02.36

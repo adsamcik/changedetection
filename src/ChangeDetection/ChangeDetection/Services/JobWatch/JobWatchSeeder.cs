@@ -54,6 +54,15 @@ public class JobWatchSeeder(
             }
         }
 
+        // Atomicity: if no watches were created, roll back the group
+        if (createdCount == 0)
+        {
+            logger.LogWarning("No portal watches were created — rolling back group {GroupId}", group.Id);
+            try { await groupService.DeleteGroupAsync(group.Id, false, ct); }
+            catch (Exception ex) { logger.LogError(ex, "Failed to roll back empty group {GroupId}", group.Id); }
+            throw new InvalidOperationException("Failed to create any portal watches. Group has been rolled back.");
+        }
+
         logger.LogInformation("Job search project seeded: {Created}/{Total} portal watches", createdCount, portals.Count);
         return (group, createdCount);
     }

@@ -66,7 +66,8 @@ public static class WatchGroupEndpoints
         });
     }
 
-    private static async Task<IResult> UpdateGroup(Guid id, WatchGroupUpdateDto dto, IWatchGroupService svc, CancellationToken ct)
+    private static async Task<IResult> UpdateGroup(Guid id, WatchGroupUpdateDto dto, IWatchGroupService svc,
+        IProfileFilterRuleGenerator filterRuleGen, IWatchService watchService, CancellationToken ct)
     {
         var g = await svc.GetByIdAsync(id, ct);
         if (g is null) return Results.NotFound();
@@ -75,12 +76,17 @@ public static class WatchGroupEndpoints
         if (dto.Description is not null) g.Description = dto.Description;
         if (dto.Icon is not null) g.Icon = dto.Icon;
         if (dto.Tags is not null) g.Tags = dto.Tags;
+
+        var profileChanged = false;
         if (dto.AnalysisProfileJson is not null)
         {
+            if (dto.AnalysisProfileJson.Length > 65_536)
+                return Results.BadRequest("AnalysisProfileJson exceeds maximum length of 65536 characters");
             try
             {
-                JsonDocument.Parse(dto.AnalysisProfileJson);
+                using var doc = JsonDocument.Parse(dto.AnalysisProfileJson, new JsonDocumentOptions { MaxDepth = 10 });
                 g.AnalysisProfileJson = dto.AnalysisProfileJson;
+                profileChanged = true;
             }
             catch (JsonException)
             {
@@ -111,6 +117,25 @@ public static class WatchGroupEndpoints
             }).ToList();
 
         await svc.UpdateGroupAsync(g, ct);
+
+        // When profile changes, regenerate FilterRules for all member watches
+        if (profileChanged && g.AnalysisProfileJson is not null)
+        {
+            var newRules = filterRuleGen.GenerateRules(g.AnalysisProfileJson);
+            var memberWatches = await svc.GetGroupMembersAsync(id, ct);
+            foreach (var member in memberWatches)
+            {
+                var watch = await watchService.GetByIdAsync(member.Id, ct);
+                if (watch is null) continue;
+                // Replace auto-generated rules (keep any user-defined rules)
+                watch.FilterRules = watch.FilterRules
+                    .Where(r => !r.Description?.StartsWith("Auto-generated") == true)
+                    .Concat(newRules)
+                    .ToList();
+                await watchService.UpdateWatchAsync(watch, ct);
+            }
+        }
+
         var members = await svc.GetGroupMembersAsync(id, ct);
         var snap = await svc.ComputeAggregateAsync(id, ct);
         return Results.Ok(MapDetailDto(g, members, snap));

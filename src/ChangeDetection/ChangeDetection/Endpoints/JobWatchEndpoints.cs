@@ -11,6 +11,7 @@ namespace ChangeDetection.Endpoints;
 public static class JobWatchEndpoints
 {
     private const int MaxProfileJsonLength = 65_536; // 64KB
+    private static readonly SemaphoreSlim _seedLock = new(1, 1);
 
     public static RouteGroupBuilder MapJobWatchEndpoints(this RouteGroupBuilder group)
     {
@@ -37,41 +38,52 @@ public static class JobWatchEndpoints
         if (request.ProfileJson.Length > MaxProfileJsonLength)
             return Results.BadRequest($"ProfileJson exceeds maximum length of {MaxProfileJsonLength} characters");
 
-        // Validate JSON is parseable
+        // Validate JSON is parseable with depth limit
         try
         {
-            JsonDocument.Parse(request.ProfileJson);
+            using var doc = JsonDocument.Parse(request.ProfileJson, new JsonDocumentOptions { MaxDepth = 10 });
         }
         catch (JsonException)
         {
             return Results.BadRequest("ProfileJson is not valid JSON");
         }
 
-        // Idempotency: check if a job watch group already exists
-        var existingGroups = await groupService.GetAllAsync(ct);
-        var existing = existingGroups.FirstOrDefault(g =>
-            g.Tags.Contains("job-search") && g.AnalysisProfileJson is not null);
-        if (existing is not null)
+        // Serialize access to prevent duplicate seed race condition
+        if (!await _seedLock.WaitAsync(TimeSpan.FromSeconds(10), ct))
+            return Results.Conflict(new { Message = "A seed operation is already in progress. Please wait." });
+
+        try
         {
-            return Results.Conflict(new
+            // Idempotency: check if a job watch group already exists (inside lock)
+            var existingGroups = await groupService.GetAllAsync(ct);
+            var existing = existingGroups.FirstOrDefault(g =>
+                g.Tags.Contains("job-search") && g.AnalysisProfileJson is not null);
+            if (existing is not null)
             {
-                Message = "A job watch project already exists. Delete the existing group first or update its profile via PUT /api/groups/{id}.",
-                ExistingGroupId = existing.Id.ToString(),
-                existing.Name
+                return Results.Conflict(new
+                {
+                    Message = "A job watch project already exists. Delete the existing group first or update its profile via PUT /api/groups/{id}.",
+                    ExistingGroupId = existing.Id.ToString(),
+                    existing.Name
+                });
+            }
+
+            var (group, createdCount) = await seeder.SeedAsync(
+                request.ProfileJson,
+                request.UserIntent ?? "Monitor biotech/life-science job portals for matching positions",
+                ct);
+
+            return Results.Created($"/api/groups/{group.Id}", new
+            {
+                GroupId = group.Id.ToString(),
+                group.Name,
+                PortalCount = createdCount
             });
         }
-
-        var (group, createdCount) = await seeder.SeedAsync(
-            request.ProfileJson,
-            request.UserIntent ?? "Monitor biotech/life-science job portals for matching positions",
-            ct);
-
-        return Results.Created($"/api/groups/{group.Id}", new
+        finally
         {
-            GroupId = group.Id.ToString(),
-            group.Name,
-            PortalCount = createdCount
-        });
+            _seedLock.Release();
+        }
     }
 
     private static IResult GetPortalDefinitions()

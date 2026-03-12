@@ -262,7 +262,13 @@ public class FilterEvaluationService(
                     return false;
                 try
                 {
-                    return Regex.IsMatch(fieldValue, conditionValue, RegexOptions.IgnoreCase);
+                    return Regex.IsMatch(fieldValue, conditionValue,
+                        RegexOptions.IgnoreCase,
+                        TimeSpan.FromSeconds(1));
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    return false;
                 }
                 catch
                 {

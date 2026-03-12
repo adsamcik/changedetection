@@ -50,10 +50,12 @@ public class ProfileFilterRuleGeneratorTests : TestBase
 
         var sotioRule = rules.FirstOrDefault(r => r.Name.Contains("SOTIO"));
         sotioRule.ShouldNotBeNull("Should have a rule for SOTIO dealbreaker");
-        sotioRule.Conditions.ShouldHaveSingleItem();
-        sotioRule.Conditions[0].FieldName.ShouldBe("company");
-        sotioRule.Conditions[0].Operator.ShouldBe(FilterOperator.Contains);
-        sotioRule.Conditions[0].Value.ShouldBe("SOTIO");
+        sotioRule.Conditions.Count.ShouldBe(4, "Should match across company, title, requirements, and description");
+        sotioRule.Logic.ShouldBe(FilterLogic.Or);
+        sotioRule.Conditions.ShouldContain(c => c.FieldName == "company" && c.Value == "SOTIO");
+        sotioRule.Conditions.ShouldContain(c => c.FieldName == "title" && c.Value == "SOTIO");
+        sotioRule.Conditions.ShouldContain(c => c.FieldName == "requirements" && c.Value == "SOTIO");
+        sotioRule.Conditions.ShouldContain(c => c.FieldName == "description" && c.Value == "SOTIO");
         sotioRule.Actions.ShouldContain(a => a.Type == FilterActionType.SuppressNotification);
         sotioRule.Actions.ShouldContain(a => a.Type == FilterActionType.AddTag
             && a.Parameters.GetValueOrDefault("tag") == "DEALBREAKER");
@@ -126,9 +128,13 @@ public class ProfileFilterRuleGeneratorTests : TestBase
         var locationRule = rules.FirstOrDefault(r => r.Name.Contains("Location"));
         locationRule.ShouldNotBeNull("Should have a location filter rule");
         locationRule.Logic.ShouldBe(FilterLogic.And);
-        // All conditions should be negated — "if location does NOT contain ANY target"
-        locationRule.Conditions.Count.ShouldBe(4, "Should have 4 negated location conditions");
-        locationRule.Conditions.ShouldAllBe(c => c.Negate);
+        // 1 guard condition (location must be non-empty) + 4 negated location conditions
+        locationRule.Conditions.Count.ShouldBe(5, "Should have 1 guard + 4 negated location conditions");
+        // First condition is the guard (regex ".+" to check non-empty)
+        locationRule.Conditions[0].Operator.ShouldBe(FilterOperator.Regex);
+        locationRule.Conditions[0].Negate.ShouldBeFalse();
+        // Remaining 4 are negated location matches
+        locationRule.Conditions.Skip(1).ShouldAllBe(c => c.Negate);
         locationRule.Actions.ShouldContain(a => a.Type == FilterActionType.SuppressNotification);
         locationRule.Actions.ShouldContain(a => a.Type == FilterActionType.AddTag
             && a.Parameters.GetValueOrDefault("tag") == "WRONG_LOCATION");

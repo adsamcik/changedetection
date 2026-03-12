@@ -413,7 +413,7 @@ public class ChangeAnalyzer(
             ExtractJson(response.Content ?? ""),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-        return (result?.Score ?? 0.5f, result?.Reason, null);
+        return (Math.Clamp(result?.Score ?? 0.5f, 0f, 1f), result?.Reason, null);
     }
 
     /// <summary>
@@ -496,6 +496,7 @@ public class ChangeAnalyzer(
         if (result is null)
             return (0.5f, "Profile relevance parsing failed", null);
 
+        var score = Math.Clamp(result.Score, 0f, 1f);
         var reason = result.Reason ?? "Profile match evaluated";
         if (result.Recommendation is not null)
             reason = $"[{result.Recommendation}] {reason}";
@@ -506,33 +507,57 @@ public class ChangeAnalyzer(
             ? JsonSerializer.Serialize(result.Dimensions, new JsonSerializerOptions { WriteIndented = false })
             : null;
 
-        return (result.Score, reason, dimensionsJson);
+        return (score, reason, dimensionsJson);
     }
 
     /// <summary>
-    /// Extracts only known profile keys to prevent prompt injection via crafted JSON values.
+    /// Extracts only known profile keys with deep value sanitization to prevent prompt injection.
+    /// Each value type is explicitly validated — no raw nested objects pass through.
     /// </summary>
     private static string SanitizeProfileForPrompt(string profileJson)
     {
         try
         {
-            var doc = JsonDocument.Parse(profileJson);
+            var options = new JsonDocumentOptions { MaxDepth = 10 };
+            using var doc = JsonDocument.Parse(profileJson, options);
             var root = doc.RootElement;
             var safe = new Dictionary<string, object?>();
 
-            string[] allowedKeys =
-            [
-                "education", "experience_years", "current_role",
-                "techniques_strong", "techniques_basic", "techniques_none",
-                "target_locations", "languages", "salary_floor",
-                "dealbreakers", "preferences", "certifications", "regulatory"
-            ];
-
-            foreach (var key in allowedKeys)
+            // Education: only extract known sub-keys
+            if (root.TryGetProperty("education", out var edu) && edu.ValueKind == JsonValueKind.Object)
             {
-                if (root.TryGetProperty(key, out var value))
-                    safe[key] = value;
+                var eduSafe = new Dictionary<string, string?>();
+                if (edu.TryGetProperty("level", out var lvl) && lvl.ValueKind == JsonValueKind.String)
+                    eduSafe["level"] = SanitizeStringValue(lvl.GetString());
+                if (edu.TryGetProperty("field", out var fld) && fld.ValueKind == JsonValueKind.String)
+                    eduSafe["field"] = SanitizeStringValue(fld.GetString());
+                if (edu.TryGetProperty("note", out var note) && note.ValueKind == JsonValueKind.String)
+                    eduSafe["note"] = SanitizeStringValue(note.GetString());
+                safe["education"] = eduSafe;
             }
+
+            // Salary floor: only extract known sub-keys
+            if (root.TryGetProperty("salary_floor", out var sal) && sal.ValueKind == JsonValueKind.Object)
+            {
+                var salSafe = new Dictionary<string, string?>();
+                foreach (var prop in sal.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                        salSafe[SanitizeStringValue(prop.Name, 50) ?? prop.Name] = SanitizeStringValue(prop.Value.GetString());
+                }
+                safe["salary_floor"] = salSafe;
+            }
+
+            // Scalar string values
+            AddSanitizedString(root, safe, "experience_years");
+            AddSanitizedString(root, safe, "current_role");
+            AddSanitizedString(root, safe, "regulatory");
+
+            // String array values
+            string[] arrayKeys = ["techniques_strong", "techniques_basic", "techniques_none",
+                "target_locations", "languages", "dealbreakers", "preferences", "certifications"];
+            foreach (var key in arrayKeys)
+                AddSanitizedStringArray(root, safe, key);
 
             return JsonSerializer.Serialize(safe, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -540,6 +565,34 @@ public class ChangeAnalyzer(
         {
             return "{}";
         }
+    }
+
+    private static void AddSanitizedString(JsonElement root, Dictionary<string, object?> safe, string key)
+    {
+        if (root.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String)
+            safe[key] = SanitizeStringValue(val.GetString());
+    }
+
+    private static void AddSanitizedStringArray(JsonElement root, Dictionary<string, object?> safe, string key)
+    {
+        if (root.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.Array)
+            safe[key] = val.EnumerateArray()
+                .Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => SanitizeStringValue(e.GetString()))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+    }
+
+    private static string? SanitizeStringValue(string? value, int maxLength = 200)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        // Strip XML-like tags that could close/reopen profile_data delimiters
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value, @"</?profile_data>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        // Strip control characters and newlines
+        value = new string(value.Where(c => !char.IsControl(c)).ToArray());
+        // Truncate to prevent oversized individual values
+        return value.Length > maxLength ? value[..maxLength] : value;
     }
 
     private async Task<List<ChangeCategory>> CategorizeChangeAsync(

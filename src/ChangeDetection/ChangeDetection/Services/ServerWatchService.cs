@@ -82,6 +82,14 @@ public class ServerWatchService : IWatchService
 
     public async Task<WatchedSite> CreateWatchAsync(CreateWatchRequest request, CancellationToken ct = default)
     {
+        // Validate GroupId references an existing group
+        if (request.GroupId.HasValue)
+        {
+            var group = await _groupRepo.GetByIdAsync(request.GroupId.Value, ct);
+            if (group is null)
+                throw new ArgumentException($"WatchGroup {request.GroupId.Value} does not exist");
+        }
+
         // Build schedule settings, defaulting to fixed mode with the check interval
         var scheduleSettings = request.ScheduleSettings ?? new CheckScheduleSettings
         {

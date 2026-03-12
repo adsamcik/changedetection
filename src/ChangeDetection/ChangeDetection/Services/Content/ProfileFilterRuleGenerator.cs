@@ -17,7 +17,9 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
         JsonElement profile;
         try
         {
-            profile = JsonSerializer.Deserialize<JsonElement>(analysisProfileJson);
+            var options = new JsonDocumentOptions { MaxDepth = 10 };
+            using var doc = JsonDocument.Parse(analysisProfileJson, options);
+            profile = doc.RootElement.Clone();
         }
         catch (JsonException)
         {
@@ -26,11 +28,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
 
         int priority = 100; // Higher priority = evaluated first
 
-        // Dealbreaker companies → SuppressNotification
+        // Dealbreaker companies/themes → SuppressNotification
+        // Match against multiple fields: company, title, description, requirements
         if (profile.TryGetProperty("dealbreakers", out var dealbreakers) && dealbreakers.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in dealbreakers.EnumerateArray())
             {
+                if (item.ValueKind != JsonValueKind.String) continue;
                 var dealbreaker = item.GetString();
                 if (string.IsNullOrWhiteSpace(dealbreaker)) continue;
 
@@ -40,11 +44,30 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                     Description = $"Auto-generated from profile dealbreaker: {dealbreaker}",
                     Priority = priority--,
                     StopProcessing = true,
+                    Logic = FilterLogic.Or, // Match in ANY of these fields
                     Conditions =
                     [
                         new FilterCondition
                         {
                             FieldName = "company",
+                            Operator = FilterOperator.Contains,
+                            Value = dealbreaker
+                        },
+                        new FilterCondition
+                        {
+                            FieldName = "title",
+                            Operator = FilterOperator.Contains,
+                            Value = dealbreaker
+                        },
+                        new FilterCondition
+                        {
+                            FieldName = "requirements",
+                            Operator = FilterOperator.Contains,
+                            Value = dealbreaker
+                        },
+                        new FilterCondition
+                        {
+                            FieldName = "description",
                             Operator = FilterOperator.Contains,
                             Value = dealbreaker
                         }
@@ -67,11 +90,15 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             }
         }
 
-        // Education disqualifiers → PhD required = suppress
+        // Education disqualifiers — guard against malformed education values
         if (profile.TryGetProperty("education", out var education) &&
-            education.TryGetProperty("level", out var eduLevel))
+            education.ValueKind == JsonValueKind.Object &&
+            education.TryGetProperty("level", out var eduLevel) &&
+            eduLevel.ValueKind == JsonValueKind.String)
         {
             var candidateLevel = eduLevel.GetString();
+
+            // PhD disqualification for MSc and BSc candidates
             if (candidateLevel is "MSc" or "BSc")
             {
                 rules.Add(new FilterRule
@@ -112,6 +139,48 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                     ]
                 });
             }
+
+            // MSc disqualification for BSc candidates
+            if (candidateLevel is "BSc")
+            {
+                rules.Add(new FilterRule
+                {
+                    Name = "Disqualify: MSc required",
+                    Description = "Auto-generated: candidate has BSc, MSc-required roles are disqualified",
+                    Priority = priority--,
+                    StopProcessing = true,
+                    Logic = FilterLogic.Or,
+                    Conditions =
+                    [
+                        new FilterCondition
+                        {
+                            FieldName = "education_required",
+                            Operator = FilterOperator.Equals,
+                            Value = "MSc"
+                        },
+                        new FilterCondition
+                        {
+                            FieldName = "requirements",
+                            Operator = FilterOperator.Regex,
+                            Value = @"(?i)\brequired?\b.*\bM\.?Sc\.?\b|\bM\.?Sc\.?\b.*\brequired?\b"
+                        }
+                    ],
+                    Actions =
+                    [
+                        new FilterAction { Type = FilterActionType.SuppressNotification },
+                        new FilterAction
+                        {
+                            Type = FilterActionType.AddTag,
+                            Parameters = new Dictionary<string, string> { ["tag"] = "DISQUALIFIED_MSC" }
+                        },
+                        new FilterAction
+                        {
+                            Type = FilterActionType.SetImportance,
+                            Parameters = new Dictionary<string, string> { ["level"] = "Low" }
+                        }
+                    ]
+                });
+            }
         }
 
         // Techniques in "none" list → suppress if required
@@ -120,6 +189,7 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             var noneSkills = new List<string>();
             foreach (var item in techNone.EnumerateArray())
             {
+                if (item.ValueKind != JsonValueKind.String) continue;
                 var skill = item.GetString();
                 if (!string.IsNullOrWhiteSpace(skill))
                     noneSkills.Add(skill);
@@ -127,7 +197,6 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
 
             if (noneSkills.Count > 0)
             {
-                // Create one rule per absent technique
                 foreach (var skill in noneSkills)
                 {
                     rules.Add(new FilterRule
@@ -162,12 +231,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             }
         }
 
-        // Location filtering
+        // Location filtering — only suppress when location IS present and doesn't match
         if (profile.TryGetProperty("target_locations", out var locations) && locations.ValueKind == JsonValueKind.Array)
         {
             var locationValues = new List<string>();
             foreach (var item in locations.EnumerateArray())
             {
+                if (item.ValueKind != JsonValueKind.String) continue;
                 var loc = item.GetString();
                 if (!string.IsNullOrWhiteSpace(loc))
                     locationValues.Add(loc);
@@ -175,21 +245,33 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
 
             if (locationValues.Count > 0)
             {
-                // Create a rule that checks location is NOT in any target location
-                // Using negated Contains conditions with OR logic
+                // First condition: location field must be present and non-empty
+                // Use Contains with empty string negated to check field exists
+                var conditions = new List<FilterCondition>();
+                conditions.AddRange(locationValues.Select(loc => new FilterCondition
+                {
+                    FieldName = "location",
+                    Operator = FilterOperator.Contains,
+                    Value = loc,
+                    Negate = true // NONE of the target locations match → suppress
+                }));
+
+                // Add a guard condition: location must contain at least one character
+                // (so missing/empty location fields don't trigger suppression)
+                conditions.Insert(0, new FilterCondition
+                {
+                    FieldName = "location",
+                    Operator = FilterOperator.Regex,
+                    Value = ".+" // location must be non-empty for this rule to fire
+                });
+
                 rules.Add(new FilterRule
                 {
                     Name = "Location filter",
-                    Description = $"Auto-generated: only locations matching [{string.Join(", ", locationValues)}]",
+                    Description = $"Auto-generated: only locations matching [{string.Join(", ", locationValues)}]. Missing location = pass.",
                     Priority = priority--,
                     Logic = FilterLogic.And,
-                    Conditions = locationValues.Select(loc => new FilterCondition
-                    {
-                        FieldName = "location",
-                        Operator = FilterOperator.Contains,
-                        Value = loc,
-                        Negate = true // NONE of the target locations match → suppress
-                    }).ToList(),
+                    Conditions = conditions,
                     Actions =
                     [
                         new FilterAction { Type = FilterActionType.SuppressNotification },
