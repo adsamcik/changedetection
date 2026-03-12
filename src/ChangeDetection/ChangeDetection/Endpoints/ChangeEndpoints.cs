@@ -116,6 +116,7 @@ public static class ChangeEndpoints
             dto.RelevanceReason = e.RelevanceReason;
             dto.MatchDimensionsJson = e.MatchDimensionsJson;
             dto.ExtractedEntitiesJson = e.ExtractedEntitiesJson;
+            dto.Feedback = e.Feedback.ToString();
             
             return dto;
         }).ToList();
@@ -194,6 +195,7 @@ public static class ChangeEndpoints
         dto.RelevanceReason = change.RelevanceReason;
         dto.MatchDimensionsJson = change.MatchDimensionsJson;
         dto.ExtractedEntitiesJson = change.ExtractedEntitiesJson;
+        dto.Feedback = change.Feedback.ToString();
 
         return Results.Ok(dto);
     }

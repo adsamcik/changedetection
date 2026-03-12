@@ -163,6 +163,21 @@
                     Low <span class="filter-count">@CountByTier("low")</span>
                 </button>
             </div>
+
+            <div class="filter-bar feedback-filter-bar">
+                <button class="filter-btn @(feedbackFilter == "all" ? "active" : "")" @onclick='() => SetFeedbackFilter("all")'>
+                    All Feedback <span class="filter-count">@CountByFeedback("all")</span>
+                </button>
+                <button class="filter-btn @(feedbackFilter == "liked" ? "active" : "")" @onclick='() => SetFeedbackFilter("liked")'>
+                    👍 Liked <span class="filter-count">@CountByFeedback("liked")</span>
+                </button>
+                <button class="filter-btn @(feedbackFilter == "dismissed" ? "active" : "")" @onclick='() => SetFeedbackFilter("dismissed")'>
+                    👎 Dismissed <span class="filter-count">@CountByFeedback("dismissed")</span>
+                </button>
+                <button class="filter-btn @(feedbackFilter == "unrated" ? "active" : "")" @onclick='() => SetFeedbackFilter("unrated")'>
+                    Unrated <span class="filter-count">@CountByFeedback("unrated")</span>
+                </button>
+            </div>
         }
         else
         {
@@ -206,7 +221,7 @@
             <div class="results-grid">
                 @foreach (var item in filteredChanges)
                 {
-                    <div class="result-card">
+                    <div class="result-card @(item.Feedback == "Helpful" ? "card-liked" : "") @(item.Feedback is "FalsePositive" or "Irrelevant" ? "card-dismissed" : "")">
                         <div class="card-header">
                             <div class="card-title-row">
                                 <h3 class="job-title">@item.PortalName</h3>
@@ -323,6 +338,20 @@
                             <span class="detected-date" title="@item.DetectedAt.ToString("yyyy-MM-dd HH:mm")">
                                 @FormatRelativeDate(item.DetectedAt)
                             </span>
+                            <div class="feedback-buttons">
+                                <button class="feedback-btn liked @(item.Feedback == "Helpful" ? "active" : "")"
+                                        title="Helpful — good match"
+                                        disabled="@(feedbackSubmitting is not null)"
+                                        @onclick="@(() => SubmitFeedback(item.ChangeId, "Helpful"))">
+                                    👍
+                                </button>
+                                <button class="feedback-btn dismissed @(item.Feedback is "FalsePositive" or "Irrelevant" ? "active" : "")"
+                                        title="Not relevant — hide this"
+                                        disabled="@(feedbackSubmitting is not null)"
+                                        @onclick="@(() => SubmitFeedback(item.ChangeId, "Irrelevant"))">
+                                    👎
+                                </button>
+                            </div>
                             <a href="/changes/@item.ChangeId" class="detail-link">View details →</a>
                         </div>
                     </div>
@@ -346,6 +375,8 @@
     private List<MatchResult> allChanges = [];
     private List<MatchResult> filteredChanges = [];
     private string activeFilter = "all";
+    private string feedbackFilter = "all";
+    private string? feedbackSubmitting;
 
     protected override async Task OnInitializedAsync()
     {
@@ -412,7 +443,8 @@
                         Reason = c.RelevanceReason,
                         Recommendation = ExtractRecommendation(c.RelevanceReason, c.RelevanceScore),
                         Dimensions = ParseDimensions(c.MatchDimensionsJson),
-                        Listings = listings
+                        Listings = listings,
+                        Feedback = c.Feedback
                     });
                 }
             }
@@ -510,18 +542,69 @@
         ApplyFilter();
     }
 
+    private void SetFeedbackFilter(string filter)
+    {
+        feedbackFilter = filter;
+        ApplyFilter();
+    }
+
     private void ApplyFilter()
     {
-        filteredChanges = activeFilter switch
+        IEnumerable<MatchResult> results = activeFilter switch
         {
-            "high" => allChanges.Where(c => c.ScoreTier == "high").ToList(),
-            "medium" => allChanges.Where(c => c.ScoreTier == "medium").ToList(),
-            "low" => allChanges.Where(c => c.ScoreTier == "low").ToList(),
+            "high" => allChanges.Where(c => c.ScoreTier == "high"),
+            "medium" => allChanges.Where(c => c.ScoreTier == "medium"),
+            "low" => allChanges.Where(c => c.ScoreTier == "low"),
             _ => allChanges
+        };
+
+        filteredChanges = feedbackFilter switch
+        {
+            "liked" => results.Where(c => c.Feedback == "Helpful").ToList(),
+            "dismissed" => results.Where(c => c.Feedback is "FalsePositive" or "Irrelevant").ToList(),
+            "unrated" => results.Where(c => c.Feedback == "None").ToList(),
+            _ => results.ToList()
         };
     }
 
     private int CountByTier(string tier) => allChanges.Count(c => c.ScoreTier == tier);
+
+    private int CountByFeedback(string filter) => filter switch
+    {
+        "liked" => allChanges.Count(c => c.Feedback == "Helpful"),
+        "dismissed" => allChanges.Count(c => c.Feedback is "FalsePositive" or "Irrelevant"),
+        "unrated" => allChanges.Count(c => c.Feedback == "None"),
+        _ => allChanges.Count
+    };
+
+    private async Task SubmitFeedback(string changeId, string feedback)
+    {
+        if (feedbackSubmitting is not null) return;
+        feedbackSubmitting = changeId;
+        StateHasChanged();
+
+        try
+        {
+            var item = allChanges.FirstOrDefault(c => c.ChangeId == changeId);
+            if (item is null) return;
+
+            // Toggle: if same feedback already set, clear it
+            var newFeedback = item.Feedback == feedback ? "None" : feedback;
+
+            var response = await Http.PostAsJsonAsync($"/api/changes/{changeId}/feedback", new { Feedback = newFeedback, Note = (string?)null });
+            if (response.IsSuccessStatusCode)
+            {
+                item.Feedback = newFeedback;
+                ApplyFilter();
+            }
+        }
+        catch { }
+        finally
+        {
+            feedbackSubmitting = null;
+            StateHasChanged();
+        }
+    }
 
     private static string BuildHeadline(string summary, List<JobListingInfo> listings)
     {
@@ -721,6 +804,7 @@
         public string Recommendation { get; set; } = "REVIEW";
         public List<DimensionInfo> Dimensions { get; set; } = [];
         public List<JobListingInfo> Listings { get; set; } = [];
+        public string Feedback { get; set; } = "None";
 
         public string ScoreTier
         {

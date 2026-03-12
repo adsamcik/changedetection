@@ -39,6 +39,9 @@ public class ChangeListItemDto
 
     /// <summary>Structured extracted entities or listings for enriched result cards (JSON).</summary>
     public string? ExtractedEntitiesJson { get; set; }
+
+    /// <summary>User feedback status (None, Helpful, FalsePositive, Irrelevant, Missed).</summary>
+    public string Feedback { get; set; } = "None";
 }
 
 /// <summary>
@@ -91,6 +94,9 @@ public class ChangeDetailDto
 
     /// <summary>Structured extracted entities or listings for enriched displays (JSON).</summary>
     public string? ExtractedEntitiesJson { get; set; }
+
+    /// <summary>User feedback status (None, Helpful, FalsePositive, Irrelevant, Missed).</summary>
+    public string Feedback { get; set; } = "None";
 }
 
 /// <summary>
