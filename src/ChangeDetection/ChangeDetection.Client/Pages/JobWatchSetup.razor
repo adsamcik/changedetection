@@ -83,29 +83,43 @@
                 </div>
 
                 <div class="sidebar-section">
-                    <h3>How It Works</h3>
-                    <div class="how-it-works">
-                        <div class="step">
-                            <span class="step-num">1</span>
-                            <span>Define your candidate profile</span>
+                    @if (existingGroupId is not null)
+                    {
+                        <h3>Quick Links</h3>
+                        <div class="quick-links">
+                            <a href="/jobwatch/results" class="quick-link">📊 View Results Dashboard</a>
+                            <a href="/" class="quick-link">🏠 Back to Dashboard</a>
                         </div>
-                        <div class="step">
-                            <span class="step-num">2</span>
-                            <span>System creates watches for all portals</span>
+                        <p class="sidebar-hint" style="margin-top: 0.75rem;">
+                            Updating your profile automatically regenerates filter rules for all monitored portals.
+                        </p>
+                    }
+                    else
+                    {
+                        <h3>How It Works</h3>
+                        <div class="how-it-works">
+                            <div class="step">
+                                <span class="step-num">1</span>
+                                <span>Define your candidate profile</span>
+                            </div>
+                            <div class="step">
+                                <span class="step-num">2</span>
+                                <span>System creates watches for all portals</span>
+                            </div>
+                            <div class="step">
+                                <span class="step-num">3</span>
+                                <span>Each scan extracts new job listings</span>
+                            </div>
+                            <div class="step">
+                                <span class="step-num">4</span>
+                                <span>LLM validates matches against your profile</span>
+                            </div>
+                            <div class="step">
+                                <span class="step-num">5</span>
+                                <span>You get alerts only for qualified matches</span>
+                            </div>
                         </div>
-                        <div class="step">
-                            <span class="step-num">3</span>
-                            <span>Each scan extracts new job listings</span>
-                        </div>
-                        <div class="step">
-                            <span class="step-num">4</span>
-                            <span>LLM validates matches against your profile</span>
-                        </div>
-                        <div class="step">
-                            <span class="step-num">5</span>
-                            <span>You get alerts only for qualified matches</span>
-                        </div>
-                    </div>
+                    }
                 </div>
 
                 <div class="sidebar-section">
@@ -214,6 +228,8 @@
             {
                 existingGroupId = detail.Id;
                 profileJson = detail.AnalysisProfileJson;
+                // Auto-load portal list when editing existing group
+                await LoadPortals();
             }
         }
     }

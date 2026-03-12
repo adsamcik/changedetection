@@ -254,3 +254,26 @@
     justify-content: space-between;
     gap: var(--spacing-4, 1rem);
 }
+
+/* Quick Links (edit mode sidebar) */
+.quick-links {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2, 0.5rem);
+}
+
+.quick-link {
+    display: block;
+    padding: var(--spacing-2, 0.5rem) var(--spacing-3, 0.75rem);
+    background: var(--color-bg-secondary, #f8fafc);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 6px;
+    color: var(--color-text, #1e293b);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: background 0.15s;
+}
+
+.quick-link:hover {
+    background: var(--color-bg-hover, #f1f5f9);
+}

@@ -38,9 +38,45 @@
                 </p>
             </div>
             <div class="header-actions">
+                <button class="btn btn-outline btn-sm" @onclick="RunAllChecks" disabled="@isRunningChecks">
+                    @if (isRunningChecks)
+                    {
+                        <span class="spinner-sm"></span>
+                        <span>Checking @checksCompleted/@group.Members.Count...</span>
+                    }
+                    else
+                    {
+                        <span>▶ Run All Checks</span>
+                    }
+                </button>
                 <a href="/jobwatch/setup?groupId=@group.Id" class="btn btn-outline btn-sm">⚙️ Edit Profile</a>
             </div>
         </header>
+
+        @* Portal Health Status *@
+        <div class="portal-status-bar">
+            <span class="status-item status-ok" title="Active portals">
+                ✅ @group.Members.Count(m => !m.HasErrors) active
+            </span>
+            @{ var errorCount = group.Members.Count(m => m.HasErrors); }
+            @if (errorCount > 0)
+            {
+                <span class="status-item status-error" title="Portals with errors">
+                    ⚠️ @errorCount errors
+                </span>
+            }
+            @{ var unchecked_ = group.Members.Count(m => m.LastChecked == null); }
+            @if (unchecked_ > 0)
+            {
+                <span class="status-item status-pending" title="Portals not yet checked">
+                    ⏳ @unchecked_ pending
+                </span>
+            }
+            @if (!string.IsNullOrEmpty(checkStatusMessage))
+            {
+                <span class="status-item status-message">@checkStatusMessage</span>
+            }
+        </div>
 
         @if (!string.IsNullOrEmpty(errorMessage))
         {
@@ -129,7 +165,10 @@
 
 @code {
     private bool isLoading = true;
+    private bool isRunningChecks;
+    private int checksCompleted;
     private string? errorMessage;
+    private string? checkStatusMessage;
     private WatchGroupDetailDto? group;
     private List<MatchResult> allChanges = [];
     private List<MatchResult> filteredChanges = [];
@@ -210,6 +249,46 @@
 
         allChanges = results.OrderByDescending(r => r.Score ?? 0).ThenByDescending(r => r.DetectedAt).ToList();
         ApplyFilter();
+    }
+
+    private async Task RunAllChecks()
+    {
+        if (group is null || isRunningChecks) return;
+        isRunningChecks = true;
+        checksCompleted = 0;
+        checkStatusMessage = null;
+        StateHasChanged();
+
+        var errors = 0;
+        foreach (var member in group.Members)
+        {
+            try
+            {
+                await Http.PostAsync($"/api/watches/{member.WatchId}/check", null);
+            }
+            catch
+            {
+                errors++;
+            }
+            checksCompleted++;
+            StateHasChanged();
+        }
+
+        // Reload group status and changes
+        try
+        {
+            var response = await Http.GetAsync($"/api/groups/{group.Id}");
+            if (response.IsSuccessStatusCode)
+                group = await response.Content.ReadFromJsonAsync<WatchGroupDetailDto>();
+            await LoadChanges();
+        }
+        catch { }
+
+        checkStatusMessage = errors > 0
+            ? $"Checks complete — {errors} portal(s) had errors"
+            : "All checks complete";
+        isRunningChecks = false;
+        StateHasChanged();
     }
 
     private void SetFilter(string filter)

@@ -25,6 +25,50 @@
 
 .header-actions {
     flex-shrink: 0;
+    display: flex;
+    gap: var(--spacing-2, 0.5rem);
+    align-items: center;
+}
+
+/* Portal Status Bar */
+.portal-status-bar {
+    display: flex;
+    gap: var(--spacing-4, 1rem);
+    align-items: center;
+    padding: var(--spacing-3, 0.75rem) var(--spacing-4, 1rem);
+    background: var(--color-bg-secondary, #f8fafc);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 8px;
+    margin-bottom: var(--spacing-4, 1rem);
+    font-size: 0.875rem;
+}
+
+.status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1, 0.25rem);
+}
+
+.status-ok { color: var(--color-success, #059669); }
+.status-error {
+    color: white;
+    background: var(--color-error, #dc2626);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+.status-pending { color: var(--color-warning, #d97706); }
+.status-message { color: var(--color-text-muted, #475569); font-style: italic; }
+
+.spinner-sm {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-border, #e2e8f0);
+    border-top-color: var(--color-primary, #0d9488);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 4px;
 }
 
 /* Loading */
