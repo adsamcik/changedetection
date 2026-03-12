@@ -61,7 +61,8 @@ public class CopilotChatCompletionService : IChatCompletionService
         {
             Model = _model,
             Streaming = false,
-            InfiniteSessions = new InfiniteSessionConfig { Enabled = false }
+            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
+            OnPermissionRequest = PermissionHandler.ApproveAll
         });
 
         var sessionId = session.SessionId;
@@ -138,7 +139,8 @@ public class CopilotChatCompletionService : IChatCompletionService
         {
             Model = _model,
             Streaming = true,
-            InfiniteSessions = new InfiniteSessionConfig { Enabled = false }
+            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
+            OnPermissionRequest = PermissionHandler.ApproveAll
         });
 
         var sessionId = session.SessionId;
