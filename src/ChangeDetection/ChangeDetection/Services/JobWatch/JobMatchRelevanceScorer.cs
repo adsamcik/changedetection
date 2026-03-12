@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -40,11 +41,13 @@ public class JobMatchRelevanceScorer(
         CancellationToken ct)
     {
         var changeSummary = semanticSummary ?? request.DiffContent[..Math.Min(1000, request.DiffContent.Length)];
+        var diffExcerpt = request.DiffContent[..Math.Min(4000, request.DiffContent.Length)];
         var sanitizedProfile = SanitizeProfileForPrompt(request.AnalysisProfileJson!);
 
         var prompt = $$"""
             You are evaluating a detected change against a structured candidate/matching profile.
-            Score how well this change matches the profile criteria across multiple dimensions.
+            Score how well this change matches the profile criteria across multiple dimensions,
+            and extract any newly listed job positions visible in the change.
 
             ## Monitoring Goal
             {{request.UserIntent ?? "Monitor for relevant changes"}}
@@ -55,7 +58,13 @@ public class JobMatchRelevanceScorer(
             </profile_data>
 
             ## Detected Change
+            Summary:
             {{changeSummary}}
+
+            Raw diff excerpt:
+            <diff_excerpt>
+            {{diffExcerpt}}
+            </diff_excerpt>
 
             Evaluate each applicable dimension from the profile against the change content.
             For each dimension, assign a status: PASS (meets criteria), FAIL (does not meet), 
@@ -71,6 +80,20 @@ public class JobMatchRelevanceScorer(
             - language: Can the profile holder work in the required language?
             - dealbreakers: Does anything in the change trigger a dealbreaker from the profile?
 
+            Extract only positions that appear to be newly added or newly visible in this detected change.
+            If the diff is ambiguous, include only listings you can support from the provided content.
+            For each extracted listing, capture:
+            - title
+            - company (department, institute, or employer if present)
+            - location
+            - deadline (ISO date yyyy-MM-dd when possible, otherwise original string or null)
+            - education_required
+            - key_skills (array)
+            - url (absolute or relative URL if present)
+            - match_assessment (short verdict such as "PASS - strong fit", "REVIEW - partial fit", "SKIP - missing core requirement")
+
+            If no listings are found, return an empty extracted_listings array.
+
             Respond in JSON format:
             {
                 "score": 0.0-1.0 (overall match quality: 1.0 = perfect match on all dimensions),
@@ -83,14 +106,26 @@ public class JobMatchRelevanceScorer(
                     }
                 },
                 "recommendation": "APPLY|REVIEW|SKIP — actionable one-word recommendation",
-                "urgency_note": "Any deadline or urgency information found, or null"
+                "urgency_note": "Any deadline or urgency information found, or null",
+                "extracted_listings": [
+                    {
+                        "title": "Laboratory Assistant",
+                        "company": "Department of Drug Design and Pharmacology",
+                        "location": "Copenhagen",
+                        "deadline": "2026-03-13",
+                        "education_required": "BSc",
+                        "key_skills": ["cell culture", "PCR"],
+                        "url": "/all-vacancies/?show=157081",
+                        "match_assessment": "PASS - all requirements met"
+                    }
+                ]
             }
             """;
 
         var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
         {
             Temperature = 0.2f,
-            MaxTokens = 1024,
+            MaxTokens = 2048,
             ExpectJson = true,
             UsageType = LlmUsageType.RelevanceScoring,
             WatchedSiteId = request.WatchId
@@ -104,7 +139,7 @@ public class JobMatchRelevanceScorer(
             json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
         if (result is null)
-            return new ProfileRelevanceResult(0.5f, "Profile relevance parsing failed", null);
+            return new ProfileRelevanceResult(0.5f, "Profile relevance parsing failed", null, null);
 
         var score = Math.Clamp(result.Score, 0f, 1f);
         var reason = result.Reason ?? "Profile match evaluated";
@@ -117,7 +152,17 @@ public class JobMatchRelevanceScorer(
             ? JsonSerializer.Serialize(result.Dimensions, new JsonSerializerOptions { WriteIndented = false })
             : null;
 
-        return new ProfileRelevanceResult(score, reason, dimensionsJson);
+        var extractedListingsJson = result.ExtractedListings?.Count > 0
+            ? JsonSerializer.Serialize(result.ExtractedListings)
+            : null;
+
+        logger.LogDebug(
+            "Scored job watch change for watch {WatchId} with recommendation {Recommendation} and {ListingCount} extracted listings",
+            request.WatchId,
+            result.Recommendation,
+            result.ExtractedListings?.Count ?? 0);
+
+        return new ProfileRelevanceResult(score, reason, dimensionsJson, extractedListingsJson);
     }
 
     #region Profile Sanitization
@@ -222,7 +267,12 @@ public class JobMatchRelevanceScorer(
         public string? Reason { get; set; }
         public Dictionary<string, ProfileDimensionScore>? Dimensions { get; set; }
         public string? Recommendation { get; set; }
+
+        [JsonPropertyName("urgency_note")]
         public string? UrgencyNote { get; set; }
+
+        [JsonPropertyName("extracted_listings")]
+        public List<ExtractedJobListing>? ExtractedListings { get; set; }
     }
 
     private class ProfileDimensionScore
@@ -230,6 +280,33 @@ public class JobMatchRelevanceScorer(
         public float Score { get; set; }
         public string? Status { get; set; }
         public string? Reason { get; set; }
+    }
+
+    private class ExtractedJobListing
+    {
+        [JsonPropertyName("title")]
+        public string? Title { get; set; }
+
+        [JsonPropertyName("company")]
+        public string? Company { get; set; }
+
+        [JsonPropertyName("location")]
+        public string? Location { get; set; }
+
+        [JsonPropertyName("deadline")]
+        public string? Deadline { get; set; }
+
+        [JsonPropertyName("education_required")]
+        public string? EducationRequired { get; set; }
+
+        [JsonPropertyName("key_skills")]
+        public List<string>? KeySkills { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("match_assessment")]
+        public string? MatchAssessment { get; set; }
     }
 
     #endregion
