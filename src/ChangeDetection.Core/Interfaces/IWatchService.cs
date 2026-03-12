@@ -40,6 +40,16 @@ public class CreateWatchRequest
     public string? Description { get; set; }
     
     /// <summary>
+    /// User's original monitoring intent for relevance scoring.
+    /// </summary>
+    public string? UserIntent { get; set; }
+
+    /// <summary>
+    /// Optional group membership for aggregate monitoring.
+    /// </summary>
+    public Guid? GroupId { get; set; }
+    
+    /// <summary>
     /// Schedule settings for check frequency control.
     /// If null, defaults to fixed mode with the specified CheckInterval.
     /// </summary>

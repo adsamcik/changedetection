@@ -22,5 +22,6 @@ public class WatchGroupCreateRequest
     public string? Description { get; set; }
     public string? Icon { get; set; }
     public string? UserIntent { get; set; }
+    public string? AnalysisProfileJson { get; set; }
     public List<string> Tags { get; set; } = [];
 }

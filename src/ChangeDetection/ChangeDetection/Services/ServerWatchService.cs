@@ -108,6 +108,8 @@ public class ServerWatchService : IWatchService
             TagColors = request.TagColors ?? [],
             CategoryId = request.CategoryId,
             Description = request.Description,
+            UserIntent = request.UserIntent,
+            GroupId = request.GroupId,
             LlmProviderOverride = request.LlmProviderOverride,
             FetchSettings = request.FetchSettings ?? new FetchSettings
             {

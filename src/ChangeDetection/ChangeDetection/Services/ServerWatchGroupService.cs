@@ -27,6 +27,7 @@ public class ServerWatchGroupService(
             Description = request.Description?.Trim(),
             Icon = request.Icon,
             UserIntent = request.UserIntent,
+            AnalysisProfileJson = request.AnalysisProfileJson,
             Tags = request.Tags
         };
         await groupRepo.InsertAsync(group, ct);

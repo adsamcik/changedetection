@@ -17,6 +17,7 @@ using ChangeDetection.Services.Persistence;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.Scraping;
 using ChangeDetection.Services.SetupPipeline;
+using ChangeDetection.Services.JobWatch;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
@@ -373,6 +374,7 @@ builder.Services.AddScoped<IObjectDiffService, ObjectDiffService>();
 builder.Services.AddScoped<IFilterEvaluationService, FilterEvaluationService>();
 builder.Services.AddScoped<IErrorResolutionService, ErrorResolutionService>();
 builder.Services.AddSingleton<IProfileFilterRuleGenerator, ProfileFilterRuleGenerator>();
+builder.Services.AddScoped<JobWatchSeeder>();
 
 // Auto-healing services
 builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();
@@ -502,6 +504,9 @@ app.MapGroup("/api/feeds")
 app.MapGroup("/api/health")
     .RequireAdminInSsoMode(builder.Configuration)
     .MapDatabaseHealthEndpoints();
+
+// Job Watch feature
+app.MapJobWatchEndpoints();
 
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
