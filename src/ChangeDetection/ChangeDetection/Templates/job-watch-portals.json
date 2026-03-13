@@ -60,23 +60,25 @@
       "id": "watch-novonesis",
       "name": "Novonesis Careers Denmark",
       "description": "R&D/lab roles at Novonesis Denmark",
-      "url": "https://www.novonesis.com/en/careers/jobs?location=Denmark",
+      "url": "https://novozymes.wd103.myworkdayjobs.com/en-US/Novonesis_Careers",
       "tier": "tier-1",
       "checkIntervalHours": 24,
       "extraTags": ["denmark", "biotech"],
       "fetchSettings": {
         "useJavaScript": true,
-        "timeoutSeconds": 45,
-        "waitAfterLoadMs": 3000
+        "timeoutSeconds": 60,
+        "waitAfterLoadMs": 5000,
+        "waitForSelector": "[data-automation-id='jobResults']"
       },
       "schema": {
-        "itemSelector": ".job-card, .job-list-item, article.job",
+        "itemSelector": "[data-automation-id='jobResults'] li",
         "fields": [
-          { "name": "title", "selector": ".job-title, h3, h2 a", "type": "String", "isRequired": true, "isIdentityField": true },
-          { "name": "url", "selector": "a.job-title, a.job-link, h3 a", "type": "Url", "isRequired": true },
-          { "name": "location", "selector": ".job-location, .location", "type": "String" }
+          { "name": "title", "selector": "a[data-automation-id='jobTitle']", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a[data-automation-id='jobTitle']", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": "dd.css-129m7dg, [data-automation-id='locations'] dd, dd", "type": "String" }
         ],
-        "identityFields": ["title"]
+        "identityFields": ["title"],
+        "_notes": "Old URL novonesis.com/en/careers/jobs?location=Denmark was a frontend wrapper that ignored the location param and showed 140 global results. Backend is Workday (wd103). Switched to direct Workday URL. Selectors use data-automation-id attributes which are stable across Workday versions. Location selector has fallbacks — dd class names change per Workday release. Shows all Novonesis positions; geographic filtering handled by profile target_locations rules."
       }
     },
     {

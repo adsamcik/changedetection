@@ -128,7 +128,7 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                         {
                             FieldName = "title",
                             Operator = FilterOperator.Regex,
-                            Value = @"(?i)\bPh\.?D\.?\b\s*(fellowship|position|student|stipend|scholarship)"
+                            Value = @"(?i)\bPh\.?D\.?\b\s*(fellowship|position|student|stipend|scholarship|project|program)"
                         }
                     ],
                     Actions =

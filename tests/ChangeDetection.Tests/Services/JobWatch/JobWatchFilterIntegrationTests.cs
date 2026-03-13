@@ -23,7 +23,7 @@ public class JobWatchFilterIntegrationTests : TestBase
             "techniques_strong": ["PCR", "qPCR", "cell culture", "ELISA", "flow cytometry", "western blot"],
             "techniques_basic": ["CRISPR", "protein expression"],
             "techniques_none": ["organoid culture", "mass spectrometry", "NGS library prep", "animal models"],
-            "target_locations": ["Prague", "Copenhagen", "Lyngby", "Bagsværd", "Malmö", "Lund"],
+            "target_locations": ["Prague", "Copenhagen", "Lyngby", "Bagsværd", "Måløv", "Hørsholm", "Gentofte", "Kvistgaard", "Malmö", "Lund"],
             "languages": { "Czech": "native", "English": "C1", "German": "basic" },
             "salary_floor": { "prague_czk": 50000, "copenhagen_dkk": 30000 },
             "dealbreakers": ["SOTIO", "animal-heavy work"],
@@ -151,6 +151,33 @@ public class JobWatchFilterIntegrationTests : TestBase
         var fields = new Dictionary<string, string?> { ["location"] = "Lyngby, Denmark" };
         var conditionMet = EvaluateConditions(locationRule, fields);
         conditionMet.ShouldBeFalse("Lyngby is in target locations, rule should NOT fire");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task TargetLocation_Maloev_PassesFilter()
+    {
+        var rules = _ruleGen.GenerateRules(CandidateProfile);
+        var locationRule = rules.First(r => r.Name.Contains("Location"));
+
+        // Novo Nordisk uses suburb names like "Måløv, Capital Region of Denmark, DK"
+        var fields = new Dictionary<string, string?> { ["location"] = "Måløv, Capital Region of Denmark, DK" };
+        var conditionMet = EvaluateConditions(locationRule, fields);
+        conditionMet.ShouldBeFalse("Måløv is a Copenhagen suburb in target locations, rule should NOT fire");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task TargetLocation_Hoersholm_PassesFilter()
+    {
+        var rules = _ruleGen.GenerateRules(CandidateProfile);
+        var locationRule = rules.First(r => r.Name.Contains("Location"));
+
+        var fields = new Dictionary<string, string?> { ["location"] = "Hørsholm, Capital Region of Denmark, DK" };
+        var conditionMet = EvaluateConditions(locationRule, fields);
+        conditionMet.ShouldBeFalse("Hørsholm is a Copenhagen suburb in target locations, rule should NOT fire");
 
         await Task.CompletedTask;
     }

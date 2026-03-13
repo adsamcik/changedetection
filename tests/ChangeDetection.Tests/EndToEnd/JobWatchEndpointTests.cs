@@ -24,7 +24,7 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
             "techniques_strong": ["PCR", "qPCR", "cell culture", "ELISA", "flow cytometry"],
             "techniques_basic": ["CRISPR"],
             "techniques_none": ["organoid culture", "mass spectrometry", "NGS library prep"],
-            "target_locations": ["Prague", "Copenhagen", "Lyngby", "Bagsværd", "Malmö", "Lund"],
+            "target_locations": ["Prague", "Copenhagen", "Lyngby", "Bagsværd", "Måløv", "Hørsholm", "Gentofte", "Kvistgaard", "Malmö", "Lund"],
             "languages": { "Czech": "native", "English": "C1" },
             "salary_floor": { "prague_czk": 50000, "copenhagen_dkk": 30000 },
             "dealbreakers": ["SOTIO", "animal-heavy work"],
@@ -284,7 +284,7 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
         fetched.AnalysisProfileJson.ShouldNotBeNullOrWhiteSpace();
 
         var profile = JsonDocument.Parse(fetched.AnalysisProfileJson!).RootElement;
-        profile.GetProperty("target_locations").GetArrayLength().ShouldBe(6);
+        profile.GetProperty("target_locations").GetArrayLength().ShouldBe(10);
     }
 
     #endregion
