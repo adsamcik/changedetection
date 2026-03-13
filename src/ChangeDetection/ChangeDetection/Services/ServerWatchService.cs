@@ -579,6 +579,7 @@ public class ServerWatchService : IWatchService
                                 changeEvent.MatchDimensionsJson,
                                 ExtractRecommendation(changeEvent.RelevanceReason),
                                 changeEvent.Id,
+                                watch.Schema?.IdentityFieldNames,
                                 ct);
 
                             if (trackingResult.NewItems.Count > 0 || trackingResult.ConfirmedExpired.Count > 0)

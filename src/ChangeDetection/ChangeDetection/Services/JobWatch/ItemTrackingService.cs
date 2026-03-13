@@ -5,18 +5,17 @@ using ChangeDetection.Core.Interfaces;
 namespace ChangeDetection.Services.JobWatch;
 
 /// <summary>
-/// Tracks items through their lifecycle and handles cross-portal deduplication.
-/// Uses identity keys from the extraction schema to match items across sources.
+/// Tracks items through their lifecycle and handles cross-source deduplication.
+/// All field mapping, identity key building, and absence thresholds are driven
+/// by TrackingConfig from the WatchGroup — no hard-coded domain assumptions.
 /// </summary>
 public class ItemTrackingService(
     IRepository<TrackedItem> itemRepo,
+    IRepository<WatchGroup> groupRepo,
     IAlertPolicyService alertPolicy,
     ILogger<ItemTrackingService> logger) : IItemTrackingService
 {
-    /// <summary>
-    /// Required number of consecutive absences before confirming a listing as expired.
-    /// </summary>
-    private const int AbsenceThreshold = 2;
+    private static readonly TrackingConfig DefaultConfig = TrackingConfig.ForJobs();
 
     public async Task<ItemTrackingResult> ProcessDiffAsync(
         Guid watchGroupId,
@@ -28,7 +27,8 @@ public class ItemTrackingService(
         CancellationToken ct)
     {
         return await ProcessDiffAsync(watchGroupId, sourceWatchId, ownerId,
-            diffResult, matchDimensionsJson, recommendation, changeEventId: null, ct);
+            diffResult, matchDimensionsJson, recommendation,
+            changeEventId: null, schemaIdentityFields: null, ct);
     }
 
     public async Task<ItemTrackingResult> ProcessDiffAsync(
@@ -39,8 +39,10 @@ public class ItemTrackingService(
         string? matchDimensionsJson,
         string? recommendation,
         Guid? changeEventId,
+        IReadOnlyList<string>? schemaIdentityFields,
         CancellationToken ct)
     {
+        var config = await ResolveConfigAsync(watchGroupId, ct);
         var result = new ItemTrackingResult();
         var existing = await GetItemsAsync(watchGroupId, ct);
         var existingByKey = existing.ToDictionary(l => l.IdentityKey, StringComparer.OrdinalIgnoreCase);
@@ -48,12 +50,12 @@ public class ItemTrackingService(
         // Process added items
         foreach (var added in diffResult.AddedItems)
         {
-            var identityKey = BuildIdentityKey(added);
+            var identityKey = BuildIdentityKey(added, schemaIdentityFields, config);
             if (string.IsNullOrWhiteSpace(identityKey)) continue;
 
             if (existingByKey.TryGetValue(identityKey, out var existingItem))
             {
-                // Cross-portal dedup — same item found from another watch
+                // Cross-source dedup — same item found from another watch
                 if (existingItem.SourceWatchId != sourceWatchId &&
                     !existingItem.AdditionalSourceWatchIds.Contains(sourceWatchId))
                 {
@@ -72,8 +74,8 @@ public class ItemTrackingService(
                 continue;
             }
 
-            var deadline = ParseDeadline(added);
-            var policyResult = alertPolicy.Evaluate(matchDimensionsJson, recommendation, deadline);
+            var deadline = ParseDeadline(added, config);
+            var policyResult = alertPolicy.Evaluate(matchDimensionsJson, recommendation, deadline, config);
 
             var item = new TrackedItem
             {
@@ -81,15 +83,18 @@ public class ItemTrackingService(
                 WatchGroupId = watchGroupId,
                 SourceWatchId = sourceWatchId,
                 IdentityKey = identityKey,
-                DisplayName = GetFieldValue(added, "title"),
-                DisplaySecondary = GetFieldValue(added, "company"),
-                DisplayContext = GetFieldValue(added, "location"),
-                Url = GetFieldValue(added, "url"),
+                DisplayName = GetFieldValue(added, config.DisplayNameField),
+                DisplaySecondary = config.DisplaySecondaryField is not null
+                    ? GetFieldValue(added, config.DisplaySecondaryField) : null,
+                DisplayContext = config.DisplayContextField is not null
+                    ? GetFieldValue(added, config.DisplayContextField) : null,
+                Url = GetFieldValue(added, config.UrlField),
                 Deadline = deadline,
                 State = TrackedItemState.New,
                 AlertLevel = policyResult.AlertLevel,
                 MatchDimensionsJson = matchDimensionsJson,
                 Recommendation = recommendation,
+                ItemType = config.ItemType,
                 OriginChangeEventId = changeEventId,
                 ExtractedDataJson = JsonSerializer.Serialize(added.Fields)
             };
@@ -98,14 +103,14 @@ public class ItemTrackingService(
             result.NewItems.Add(item);
 
             logger.LogDebug(
-                "New item tracked: {DisplayName} at {DisplaySecondary} — {AlertLevel}",
-                item.DisplayName, item.DisplaySecondary, item.AlertLevel);
+                "New {ItemType} tracked: {DisplayName} — {AlertLevel}",
+                config.ItemType, item.DisplayName, item.AlertLevel);
         }
 
         // Process removed items
         foreach (var removed in diffResult.RemovedItems)
         {
-            var identityKey = BuildIdentityKey(removed);
+            var identityKey = BuildIdentityKey(removed, schemaIdentityFields, config);
             if (string.IsNullOrWhiteSpace(identityKey)) continue;
 
             if (!existingByKey.TryGetValue(identityKey, out var trackedItem)) continue;
@@ -113,19 +118,20 @@ public class ItemTrackingService(
 
             trackedItem.ConsecutiveAbsences++;
 
-            if (trackedItem.ConsecutiveAbsences >= AbsenceThreshold)
+            if (trackedItem.ConsecutiveAbsences >= config.AbsenceThreshold)
             {
                 trackedItem.State = TrackedItemState.Expired;
-                trackedItem.ExpiryReason = Core.Entities.ExpiryReason.RemovedFromSource;
+                trackedItem.ExpiryReason = ExpiryReason.RemovedFromSource;
                 trackedItem.StateChangedAt = DateTime.UtcNow;
                 result.ConfirmedExpired.Add(trackedItem);
-                logger.LogInformation("Item confirmed expired (removed from source): {DisplayName} at {DisplaySecondary}",
-                    trackedItem.DisplayName, trackedItem.DisplaySecondary);
+                logger.LogInformation("Item confirmed expired (removed from source): {DisplayName}",
+                    trackedItem.DisplayName);
             }
             else
             {
                 result.PotentiallyExpired.Add(trackedItem);
-                logger.LogDebug("Item absent ({Count}x): {DisplayName}", trackedItem.ConsecutiveAbsences, trackedItem.DisplayName);
+                logger.LogDebug("Item absent ({Count}/{Threshold}): {DisplayName}",
+                    trackedItem.ConsecutiveAbsences, config.AbsenceThreshold, trackedItem.DisplayName);
             }
 
             await itemRepo.UpdateAsync(trackedItem, ct);
@@ -148,51 +154,51 @@ public class ItemTrackingService(
         return results.ToList();
     }
 
-    public async Task<bool> TransitionStateAsync(Guid listingId, TrackedItemState newState, string? reason, CancellationToken ct)
+    public async Task<bool> TransitionStateAsync(Guid itemId, TrackedItemState newState, string? reason, CancellationToken ct)
     {
-        var listing = await itemRepo.GetByIdAsync(listingId, ct);
-        if (listing is null) return false;
+        var item = await itemRepo.GetByIdAsync(itemId, ct);
+        if (item is null) return false;
 
-        if (!IsValidTransition(listing.State, newState))
+        if (!IsValidTransition(item.State, newState))
         {
-            logger.LogWarning("Invalid state transition {From}→{To} for item {Id}", listing.State, newState, listingId);
+            logger.LogWarning("Invalid state transition {From}→{To} for item {Id}", item.State, newState, itemId);
             return false;
         }
 
-        listing.State = newState;
-        listing.StateChangedAt = DateTime.UtcNow;
+        item.State = newState;
+        item.StateChangedAt = DateTime.UtcNow;
 
         switch (newState)
         {
             case TrackedItemState.Alerted:
-                listing.AlertedAt = DateTime.UtcNow;
+                item.AlertedAt = DateTime.UtcNow;
                 break;
             case TrackedItemState.Seen:
-                listing.SeenAt = DateTime.UtcNow;
+                item.SeenAt = DateTime.UtcNow;
                 break;
             case TrackedItemState.Dismissed:
-                listing.DismissalReason = reason;
+                item.DismissalReason = reason;
                 break;
             case TrackedItemState.Expired:
-                listing.ExpiryReason ??= Core.Entities.ExpiryReason.Manual;
+                item.ExpiryReason ??= ExpiryReason.Manual;
                 break;
         }
 
-        await itemRepo.UpdateAsync(listing, ct);
+        await itemRepo.UpdateAsync(item, ct);
         return true;
     }
 
-    public async Task MarkAsSeenAsync(Guid listingId, CancellationToken ct)
+    public async Task MarkAsSeenAsync(Guid itemId, CancellationToken ct)
     {
-        var listing = await itemRepo.GetByIdAsync(listingId, ct);
-        if (listing is null) return;
+        var item = await itemRepo.GetByIdAsync(itemId, ct);
+        if (item is null) return;
 
-        if (listing.State is TrackedItemState.New or TrackedItemState.Alerted)
+        if (item.State is TrackedItemState.New or TrackedItemState.Alerted)
         {
-            listing.State = TrackedItemState.Seen;
-            listing.SeenAt = DateTime.UtcNow;
-            listing.StateChangedAt = DateTime.UtcNow;
-            await itemRepo.UpdateAsync(listing, ct);
+            item.State = TrackedItemState.Seen;
+            item.SeenAt = DateTime.UtcNow;
+            item.StateChangedAt = DateTime.UtcNow;
+            await itemRepo.UpdateAsync(item, ct);
         }
     }
 
@@ -206,14 +212,14 @@ public class ItemTrackingService(
         var expiredCount = 0;
         var now = DateTime.UtcNow.Date;
 
-        foreach (var listing in active)
+        foreach (var item in active)
         {
-            if (listing.Deadline is null || listing.Deadline.Value.Date >= now) continue;
+            if (item.Deadline is null || item.Deadline.Value.Date >= now) continue;
 
-            listing.State = TrackedItemState.Expired;
-            listing.ExpiryReason = Core.Entities.ExpiryReason.DeadlinePassed;
-            listing.StateChangedAt = DateTime.UtcNow;
-            await itemRepo.UpdateAsync(listing, ct);
+            item.State = TrackedItemState.Expired;
+            item.ExpiryReason = ExpiryReason.DeadlinePassed;
+            item.StateChangedAt = DateTime.UtcNow;
+            await itemRepo.UpdateAsync(item, ct);
             expiredCount++;
         }
 
@@ -221,6 +227,12 @@ public class ItemTrackingService(
             logger.LogInformation("Expired {Count} items with passed deadlines in group {GroupId}", expiredCount, watchGroupId);
 
         return expiredCount;
+    }
+
+    private async Task<TrackingConfig> ResolveConfigAsync(Guid watchGroupId, CancellationToken ct)
+    {
+        var group = await groupRepo.GetByIdAsync(watchGroupId, ct);
+        return group?.TrackingConfig ?? DefaultConfig;
     }
 
     private static bool IsValidTransition(TrackedItemState from, TrackedItemState to) => (from, to) switch
@@ -239,11 +251,35 @@ public class ItemTrackingService(
         _ => false
     };
 
-    private static string BuildIdentityKey(ExtractedObject obj)
+    /// <summary>
+    /// Builds identity key using schema identity fields when available,
+    /// falling back to TrackingConfig display fields, then to the object's own IdentityKey.
+    /// </summary>
+    private static string BuildIdentityKey(
+        ExtractedObject obj,
+        IReadOnlyList<string>? schemaIdentityFields,
+        TrackingConfig config)
     {
-        var title = GetFieldValue(obj, "title") ?? "";
-        var company = GetFieldValue(obj, "company") ?? "";
-        return $"{title.Trim().ToLowerInvariant()}|{company.Trim().ToLowerInvariant()}";
+        // Priority 1: Use the object's pre-computed identity key from ObjectDiffService
+        if (!string.IsNullOrWhiteSpace(obj.IdentityKey))
+            return obj.IdentityKey.Trim().ToLowerInvariant();
+
+        // Priority 2: Use schema-defined identity fields
+        if (schemaIdentityFields is { Count: > 0 })
+        {
+            var parts = schemaIdentityFields
+                .Select(f => (GetFieldValue(obj, f) ?? "").Trim().ToLowerInvariant())
+                .Where(p => p.Length > 0);
+            var key = string.Join("|", parts);
+            if (key.Length > 0) return key;
+        }
+
+        // Priority 3: Build from config display fields
+        var name = (GetFieldValue(obj, config.DisplayNameField) ?? "").Trim().ToLowerInvariant();
+        var secondary = config.DisplaySecondaryField is not null
+            ? (GetFieldValue(obj, config.DisplaySecondaryField) ?? "").Trim().ToLowerInvariant()
+            : "";
+        return secondary.Length > 0 ? $"{name}|{secondary}" : name;
     }
 
     private static string? GetFieldValue(ExtractedObject obj, string fieldName)
@@ -251,9 +287,10 @@ public class ItemTrackingService(
         return obj.Fields.TryGetValue(fieldName, out var value) ? value : null;
     }
 
-    private static DateTime? ParseDeadline(ExtractedObject obj)
+    private static DateTime? ParseDeadline(ExtractedObject obj, TrackingConfig config)
     {
-        var deadlineStr = GetFieldValue(obj, "deadline");
+        if (config.DeadlineField is null) return null;
+        var deadlineStr = GetFieldValue(obj, config.DeadlineField);
         if (string.IsNullOrWhiteSpace(deadlineStr)) return null;
         return DateTime.TryParse(deadlineStr, out var parsed) ? parsed : null;
     }

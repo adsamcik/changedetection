@@ -4,15 +4,19 @@ namespace ChangeDetection.Core.Interfaces;
 
 /// <summary>
 /// Evaluates LLM scoring dimensions to determine the appropriate alert level
-/// for a tracked item. Maps PASS/FAIL/STRETCH/UNKNOWN across all dimensions
-/// to HIGH/MEDIUM/SILENT/INFO alert levels.
+/// for a tracked item. Hard-fail dimensions are configurable via TrackingConfig.
 /// </summary>
 public interface IAlertPolicyService
 {
     /// <summary>
-    /// Evaluate dimensions from a profile relevance result to determine alert level.
+    /// Evaluate dimensions to determine alert level.
+    /// Uses hardFailDimensions from TrackingConfig when provided, otherwise defaults.
     /// </summary>
-    AlertPolicyResult Evaluate(string? dimensionsJson, string? recommendation, DateTime? deadline = null);
+    AlertPolicyResult Evaluate(
+        string? dimensionsJson,
+        string? recommendation,
+        DateTime? deadline = null,
+        TrackingConfig? config = null);
 
     /// <summary>
     /// Determine the alert level for a removed item (stale detection).

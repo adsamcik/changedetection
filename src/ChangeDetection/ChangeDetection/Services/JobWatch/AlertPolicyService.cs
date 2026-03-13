@@ -5,17 +5,25 @@ using ChangeDetection.Core.Interfaces;
 namespace ChangeDetection.Services.JobWatch;
 
 /// <summary>
-/// Maps LLM dimension scores to job alert levels.
+/// Maps LLM dimension scores to alert levels.
 /// Logic: All PASS → HIGH, any STRETCH → MEDIUM, any hard FAIL → SILENT.
-/// Deadline urgency can escalate MEDIUM → HIGH or add URGENT flags.
+/// Hard-fail dimensions are configurable via TrackingConfig per domain.
 /// </summary>
 public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPolicyService
 {
-    private static readonly HashSet<string> HardFailDimensions =
+    private static readonly HashSet<string> DefaultHardFailDimensions =
         ["education", "dealbreakers", "location"];
 
-    public AlertPolicyResult Evaluate(string? dimensionsJson, string? recommendation, DateTime? deadline = null)
+    public AlertPolicyResult Evaluate(
+        string? dimensionsJson,
+        string? recommendation,
+        DateTime? deadline = null,
+        TrackingConfig? config = null)
     {
+        var hardFailDims = config?.HardFailDimensions is { Count: > 0 }
+            ? new HashSet<string>(config.HardFailDimensions, StringComparer.OrdinalIgnoreCase)
+            : DefaultHardFailDimensions;
+
         if (string.IsNullOrWhiteSpace(dimensionsJson))
         {
             return new AlertPolicyResult
@@ -53,7 +61,7 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
             switch (dim.Status?.ToUpperInvariant())
             {
                 case "FAIL":
-                    if (HardFailDimensions.Contains(name))
+                    if (hardFailDims.Contains(name))
                     {
                         hasHardFail = true;
                         failReasons.Add($"{name}: {dim.Reason ?? "failed"}");

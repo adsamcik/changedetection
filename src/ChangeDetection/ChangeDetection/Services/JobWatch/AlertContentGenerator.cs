@@ -29,7 +29,8 @@ public class AlertContentGenerator : IAlertContentGenerator
     public AlertContent Generate(TrackedItem item, AlertPolicyResult policyResult)
     {
         var levelEmoji = LevelEmojis.GetValueOrDefault(policyResult.AlertLevel, "⚪");
-        var summary = $"{levelEmoji} {item.DisplayName} at {item.DisplaySecondary}";
+        var secondary = item.DisplaySecondary is not null ? $" — {item.DisplaySecondary}" : "";
+        var summary = $"{levelEmoji} {item.DisplayName}{secondary}";
 
         var plainText = GeneratePlainText(item, policyResult, levelEmoji);
         var html = GenerateHtml(item, policyResult, levelEmoji);
@@ -47,16 +48,13 @@ public class AlertContentGenerator : IAlertContentGenerator
     {
         var sb = new StringBuilder();
 
-        var label = policyResult.AlertLevel switch
-        {
-            AlertLevel.High => "NEW MATCH",
-            AlertLevel.Medium => "WORTH REVIEWING",
-            AlertLevel.Info => "STATUS UPDATE",
-            _ => "LOGGED"
-        };
+        var label = GetAlertLabel(policyResult.AlertLevel, item.ItemType);
+        var secondary = item.DisplaySecondary is not null ? $" — {item.DisplaySecondary}" : "";
 
-        sb.AppendLine($"{levelEmoji} {label}: {item.DisplayName} at {item.DisplaySecondary}");
-        sb.AppendLine($"Location: {item.DisplayContext ?? "Not specified"}");
+        sb.AppendLine($"{levelEmoji} {label}: {item.DisplayName}{secondary}");
+
+        if (item.DisplayContext is not null)
+            sb.AppendLine($"{GetContextLabel(item.ItemType)}: {item.DisplayContext}");
 
         if (item.Deadline.HasValue)
             sb.AppendLine($"Deadline: {item.Deadline.Value:yyyy-MM-dd}");
@@ -89,17 +87,14 @@ public class AlertContentGenerator : IAlertContentGenerator
     {
         var sb = new StringBuilder();
 
-        var label = policyResult.AlertLevel switch
-        {
-            AlertLevel.High => "NEW MATCH",
-            AlertLevel.Medium => "WORTH REVIEWING",
-            AlertLevel.Info => "STATUS UPDATE",
-            _ => "LOGGED"
-        };
+        var label = GetAlertLabel(policyResult.AlertLevel, item.ItemType);
+        var secondary = item.DisplaySecondary is not null ? $" — {Escape(item.DisplaySecondary)}" : "";
 
-        sb.AppendLine($"<h2>{levelEmoji} {label}: {Escape(item.DisplayName)} at {Escape(item.DisplaySecondary)}</h2>");
+        sb.AppendLine($"<h2>{levelEmoji} {label}: {Escape(item.DisplayName)}{secondary}</h2>");
         sb.AppendLine("<table style='border-collapse:collapse;'>");
-        sb.AppendLine($"<tr><td><strong>Location:</strong></td><td>{Escape(item.DisplayContext ?? "Not specified")}</td></tr>");
+
+        if (item.DisplayContext is not null)
+            sb.AppendLine($"<tr><td><strong>{Escape(GetContextLabel(item.ItemType))}:</strong></td><td>{Escape(item.DisplayContext)}</td></tr>");
 
         if (item.Deadline.HasValue)
             sb.AppendLine($"<tr><td><strong>Deadline:</strong></td><td>{item.Deadline.Value:yyyy-MM-dd}</td></tr>");
@@ -138,6 +133,25 @@ public class AlertContentGenerator : IAlertContentGenerator
 
         return sb.ToString();
     }
+
+    private static string GetAlertLabel(AlertLevel level, string? itemType) => (level, itemType) switch
+    {
+        (AlertLevel.High, "job-listing") => "NEW MATCH",
+        (AlertLevel.High, "product") => "PRICE ALERT",
+        (AlertLevel.High, "paper") => "NEW PAPER",
+        (AlertLevel.High, _) => "NEW MATCH",
+        (AlertLevel.Medium, _) => "WORTH REVIEWING",
+        (AlertLevel.Info, _) => "STATUS UPDATE",
+        _ => "LOGGED"
+    };
+
+    private static string GetContextLabel(string? itemType) => itemType switch
+    {
+        "job-listing" => "Location",
+        "product" => "Seller",
+        "paper" => "Authors",
+        _ => "Details"
+    };
 
     private static string FormatDimensionName(string name) =>
         char.ToUpper(name[0]) + name[1..].Replace('_', ' ');

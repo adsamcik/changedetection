@@ -5,13 +5,13 @@ namespace ChangeDetection.Core.Interfaces;
 /// <summary>
 /// Tracks extracted items through their lifecycle states.
 /// Handles deduplication within a watch group (same item from multiple sources).
-/// Domain-agnostic: works for job listings, property listings, papers, etc.
+/// Domain-agnostic: behavior driven by TrackingConfig on the WatchGroup.
 /// </summary>
 public interface IItemTrackingService
 {
     /// <summary>
     /// Process new/removed/modified items from a diff result.
-    /// Creates TrackedItems for new entries, updates existing ones, marks removed as potentially expired.
+    /// Uses TrackingConfig from the watch group for field mapping and identity keys.
     /// </summary>
     Task<ItemTrackingResult> ProcessDiffAsync(
         Guid watchGroupId,
@@ -23,7 +23,7 @@ public interface IItemTrackingService
         CancellationToken ct);
 
     /// <summary>
-    /// Process diff with a link to the originating ChangeEvent.
+    /// Process diff with a link to the originating ChangeEvent and explicit schema identity fields.
     /// </summary>
     Task<ItemTrackingResult> ProcessDiffAsync(
         Guid watchGroupId,
@@ -33,6 +33,7 @@ public interface IItemTrackingService
         string? matchDimensionsJson,
         string? recommendation,
         Guid? changeEventId,
+        IReadOnlyList<string>? schemaIdentityFields,
         CancellationToken ct);
 
     /// <summary>
