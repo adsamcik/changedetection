@@ -294,7 +294,7 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                 {
                     FieldName = "location",
                     Operator = FilterOperator.Regex,
-                    Value = @"(?i)\b(Department|Institut|Faculty|Center|Centre|Laboratory|Lab|Section|Division|School|Museum)\b",
+                    Value = @"(?i)\b(Departments?|Institu\w+|Faculty|Centers?|Centres?|Laborator\w+|Labs?|Sections?|Divisions?|Schools?|Museums?|Clinics?|Groups?|Units?)\b",
                     Negate = true // must NOT match — if it does, location is an org name, skip filter
                 });
 
