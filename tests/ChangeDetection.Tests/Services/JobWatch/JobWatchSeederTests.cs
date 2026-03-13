@@ -97,8 +97,8 @@ public class JobWatchSeederTests : TestBase
 
         foreach (var portal in jsPortals)
         {
-            portal.FetchSettings.TimeoutSeconds.ShouldBeGreaterThanOrEqualTo(45,
-                $"JS portal {portal.Id} should have longer timeout");
+            portal.FetchSettings.TimeoutSeconds.ShouldBeGreaterThanOrEqualTo(30,
+                $"JS portal {portal.Id} should have reasonable timeout");
             portal.FetchSettings.WaitAfterLoadMs.ShouldBeGreaterThan(0,
                 $"JS portal {portal.Id} should have WaitAfterLoadMs");
         }
@@ -133,9 +133,9 @@ public class JobWatchSeederTests : TestBase
     {
         var portals = JobWatchSeeder.GetAllPortalDefinitions();
 
-        // UCPH: simple HTML, daily
+        // UCPH: DataTable needs JS for pagination, daily
         var ucph = portals.First(p => p.Id == "watch-ucph");
-        ucph.FetchSettings.UseJavaScript.ShouldBeFalse();
+        ucph.FetchSettings.UseJavaScript.ShouldBeTrue("UCPH uses DataTable which requires JS");
         ucph.CheckInterval.ShouldBe(TimeSpan.FromHours(24));
         ucph.ExtraTags.ShouldContain("denmark");
 

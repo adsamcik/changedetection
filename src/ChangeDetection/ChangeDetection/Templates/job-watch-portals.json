@@ -11,44 +11,49 @@
       "checkIntervalHours": 24,
       "extraTags": ["denmark", "academia"],
       "fetchSettings": {
-        "useJavaScript": false,
+        "useJavaScript": true,
         "timeoutSeconds": 30,
-        "waitAfterLoadMs": null
+        "waitAfterLoadMs": 3000,
+        "waitForSelector": "table.vacancies"
       },
       "schema": {
-        "itemSelector": "table.vacancies tr.vacancy-specs",
+        "itemSelector": "table.vacancies tbody tr.vacancy-specs",
         "fields": [
           { "name": "title", "selector": "td:first-child a", "type": "String", "isRequired": true, "isIdentityField": true },
           { "name": "url", "selector": "td:first-child a", "type": "Url", "isRequired": true },
-          { "name": "company", "selector": "td:nth-child(2)", "type": "String", "isIdentityField": true },
-          { "name": "location", "selector": "td:nth-child(3)", "type": "String" },
+          { "name": "faculty", "selector": "td:nth-child(2)", "type": "String", "isIdentityField": true },
+          { "name": "department", "selector": "td:nth-child(3)", "type": "String" },
           { "name": "deadline", "selector": "td:nth-child(4)", "type": "Date" }
         ],
-        "identityFields": ["title", "company"]
+        "identityFields": ["title", "faculty"],
+        "_notes": "DataTable shows 10/94 by default. UseJavaScript=true required. Pipeline should ideally expand pagination to 100 via JS interaction. Column 3 is department name, NOT city — location filter must not suppress based on this."
       }
     },
     {
       "id": "watch-novo",
       "name": "Novo Nordisk Denmark",
       "description": "Scientist/lab tech roles at Novo Nordisk Denmark sites",
-      "url": "https://careers.novonordisk.com/global/en/search-results?keywords=laboratory%20scientist&location=Denmark",
+      "url": "https://careers.novonordisk.com/search/?q=laboratory+scientist&locationsearch=Denmark",
       "tier": "tier-1",
       "checkIntervalHours": 24,
       "extraTags": ["denmark", "pharma", "novo-nordisk"],
       "fetchSettings": {
         "useJavaScript": true,
         "timeoutSeconds": 60,
-        "waitAfterLoadMs": 5000
+        "waitAfterLoadMs": 5000,
+        "waitForSelector": "table.searchResults"
       },
       "schema": {
-        "itemSelector": ".job-card, .search-result-item, [data-ph-at-id='job-card']",
+        "itemSelector": "table.searchResults tbody tr.data-row",
         "fields": [
-          { "name": "title", "selector": ".job-title a, .job-card-title, [data-ph-at-id='job-title']", "type": "String", "isRequired": true, "isIdentityField": true },
-          { "name": "url", "selector": ".job-title a, [data-ph-at-id='job-title'] a", "type": "Url", "isRequired": true },
-          { "name": "location", "selector": ".job-location, [data-ph-at-id='job-location']", "type": "String" },
-          { "name": "posted_date", "selector": ".job-date, .posted-date", "type": "Date" }
+          { "name": "title", "selector": "td:first-child a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "td:first-child a", "type": "Url", "isRequired": true },
+          { "name": "location", "selector": "td:nth-child(2)", "type": "String" },
+          { "name": "category", "selector": "td:nth-child(3)", "type": "String" },
+          { "name": "posted_date", "selector": "td:nth-child(4)", "type": "Date" }
         ],
-        "identityFields": ["title"]
+        "identityFields": ["title", "location"],
+        "_notes": "Old URL /search-results?keywords=... was deprecated and 404s as of Mar 2026. New URL /search/?q=...&locationsearch=Denmark returns filtered DK results (17 as of verification). Location column contains city + region (Måløv, Bagsværd, Gentofte, etc.)."
       }
     },
     {
@@ -88,15 +93,13 @@
         "waitAfterLoadMs": null
       },
       "schema": {
-        "itemSelector": "article, .career-item, .job-listing, li.vacancy, .wp-block-list li",
+        "itemSelector": "ul.lcp_catlist li",
         "fields": [
-          { "name": "title", "selector": "h2 a, h3 a, a.career-link, a", "type": "String", "isRequired": true, "isIdentityField": true },
-          { "name": "url", "selector": "h2 a, h3 a, a", "type": "Url", "isRequired": true },
-          { "name": "location", "selector": ".location, .mesto", "type": "String" },
-          { "name": "posted_date", "selector": ".date, time, .datum", "type": "Date" },
-          { "name": "deadline", "selector": ".deadline, .uzaverka", "type": "Date", "trackHistory": false }
+          { "name": "title", "selector": "a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a", "type": "Url", "isRequired": true }
         ],
-        "identityFields": ["title"]
+        "identityFields": ["title"],
+        "_notes": "WordPress List Category Posts plugin. Listing page only has title+url. No deadline/company/location/education fields. All positions are at SZÚ in Prague — location is implicit from the source. Identity uses title + URL slug for stability."
       }
     },
     {

@@ -207,6 +207,18 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             {
                 foreach (var skill in noneSkills)
                 {
+                    // For multi-word skills like "organoid culture", use regex to match
+                    // all key words appearing in the text (handles "organoid cell culture",
+                    // "organoid-based culture", etc.)
+                    var words = skill.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .Where(w => w.Length > 3) // Skip short words like "and", "for", "in"
+                        .ToList();
+
+                    // Build a regex that matches all significant words in any order
+                    var regexPattern = words.Count > 1
+                        ? $"(?i)(?=.*\\b{string.Join(")(?=.*\\b", words.Select(System.Text.RegularExpressions.Regex.Escape))})"
+                        : $"(?i)\\b{System.Text.RegularExpressions.Regex.Escape(skill)}\\b";
+
                     rules.Add(new FilterRule
                     {
                         Name = $"Skill gap: {skill}",
@@ -221,12 +233,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                                 Operator = FilterOperator.Contains,
                                 Value = skill
                             },
-                            // Also check title — catches "organoid specialist", "mass spec analyst" etc.
+                            // Regex-based title check handles multi-word skills with intervening words
+                            // e.g., "organoid culture" matches "Organoid cell culture specialist"
                             new FilterCondition
                             {
                                 FieldName = "title",
-                                Operator = FilterOperator.Contains,
-                                Value = skill
+                                Operator = FilterOperator.Regex,
+                                Value = regexPattern
                             }
                         ],
                         Actions =
