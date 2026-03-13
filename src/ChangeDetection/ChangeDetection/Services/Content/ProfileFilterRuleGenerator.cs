@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 
@@ -299,11 +300,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                 });
 
                 // Then: none of the target locations match → suppress
+                // Use word-boundary regex to prevent substring false matches
+                // (e.g., "Lund" matching "Kalundborg" via plain Contains)
                 conditions.AddRange(locationValues.Select(loc => new FilterCondition
                 {
                     FieldName = "location",
-                    Operator = FilterOperator.Contains,
-                    Value = loc,
+                    Operator = FilterOperator.Regex,
+                    Value = $@"(?i)\b{Regex.Escape(loc)}\b",
                     Negate = true
                 }));
 
