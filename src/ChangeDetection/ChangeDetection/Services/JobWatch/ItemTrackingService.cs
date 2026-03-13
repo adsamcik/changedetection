@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -12,6 +13,7 @@ namespace ChangeDetection.Services.JobWatch;
 public class ItemTrackingService(
     IRepository<TrackedItem> itemRepo,
     IRepository<WatchGroup> groupRepo,
+    IRepository<WatchedSite> watchRepo,
     IAlertPolicyService alertPolicy,
     ILogger<ItemTrackingService> logger) : IItemTrackingService
 {
@@ -43,6 +45,7 @@ public class ItemTrackingService(
         CancellationToken ct)
     {
         var config = await ResolveConfigAsync(watchGroupId, ct);
+        var sourceWatchUrl = await ResolveWatchUrlAsync(sourceWatchId, ct);
         var result = new ItemTrackingResult();
         var existing = await GetItemsAsync(watchGroupId, ct);
         var existingByKey = existing.ToDictionary(l => l.IdentityKey, StringComparer.OrdinalIgnoreCase);
@@ -88,7 +91,7 @@ public class ItemTrackingService(
                     ? GetFieldValue(added, config.DisplaySecondaryField) : null,
                 DisplayContext = config.DisplayContextField is not null
                     ? GetFieldValue(added, config.DisplayContextField) : null,
-                Url = GetFieldValue(added, config.UrlField),
+                Url = NormalizeUrl(GetFieldValue(added, config.UrlField), sourceWatchUrl),
                 Deadline = deadline,
                 State = TrackedItemState.New,
                 AlertLevel = policyResult.AlertLevel,
@@ -107,34 +110,53 @@ public class ItemTrackingService(
                 config.ItemType, item.DisplayName, item.AlertLevel);
         }
 
-        // Process removed items
-        foreach (var removed in diffResult.RemovedItems)
+        // Process removed items — with minimum-item guard to prevent mass expiry
+        // from broken fetches (F3: partial selector match returning 0 real items)
+        var totalCurrentItems = diffResult.AddedItems.Count +
+            existing.Count(e => !diffResult.RemovedItems.Any(r =>
+                BuildIdentityKey(r, schemaIdentityFields, config)
+                    .Equals(e.IdentityKey, StringComparison.OrdinalIgnoreCase)));
+
+        var processRemovals = true;
+        if (diffResult.RemovedItems.Count > 0 && totalCurrentItems == 0 && existing.Count > config.MinimumItemThreshold)
         {
-            var identityKey = BuildIdentityKey(removed, schemaIdentityFields, config);
-            if (string.IsNullOrWhiteSpace(identityKey)) continue;
+            logger.LogWarning(
+                "Skipping removal processing: 0 current items but {ExistingCount} tracked items " +
+                "(exceeds MinimumItemThreshold={Threshold}). Likely extraction failure, not mass removal.",
+                existing.Count, config.MinimumItemThreshold);
+            processRemovals = false;
+        }
 
-            if (!existingByKey.TryGetValue(identityKey, out var trackedItem)) continue;
-            if (trackedItem.State is TrackedItemState.Expired or TrackedItemState.Dismissed) continue;
-
-            trackedItem.ConsecutiveAbsences++;
-
-            if (trackedItem.ConsecutiveAbsences >= config.AbsenceThreshold)
+        if (processRemovals)
+        {
+            foreach (var removed in diffResult.RemovedItems)
             {
-                trackedItem.State = TrackedItemState.Expired;
-                trackedItem.ExpiryReason = ExpiryReason.RemovedFromSource;
-                trackedItem.StateChangedAt = DateTime.UtcNow;
-                result.ConfirmedExpired.Add(trackedItem);
-                logger.LogInformation("Item confirmed expired (removed from source): {DisplayName}",
-                    trackedItem.DisplayName);
-            }
-            else
-            {
-                result.PotentiallyExpired.Add(trackedItem);
-                logger.LogDebug("Item absent ({Count}/{Threshold}): {DisplayName}",
-                    trackedItem.ConsecutiveAbsences, config.AbsenceThreshold, trackedItem.DisplayName);
-            }
+                var identityKey = BuildIdentityKey(removed, schemaIdentityFields, config);
+                if (string.IsNullOrWhiteSpace(identityKey)) continue;
 
-            await itemRepo.UpdateAsync(trackedItem, ct);
+                if (!existingByKey.TryGetValue(identityKey, out var trackedItem)) continue;
+                if (trackedItem.State is TrackedItemState.Expired or TrackedItemState.Dismissed) continue;
+
+                trackedItem.ConsecutiveAbsences++;
+
+                if (trackedItem.ConsecutiveAbsences >= config.AbsenceThreshold)
+                {
+                    trackedItem.State = TrackedItemState.Expired;
+                    trackedItem.ExpiryReason = ExpiryReason.RemovedFromSource;
+                    trackedItem.StateChangedAt = DateTime.UtcNow;
+                    result.ConfirmedExpired.Add(trackedItem);
+                    logger.LogInformation("Item confirmed expired (removed from source): {DisplayName}",
+                        trackedItem.DisplayName);
+                }
+                else
+                {
+                    result.PotentiallyExpired.Add(trackedItem);
+                    logger.LogDebug("Item absent ({Count}/{Threshold}): {DisplayName}",
+                        trackedItem.ConsecutiveAbsences, config.AbsenceThreshold, trackedItem.DisplayName);
+                }
+
+                await itemRepo.UpdateAsync(trackedItem, ct);
+            }
         }
 
         return result;
@@ -235,6 +257,37 @@ public class ItemTrackingService(
         return group?.TrackingConfig ?? DefaultConfig;
     }
 
+    private async Task<string?> ResolveWatchUrlAsync(Guid watchId, CancellationToken ct)
+    {
+        var watch = await watchRepo.GetByIdAsync(watchId, ct);
+        return watch?.Url;
+    }
+
+    /// <summary>
+    /// Resolves relative URLs against the source watch URL.
+    /// E.g., "/all-vacancies/?show=123" + "https://employment.ku.dk/all-vacancies/"
+    /// → "https://employment.ku.dk/all-vacancies/?show=123"
+    /// </summary>
+    private static string? NormalizeUrl(string? itemUrl, string? sourceWatchUrl)
+    {
+        if (string.IsNullOrWhiteSpace(itemUrl)) return null;
+
+        // Already absolute
+        if (itemUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            itemUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return itemUrl;
+
+        // Resolve relative URL against source watch URL
+        if (!string.IsNullOrWhiteSpace(sourceWatchUrl) &&
+            Uri.TryCreate(sourceWatchUrl, UriKind.Absolute, out var baseUri) &&
+            Uri.TryCreate(baseUri, itemUrl, out var resolved))
+        {
+            return resolved.ToString();
+        }
+
+        return itemUrl;
+    }
+
     private static bool IsValidTransition(TrackedItemState from, TrackedItemState to) => (from, to) switch
     {
         (TrackedItemState.New, TrackedItemState.Alerted) => true,
@@ -254,6 +307,7 @@ public class ItemTrackingService(
     /// <summary>
     /// Builds identity key using schema identity fields when available,
     /// falling back to TrackingConfig display fields, then to the object's own IdentityKey.
+    /// Includes URL slug as stabilizer for title-only keys (F9 fix).
     /// </summary>
     private static string BuildIdentityKey(
         ExtractedObject obj,
@@ -262,24 +316,67 @@ public class ItemTrackingService(
     {
         // Priority 1: Use the object's pre-computed identity key from ObjectDiffService
         if (!string.IsNullOrWhiteSpace(obj.IdentityKey))
-            return obj.IdentityKey.Trim().ToLowerInvariant();
+            return NormalizeForIdentity(obj.IdentityKey);
 
         // Priority 2: Use schema-defined identity fields
         if (schemaIdentityFields is { Count: > 0 })
         {
             var parts = schemaIdentityFields
-                .Select(f => (GetFieldValue(obj, f) ?? "").Trim().ToLowerInvariant())
+                .Select(f => NormalizeForIdentity(GetFieldValue(obj, f) ?? ""))
                 .Where(p => p.Length > 0);
             var key = string.Join("|", parts);
             if (key.Length > 0) return key;
         }
 
         // Priority 3: Build from config display fields
-        var name = (GetFieldValue(obj, config.DisplayNameField) ?? "").Trim().ToLowerInvariant();
+        var name = NormalizeForIdentity(GetFieldValue(obj, config.DisplayNameField) ?? "");
         var secondary = config.DisplaySecondaryField is not null
-            ? (GetFieldValue(obj, config.DisplaySecondaryField) ?? "").Trim().ToLowerInvariant()
+            ? NormalizeForIdentity(GetFieldValue(obj, config.DisplaySecondaryField) ?? "")
             : "";
+
+        // For title-only keys, use URL path as a stabilizer to reduce churn
+        // from minor title edits (F9: "ODBORNÝ PRACOVNÍK" vs "ODBORNÝ PRACOVNÍK/-CE")
+        if (secondary.Length == 0)
+        {
+            var url = GetFieldValue(obj, config.UrlField);
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                var slug = ExtractUrlSlug(url);
+                if (slug.Length > 0) return $"{name}|{slug}";
+            }
+        }
+
         return secondary.Length > 0 ? $"{name}|{secondary}" : name;
+    }
+
+    /// <summary>
+    /// Normalizes text for identity comparison: lowercase, trim, normalize diacritics for stability.
+    /// Doesn't remove diacritics entirely — just normalizes to NFC form for consistent comparison.
+    /// </summary>
+    private static string NormalizeForIdentity(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        return value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormC);
+    }
+
+    /// <summary>
+    /// Extracts a stable slug from a URL path for identity key enrichment.
+    /// E.g., "/kariera/zdravotni-laborant-ka/" → "zdravotni-laborant-ka"
+    /// </summary>
+    private static string ExtractUrlSlug(string url)
+    {
+        try
+        {
+            var path = Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                ? uri.AbsolutePath
+                : url;
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return segments.Length > 0 ? segments[^1].ToLowerInvariant() : "";
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     private static string? GetFieldValue(ExtractedObject obj, string fieldName)
@@ -287,11 +384,23 @@ public class ItemTrackingService(
         return obj.Fields.TryGetValue(fieldName, out var value) ? value : null;
     }
 
+    private static readonly string[] DeadlineDateFormats =
+        ["dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "d MMM yyyy", "dd.MM.yyyy",
+         "MM/dd/yyyy", "yyyy/MM/dd", "d MMMM yyyy"];
+
     private static DateTime? ParseDeadline(ExtractedObject obj, TrackingConfig config)
     {
         if (config.DeadlineField is null) return null;
         var deadlineStr = GetFieldValue(obj, config.DeadlineField);
         if (string.IsNullOrWhiteSpace(deadlineStr)) return null;
-        return DateTime.TryParse(deadlineStr, out var parsed) ? parsed : null;
+
+        // Try explicit formats first (culture-independent), then fall back to general parse
+        if (DateTime.TryParseExact(deadlineStr.Trim(), DeadlineDateFormats,
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var exact))
+            return exact;
+
+        // Fallback for ISO and other unambiguous formats
+        return DateTime.TryParse(deadlineStr, CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var parsed) ? parsed : null;
     }
 }

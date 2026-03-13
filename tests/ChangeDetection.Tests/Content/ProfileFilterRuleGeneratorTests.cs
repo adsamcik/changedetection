@@ -110,9 +110,10 @@ public class ProfileFilterRuleGeneratorTests : TestBase
         skillGapRules.Count.ShouldBe(3, "Should have 3 skill gap rules (organoid, mass spec, NGS)");
 
         var organoidRule = skillGapRules.First(r => r.Name.Contains("organoid"));
-        organoidRule.Conditions.ShouldHaveSingleItem();
-        organoidRule.Conditions[0].FieldName.ShouldBe("skills_required");
-        organoidRule.Conditions[0].Operator.ShouldBe(FilterOperator.Contains);
+        organoidRule.Conditions.Count.ShouldBe(2, "Should check both skills_required and title");
+        organoidRule.Logic.ShouldBe(FilterLogic.Or);
+        organoidRule.Conditions.ShouldContain(c => c.FieldName == "skills_required");
+        organoidRule.Conditions.ShouldContain(c => c.FieldName == "title");
         organoidRule.Actions.ShouldContain(a => a.Type == FilterActionType.AddTag
             && a.Parameters.GetValueOrDefault("tag") == "SKILL_GAP");
         organoidRule.Actions.ShouldContain(a => a.Type == FilterActionType.SetImportance);
@@ -128,13 +129,16 @@ public class ProfileFilterRuleGeneratorTests : TestBase
         var locationRule = rules.FirstOrDefault(r => r.Name.Contains("Location"));
         locationRule.ShouldNotBeNull("Should have a location filter rule");
         locationRule.Logic.ShouldBe(FilterLogic.And);
-        // 1 guard condition (location must be non-empty) + 4 negated location conditions
-        locationRule.Conditions.Count.ShouldBe(5, "Should have 1 guard + 4 negated location conditions");
-        // First condition is the guard (regex ".+" to check non-empty)
+        // 2 guard conditions (location non-empty + not a department name) + 4 negated location conditions
+        locationRule.Conditions.Count.ShouldBe(6, "Should have 2 guards + 4 negated location conditions");
+        // First condition is the non-empty guard (regex ".+")
         locationRule.Conditions[0].Operator.ShouldBe(FilterOperator.Regex);
         locationRule.Conditions[0].Negate.ShouldBeFalse();
+        // Second condition is the department-name guard (negated regex)
+        locationRule.Conditions[1].Operator.ShouldBe(FilterOperator.Regex);
+        locationRule.Conditions[1].Negate.ShouldBeTrue("Department name guard should be negated");
         // Remaining 4 are negated location matches
-        locationRule.Conditions.Skip(1).ShouldAllBe(c => c.Negate);
+        locationRule.Conditions.Skip(2).ShouldAllBe(c => c.Negate);
         locationRule.Actions.ShouldContain(a => a.Type == FilterActionType.SuppressNotification);
         locationRule.Actions.ShouldContain(a => a.Type == FilterActionType.AddTag
             && a.Parameters.GetValueOrDefault("tag") == "WRONG_LOCATION");

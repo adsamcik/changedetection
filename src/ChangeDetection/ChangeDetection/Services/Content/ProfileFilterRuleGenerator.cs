@@ -121,6 +121,14 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                             FieldName = "requirements",
                             Operator = FilterOperator.Regex,
                             Value = @"(?i)\brequired?\b.*\bPh\.?D\.?\b|\bPh\.?D\.?\b.*\brequired?\b"
+                        },
+                        // Also check title — catches "PhD fellowship/position/student" listings
+                        // from portals that only expose title on listing pages
+                        new FilterCondition
+                        {
+                            FieldName = "title",
+                            Operator = FilterOperator.Regex,
+                            Value = @"(?i)\bPh\.?D\.?\b\s*(fellowship|position|student|stipend|scholarship)"
                         }
                     ],
                     Actions =
@@ -202,13 +210,21 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                     rules.Add(new FilterRule
                     {
                         Name = $"Skill gap: {skill}",
-                        Description = $"Auto-generated: candidate lacks {skill}. Downgrade if required.",
+                        Description = $"Auto-generated: candidate lacks {skill}. Downgrade if required in skills or title.",
                         Priority = priority--,
+                        Logic = FilterLogic.Or, // Match in ANY of these fields
                         Conditions =
                         [
                             new FilterCondition
                             {
                                 FieldName = "skills_required",
+                                Operator = FilterOperator.Contains,
+                                Value = skill
+                            },
+                            // Also check title — catches "organoid specialist", "mass spec analyst" etc.
+                            new FilterCondition
+                            {
+                                FieldName = "title",
                                 Operator = FilterOperator.Contains,
                                 Value = skill
                             }
@@ -231,7 +247,10 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             }
         }
 
-        // Location filtering — only suppress when location IS present and doesn't match
+        // Location filtering — only suppress when location field clearly contains
+        // a geographic location that doesn't match targets.
+        // Guard: if location looks like a department/institution name (contains
+        // "Department", "Institut", "Faculty", etc.), don't suppress — it's not a city.
         if (profile.TryGetProperty("target_locations", out var locations) && locations.ValueKind == JsonValueKind.Array)
         {
             var locationValues = new List<string>();
@@ -245,30 +264,40 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
 
             if (locationValues.Count > 0)
             {
-                // First condition: location field must be present and non-empty
-                // Use Contains with empty string negated to check field exists
                 var conditions = new List<FilterCondition>();
+
+                // Guard 1: location field must be non-empty
+                conditions.Add(new FilterCondition
+                {
+                    FieldName = "location",
+                    Operator = FilterOperator.Regex,
+                    Value = ".+"
+                });
+
+                // Guard 2: location must NOT look like a department/institution name.
+                // If it does, this is a portal that puts org units in the location column,
+                // and we should NOT use it for geographic filtering (would cause false negatives).
+                conditions.Add(new FilterCondition
+                {
+                    FieldName = "location",
+                    Operator = FilterOperator.Regex,
+                    Value = @"(?i)\b(Department|Institut|Faculty|Center|Centre|Laboratory|Lab|Section|Division|School|Museum)\b",
+                    Negate = true // must NOT match — if it does, location is an org name, skip filter
+                });
+
+                // Then: none of the target locations match → suppress
                 conditions.AddRange(locationValues.Select(loc => new FilterCondition
                 {
                     FieldName = "location",
                     Operator = FilterOperator.Contains,
                     Value = loc,
-                    Negate = true // NONE of the target locations match → suppress
+                    Negate = true
                 }));
-
-                // Add a guard condition: location must contain at least one character
-                // (so missing/empty location fields don't trigger suppression)
-                conditions.Insert(0, new FilterCondition
-                {
-                    FieldName = "location",
-                    Operator = FilterOperator.Regex,
-                    Value = ".+" // location must be non-empty for this rule to fire
-                });
 
                 rules.Add(new FilterRule
                 {
                     Name = "Location filter",
-                    Description = $"Auto-generated: only locations matching [{string.Join(", ", locationValues)}]. Missing location = pass.",
+                    Description = $"Auto-generated: only geographic locations matching [{string.Join(", ", locationValues)}]. Department/institution names and missing locations = pass.",
                     Priority = priority--,
                     Logic = FilterLogic.And,
                     Conditions = conditions,

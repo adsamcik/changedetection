@@ -137,10 +137,18 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
             var daysLeft = (deadline.Value.Date - DateTime.UtcNow.Date).Days;
             daysUntilDeadline = daysLeft;
 
-            if (daysLeft <= 0)
+            if (daysLeft < 0)
             {
-                // Deadline passed — don't escalate, this will be expired
+                // Deadline already passed — don't escalate, this will be expired
                 reason = $"{reason} | ⏰ Deadline passed";
+            }
+            else if (daysLeft == 0 && baseLevel != AlertLevel.Silent)
+            {
+                // Deadline is TODAY — maximum urgency
+                preUrgencyLevel = baseLevel;
+                baseLevel = AlertLevel.High;
+                urgencyApplied = true;
+                reason = $"🚨 DEADLINE TODAY | {reason}";
             }
             else if (daysLeft <= 3 && baseLevel != AlertLevel.Silent)
             {

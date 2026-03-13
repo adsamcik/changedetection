@@ -16,13 +16,14 @@ public class ItemTrackingServiceTests : TestBase
 {
     private readonly IRepository<TrackedItem> _repo = Substitute.For<IRepository<TrackedItem>>();
     private readonly IRepository<WatchGroup> _groupRepo = Substitute.For<IRepository<WatchGroup>>();
+    private readonly IRepository<WatchedSite> _watchRepo = Substitute.For<IRepository<WatchedSite>>();
     private readonly IAlertPolicyService _alertPolicy;
     private readonly ItemTrackingService _sut;
 
     public ItemTrackingServiceTests()
     {
         _alertPolicy = new AlertPolicyService(NullLogger<AlertPolicyService>.Instance);
-        _sut = new ItemTrackingService(_repo, _groupRepo, _alertPolicy, NullLogger<ItemTrackingService>.Instance);
+        _sut = new ItemTrackingService(_repo, _groupRepo, _watchRepo, _alertPolicy, NullLogger<ItemTrackingService>.Instance);
     }
 
     [Test]

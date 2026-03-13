@@ -66,6 +66,14 @@ public class TrackingConfig
     public int AbsenceThreshold { get; set; } = 2;
 
     /// <summary>
+    /// Minimum number of tracked items expected from a source.
+    /// If all items disappear in one check (current=0, existing > this threshold),
+    /// treat as extraction failure instead of mass removal. Prevents broken fetches
+    /// from silently expiring all tracked items.
+    /// </summary>
+    public int MinimumItemThreshold { get; set; } = 3;
+
+    /// <summary>
     /// Creates a default configuration for job watch scenarios.
     /// </summary>
     public static TrackingConfig ForJobs() => new()
