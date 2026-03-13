@@ -285,6 +285,181 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
             }
         }
 
+        // Salary floor filtering — flag when salary is stated and below floor
+        if (profile.TryGetProperty("salary_floor", out var salaryFloor) && salaryFloor.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in salaryFloor.EnumerateObject())
+            {
+                // Skip non-numeric entries like "note"
+                if (prop.Value.ValueKind != JsonValueKind.String) continue;
+                var floorStr = prop.Value.GetString();
+                if (string.IsNullOrWhiteSpace(floorStr)) continue;
+
+                // Extract numeric value from strings like "50,000 CZK/month" or "~30,000 DKK/month"
+                var numericStr = new string(floorStr.Where(c => char.IsDigit(c)).ToArray());
+                if (!double.TryParse(numericStr, out var floorValue) || floorValue <= 0) continue;
+
+                var locationHint = prop.Name; // e.g., "prague", "copenhagen"
+
+                rules.Add(new FilterRule
+                {
+                    Name = $"Salary floor: {locationHint}",
+                    Description = $"Auto-generated: salary below {floorStr} for {locationHint} roles. Tags but does not suppress — review recommended.",
+                    Priority = priority--,
+                    Logic = FilterLogic.And,
+                    Conditions =
+                    [
+                        // Salary field must be present
+                        new FilterCondition
+                        {
+                            FieldName = "salary",
+                            Operator = FilterOperator.Regex,
+                            Value = @"\d" // Must contain at least one digit
+                        },
+                        // Salary below floor
+                        new FilterCondition
+                        {
+                            FieldName = "salary",
+                            Operator = FilterOperator.LessThan,
+                            Value = floorValue.ToString("F0")
+                        }
+                    ],
+                    Actions =
+                    [
+                        new FilterAction
+                        {
+                            Type = FilterActionType.AddTag,
+                            Parameters = new Dictionary<string, string> { ["tag"] = "LOW_SALARY" }
+                        },
+                        new FilterAction
+                        {
+                            Type = FilterActionType.SetImportance,
+                            Parameters = new Dictionary<string, string> { ["level"] = "Low" }
+                        }
+                    ]
+                });
+            }
+        }
+
+        // Language filtering — flag when required language is not in candidate's languages
+        if (profile.TryGetProperty("languages", out var languages) && languages.ValueKind == JsonValueKind.Array)
+        {
+            var candidateLanguages = new List<string>();
+            foreach (var item in languages.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var lang = item.GetString();
+                if (!string.IsNullOrWhiteSpace(lang))
+                    candidateLanguages.Add(lang);
+            }
+
+            if (candidateLanguages.Count > 0)
+            {
+                // Build negated conditions: suppress when language_required is present
+                // AND none of the candidate's languages match
+                var langConditions = new List<FilterCondition>
+                {
+                    // Guard: language_required field must exist and be non-empty
+                    new()
+                    {
+                        FieldName = "language_required",
+                        Operator = FilterOperator.Regex,
+                        Value = ".+"
+                    }
+                };
+
+                // Extract just the language names (strip proficiency notes like "(native)", "(C1)")
+                langConditions.AddRange(candidateLanguages.Select(lang =>
+                {
+                    var langName = lang.Split('(')[0].Trim();
+                    return new FilterCondition
+                    {
+                        FieldName = "language_required",
+                        Operator = FilterOperator.Contains,
+                        Value = langName,
+                        Negate = true // NONE of the candidate languages match → flag
+                    };
+                }));
+
+                rules.Add(new FilterRule
+                {
+                    Name = "Language requirement filter",
+                    Description = $"Auto-generated: candidate speaks [{string.Join(", ", candidateLanguages)}]. Flag if required language doesn't match.",
+                    Priority = priority--,
+                    Logic = FilterLogic.And,
+                    Conditions = langConditions,
+                    Actions =
+                    [
+                        new FilterAction
+                        {
+                            Type = FilterActionType.AddTag,
+                            Parameters = new Dictionary<string, string> { ["tag"] = "LANGUAGE_GAP" }
+                        },
+                        new FilterAction
+                        {
+                            Type = FilterActionType.SetImportance,
+                            Parameters = new Dictionary<string, string> { ["level"] = "Medium" }
+                        }
+                    ]
+                });
+            }
+        }
+
+        // Experience level filtering — flag when experience requirement significantly exceeds candidate's
+        if (profile.TryGetProperty("experience_years", out var expYears) && expYears.ValueKind == JsonValueKind.String)
+        {
+            var expStr = expYears.GetString();
+            if (!string.IsNullOrWhiteSpace(expStr))
+            {
+                // Parse the upper bound of experience range (e.g., "1-3" → 3)
+                var parts = expStr.Split('-', '–');
+                var maxYears = parts.Length > 1
+                    ? (int.TryParse(parts[^1].Trim(), out var upper) ? upper : 0)
+                    : (int.TryParse(parts[0].Trim(), out var single) ? single : 0);
+
+                if (maxYears > 0)
+                {
+                    // Flag roles requiring significantly more experience (> 2x candidate max)
+                    var threshold = Math.Max(maxYears + 3, maxYears * 2);
+                    rules.Add(new FilterRule
+                    {
+                        Name = "Experience level filter",
+                        Description = $"Auto-generated: candidate has {expStr} years experience. Flag roles requiring >{threshold} years.",
+                        Priority = priority--,
+                        Logic = FilterLogic.And,
+                        Conditions =
+                        [
+                            new FilterCondition
+                            {
+                                FieldName = "experience_years_required",
+                                Operator = FilterOperator.Regex,
+                                Value = @"\d" // Must contain a digit
+                            },
+                            new FilterCondition
+                            {
+                                FieldName = "experience_years_required",
+                                Operator = FilterOperator.GreaterThan,
+                                Value = threshold.ToString()
+                            }
+                        ],
+                        Actions =
+                        [
+                            new FilterAction
+                            {
+                                Type = FilterActionType.AddTag,
+                                Parameters = new Dictionary<string, string> { ["tag"] = "EXPERIENCE_GAP" }
+                            },
+                            new FilterAction
+                            {
+                                Type = FilterActionType.SetImportance,
+                                Parameters = new Dictionary<string, string> { ["level"] = "Low" }
+                            }
+                        ]
+                    });
+                }
+            }
+        }
+
         return rules;
     }
 }

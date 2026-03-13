@@ -224,6 +224,10 @@ builder.Services.AddScoped<IRepository<WatchGroup>>(sp =>
     new TenantRepository<WatchGroup>(
         sp.GetRequiredService<LiteDbRepository<WatchGroup>>(),
         sp.GetRequiredService<IUserContext>()));
+builder.Services.AddScoped<IRepository<TrackedListing>>(sp =>
+    new TenantRepository<TrackedListing>(
+        sp.GetRequiredService<LiteDbRepository<TrackedListing>>(),
+        sp.GetRequiredService<IUserContext>()));
 builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
     new TenantRepository<NotificationOutboxEntry>(
         sp.GetRequiredService<LiteDbRepository<NotificationOutboxEntry>>(),
@@ -376,6 +380,9 @@ builder.Services.AddScoped<IFilterEvaluationService, FilterEvaluationService>();
 builder.Services.AddScoped<IErrorResolutionService, ErrorResolutionService>();
 builder.Services.AddSingleton<IProfileFilterRuleGenerator, ProfileFilterRuleGenerator>();
 builder.Services.AddScoped<JobWatchSeeder>();
+builder.Services.AddSingleton<IAlertPolicyService, AlertPolicyService>();
+builder.Services.AddScoped<IListingTrackingService, ListingTrackingService>();
+builder.Services.AddSingleton<IJobAlertContentGenerator, JobAlertContentGenerator>();
 
 // Auto-healing services
 builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();
