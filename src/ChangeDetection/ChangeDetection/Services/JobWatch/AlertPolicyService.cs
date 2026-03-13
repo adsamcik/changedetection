@@ -14,15 +14,15 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
     private static readonly HashSet<string> HardFailDimensions =
         ["education", "dealbreakers", "location"];
 
-    public JobAlertPolicyResult Evaluate(string? dimensionsJson, string? recommendation, DateTime? deadline = null)
+    public AlertPolicyResult Evaluate(string? dimensionsJson, string? recommendation, DateTime? deadline = null)
     {
         if (string.IsNullOrWhiteSpace(dimensionsJson))
         {
-            return new JobAlertPolicyResult
+            return new AlertPolicyResult
             {
                 AlertLevel = recommendation?.Equals("SKIP", StringComparison.OrdinalIgnoreCase) == true
-                    ? JobAlertLevel.Silent
-                    : JobAlertLevel.Medium,
+                    ? AlertLevel.Silent
+                    : AlertLevel.Medium,
                 Reason = "No dimension data available — defaulting based on recommendation"
             };
         }
@@ -35,9 +35,9 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
         catch (JsonException ex)
         {
             logger.LogWarning(ex, "Failed to parse dimensions JSON for alert policy evaluation");
-            return new JobAlertPolicyResult
+            return new AlertPolicyResult
             {
-                AlertLevel = JobAlertLevel.Medium,
+                AlertLevel = AlertLevel.Medium,
                 Reason = "Dimension parsing failed — defaulting to MEDIUM for safety"
             };
         }
@@ -78,41 +78,41 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
         }
 
         // Determine base alert level
-        JobAlertLevel baseLevel;
+        AlertLevel baseLevel;
         string reason;
 
         if (hasHardFail)
         {
-            baseLevel = JobAlertLevel.Silent;
+            baseLevel = AlertLevel.Silent;
             reason = $"Hard disqualifier: {string.Join("; ", failReasons)}";
         }
         else if (hasStretch)
         {
-            baseLevel = JobAlertLevel.Medium;
+            baseLevel = AlertLevel.Medium;
             reason = $"Partial match: {string.Join("; ", stretchReasons)}";
         }
         else if (hasUnknown && dimensions.Count(d =>
             d.Value.Status?.Equals("PASS", StringComparison.OrdinalIgnoreCase) == true) < 3)
         {
             // Too many unknowns with few passes — be cautious, show as MEDIUM
-            baseLevel = JobAlertLevel.Medium;
+            baseLevel = AlertLevel.Medium;
             reason = "Insufficient information for confident match — review recommended";
         }
         else
         {
-            baseLevel = JobAlertLevel.High;
+            baseLevel = AlertLevel.High;
             reason = "All checks pass — strong profile match";
         }
 
         // Override with LLM recommendation if it contradicts
         if (recommendation is not null)
         {
-            if (recommendation.Equals("SKIP", StringComparison.OrdinalIgnoreCase) && baseLevel == JobAlertLevel.High)
+            if (recommendation.Equals("SKIP", StringComparison.OrdinalIgnoreCase) && baseLevel == AlertLevel.High)
             {
-                baseLevel = JobAlertLevel.Medium;
+                baseLevel = AlertLevel.Medium;
                 reason = $"LLM recommends SKIP despite passing checks: {reason}";
             }
-            else if (recommendation.Equals("APPLY", StringComparison.OrdinalIgnoreCase) && baseLevel == JobAlertLevel.Medium)
+            else if (recommendation.Equals("APPLY", StringComparison.OrdinalIgnoreCase) && baseLevel == AlertLevel.Medium)
             {
                 // Don't escalate MEDIUM→HIGH based on recommendation alone, but note it
                 reason = $"[LLM: APPLY] {reason}";
@@ -121,7 +121,7 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
 
         // Apply deadline urgency
         var urgencyApplied = false;
-        JobAlertLevel? preUrgencyLevel = null;
+        AlertLevel? preUrgencyLevel = null;
         int? daysUntilDeadline = null;
 
         if (deadline.HasValue)
@@ -134,17 +134,17 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
                 // Deadline passed — don't escalate, this will be expired
                 reason = $"{reason} | ⏰ Deadline passed";
             }
-            else if (daysLeft <= 3 && baseLevel != JobAlertLevel.Silent)
+            else if (daysLeft <= 3 && baseLevel != AlertLevel.Silent)
             {
                 preUrgencyLevel = baseLevel;
-                baseLevel = JobAlertLevel.High;
+                baseLevel = AlertLevel.High;
                 urgencyApplied = true;
                 reason = $"🚨 URGENT — {daysLeft}d left | {reason}";
             }
-            else if (daysLeft <= 7 && baseLevel == JobAlertLevel.Medium)
+            else if (daysLeft <= 7 && baseLevel == AlertLevel.Medium)
             {
                 preUrgencyLevel = baseLevel;
-                baseLevel = JobAlertLevel.High;
+                baseLevel = AlertLevel.High;
                 urgencyApplied = true;
                 reason = $"⏰ {daysLeft}d until deadline — escalated | {reason}";
             }
@@ -158,7 +158,7 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
             "Alert policy evaluated: {AlertLevel} (urgency={Urgency}, dims={DimCount})",
             baseLevel, urgencyApplied, dimensions.Count);
 
-        return new JobAlertPolicyResult
+        return new AlertPolicyResult
         {
             AlertLevel = baseLevel,
             Reason = reason,
@@ -169,12 +169,12 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
         };
     }
 
-    public JobAlertPolicyResult EvaluateRemoval(TrackedListing listing)
+    public AlertPolicyResult EvaluateRemoval(TrackedItem item)
     {
-        return new JobAlertPolicyResult
+        return new AlertPolicyResult
         {
-            AlertLevel = JobAlertLevel.Info,
-            Reason = $"Listing removed: {listing.Title} at {listing.Company}"
+            AlertLevel = AlertLevel.Info,
+            Reason = $"Listing removed: {item.DisplayName} at {item.DisplaySecondary}"
         };
     }
 

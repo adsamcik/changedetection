@@ -199,7 +199,7 @@ builder.Services.AddScoped(sp =>
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<LiteDbContext>(), "notification_outbox"));
 builder.Services.AddScoped(sp =>
-    new LiteDbRepository<TrackedListing>(sp.GetRequiredService<LiteDbContext>(), "tracked_listings"));
+    new LiteDbRepository<TrackedItem>(sp.GetRequiredService<LiteDbContext>(), "tracked_listings"));
 
 // Register tenant-scoped repository wrappers for owned entities
 builder.Services.AddScoped<IRepository<WatchedSite>>(sp => 
@@ -226,9 +226,9 @@ builder.Services.AddScoped<IRepository<WatchGroup>>(sp =>
     new TenantRepository<WatchGroup>(
         sp.GetRequiredService<LiteDbRepository<WatchGroup>>(),
         sp.GetRequiredService<IUserContext>()));
-builder.Services.AddScoped<IRepository<TrackedListing>>(sp =>
-    new TenantRepository<TrackedListing>(
-        sp.GetRequiredService<LiteDbRepository<TrackedListing>>(),
+builder.Services.AddScoped<IRepository<TrackedItem>>(sp =>
+    new TenantRepository<TrackedItem>(
+        sp.GetRequiredService<LiteDbRepository<TrackedItem>>(),
         sp.GetRequiredService<IUserContext>()));
 builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
     new TenantRepository<NotificationOutboxEntry>(
@@ -383,8 +383,8 @@ builder.Services.AddScoped<IErrorResolutionService, ErrorResolutionService>();
 builder.Services.AddSingleton<IProfileFilterRuleGenerator, ProfileFilterRuleGenerator>();
 builder.Services.AddScoped<JobWatchSeeder>();
 builder.Services.AddSingleton<IAlertPolicyService, AlertPolicyService>();
-builder.Services.AddScoped<IListingTrackingService, ListingTrackingService>();
-builder.Services.AddSingleton<IJobAlertContentGenerator, JobAlertContentGenerator>();
+builder.Services.AddScoped<IItemTrackingService, ItemTrackingService>();
+builder.Services.AddSingleton<IAlertContentGenerator, AlertContentGenerator>();
 
 // Auto-healing services
 builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();

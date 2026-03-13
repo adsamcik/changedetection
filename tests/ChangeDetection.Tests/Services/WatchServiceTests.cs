@@ -79,7 +79,7 @@ public class ServerWatchServiceTests
             _deduplicationService,
             _priceTrackingService,
             Substitute.For<IRepository<WatchGroup>>(),
-            Substitute.For<IListingTrackingService>(),
+            Substitute.For<IItemTrackingService>(),
             _logger);
     }
 

@@ -9,23 +9,23 @@ using TUnit.Core;
 namespace ChangeDetection.Tests.Services.JobWatch;
 
 /// <summary>
-/// Tests for ListingTrackingService — lifecycle state machine and cross-portal dedup.
+/// Tests for ItemTrackingService — lifecycle state machine and cross-portal dedup.
 /// </summary>
 [Category("Unit")]
-public class ListingTrackingServiceTests : TestBase
+public class ItemTrackingServiceTests : TestBase
 {
-    private readonly IRepository<TrackedListing> _repo = Substitute.For<IRepository<TrackedListing>>();
+    private readonly IRepository<TrackedItem> _repo = Substitute.For<IRepository<TrackedItem>>();
     private readonly IAlertPolicyService _alertPolicy;
-    private readonly ListingTrackingService _sut;
+    private readonly ItemTrackingService _sut;
 
-    public ListingTrackingServiceTests()
+    public ItemTrackingServiceTests()
     {
         _alertPolicy = new AlertPolicyService(NullLogger<AlertPolicyService>.Instance);
-        _sut = new ListingTrackingService(_repo, _alertPolicy, NullLogger<ListingTrackingService>.Instance);
+        _sut = new ItemTrackingService(_repo, _alertPolicy, NullLogger<ItemTrackingService>.Instance);
     }
 
     [Test]
-    public async Task ProcessDiff_NewItems_CreatesTrackedListings()
+    public async Task ProcessDiff_NewItems_CreatesTrackedItems()
     {
         SetupEmptyRepo();
 
@@ -43,12 +43,12 @@ public class ListingTrackingServiceTests : TestBase
             Guid.NewGuid(), Guid.NewGuid(), Guid.Empty,
             diff, dimensionsJson, "APPLY", CancellationToken.None);
 
-        result.NewListings.Count.ShouldBe(2);
-        result.NewListings[0].Title.ShouldBe("Lab Scientist");
-        result.NewListings[1].Title.ShouldBe("Research Assistant");
-        result.NewListings.ShouldAllBe(l => l.State == ListingState.New);
+        result.NewItems.Count.ShouldBe(2);
+        result.NewItems[0].DisplayName.ShouldBe("Lab Scientist");
+        result.NewItems[1].DisplayName.ShouldBe("Research Assistant");
+        result.NewItems.ShouldAllBe(l => l.State == TrackedItemState.New);
 
-        await _repo.Received(2).InsertAsync(Arg.Any<TrackedListing>(), Arg.Any<CancellationToken>());
+        await _repo.Received(2).InsertAsync(Arg.Any<TrackedItem>(), Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -58,14 +58,14 @@ public class ListingTrackingServiceTests : TestBase
         var watch1Id = Guid.NewGuid();
         var watch2Id = Guid.NewGuid();
 
-        var existingListing = new TrackedListing
+        var existingListing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             SourceWatchId = watch1Id,
             IdentityKey = "lab scientist|biocorp",
-            Title = "Lab Scientist",
-            Company = "BioCorp"
+            DisplayName = "Lab Scientist",
+            DisplaySecondary = "BioCorp"
         };
 
         SetupRepoWith(groupId, existingListing);
@@ -79,8 +79,8 @@ public class ListingTrackingServiceTests : TestBase
             groupId, watch2Id, Guid.Empty,
             diff, null, null, CancellationToken.None);
 
-        result.NewListings.Count.ShouldBe(0);
-        result.DuplicateListings.Count.ShouldBe(1);
+        result.NewItems.Count.ShouldBe(0);
+        result.DuplicateItems.Count.ShouldBe(1);
         existingListing.AdditionalSourceWatchIds.ShouldContain(watch2Id);
     }
 
@@ -88,15 +88,15 @@ public class ListingTrackingServiceTests : TestBase
     public async Task ProcessDiff_RemovedItem_IncrementsAbsenceCounter()
     {
         var groupId = Guid.NewGuid();
-        var existing = new TrackedListing
+        var existing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             SourceWatchId = Guid.NewGuid(),
             IdentityKey = "lab scientist|biocorp",
-            Title = "Lab Scientist",
-            Company = "BioCorp",
-            State = ListingState.Alerted,
+            DisplayName = "Lab Scientist",
+            DisplaySecondary = "BioCorp",
+            State = TrackedItemState.Alerted,
             ConsecutiveAbsences = 0
         };
 
@@ -121,15 +121,15 @@ public class ListingTrackingServiceTests : TestBase
     public async Task ProcessDiff_SecondAbsence_ConfirmsExpiry()
     {
         var groupId = Guid.NewGuid();
-        var existing = new TrackedListing
+        var existing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             SourceWatchId = Guid.NewGuid(),
             IdentityKey = "lab scientist|biocorp",
-            Title = "Lab Scientist",
-            Company = "BioCorp",
-            State = ListingState.Alerted,
+            DisplayName = "Lab Scientist",
+            DisplaySecondary = "BioCorp",
+            State = TrackedItemState.Alerted,
             ConsecutiveAbsences = 1 // Already absent once
         };
 
@@ -145,94 +145,94 @@ public class ListingTrackingServiceTests : TestBase
             diff, null, null, CancellationToken.None);
 
         result.ConfirmedExpired.Count.ShouldBe(1);
-        existing.State.ShouldBe(ListingState.Expired);
+        existing.State.ShouldBe(TrackedItemState.Expired);
     }
 
     [Test]
     public async Task TransitionState_ValidTransitions_Succeed()
     {
-        var listing = new TrackedListing
+        var listing = new TrackedItem
         {
             Id = Guid.NewGuid(),
             IdentityKey = "test|co",
-            State = ListingState.New
+            State = TrackedItemState.New
         };
         _repo.GetByIdAsync(listing.Id, Arg.Any<CancellationToken>()).Returns(listing);
 
-        var result = await _sut.TransitionStateAsync(listing.Id, ListingState.Alerted, null, CancellationToken.None);
+        var result = await _sut.TransitionStateAsync(listing.Id, TrackedItemState.Alerted, null, CancellationToken.None);
         result.ShouldBeTrue();
-        listing.State.ShouldBe(ListingState.Alerted);
+        listing.State.ShouldBe(TrackedItemState.Alerted);
         listing.AlertedAt.ShouldNotBeNull();
     }
 
     [Test]
     public async Task TransitionState_InvalidTransition_ReturnsFalse()
     {
-        var listing = new TrackedListing
+        var listing = new TrackedItem
         {
             Id = Guid.NewGuid(),
             IdentityKey = "test|co",
-            State = ListingState.Expired
+            State = TrackedItemState.Expired
         };
         _repo.GetByIdAsync(listing.Id, Arg.Any<CancellationToken>()).Returns(listing);
 
         // Expired → Applied is not valid
-        var result = await _sut.TransitionStateAsync(listing.Id, ListingState.Applied, null, CancellationToken.None);
+        var result = await _sut.TransitionStateAsync(listing.Id, TrackedItemState.ActedOn, null, CancellationToken.None);
         result.ShouldBeFalse();
-        listing.State.ShouldBe(ListingState.Expired);
+        listing.State.ShouldBe(TrackedItemState.Expired);
     }
 
     [Test]
     public async Task ExpirePassedDeadlines_ExpiresOverdueListings()
     {
         var groupId = Guid.NewGuid();
-        var expiredListing = new TrackedListing
+        var expiredListing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             IdentityKey = "expired|co",
-            State = ListingState.Alerted,
+            State = TrackedItemState.Alerted,
             Deadline = DateTime.UtcNow.AddDays(-2) // Past deadline
         };
-        var activeListing = new TrackedListing
+        var activeListing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             IdentityKey = "active|co",
-            State = ListingState.Alerted,
+            State = TrackedItemState.Alerted,
             Deadline = DateTime.UtcNow.AddDays(5) // Future deadline
         };
-        var noDeadlineListing = new TrackedListing
+        var noDeadlineListing = new TrackedItem
         {
             OwnerId = Guid.Empty,
             WatchGroupId = groupId,
             IdentityKey = "nodeadline|co",
-            State = ListingState.New,
+            State = TrackedItemState.New,
             Deadline = null
         };
 
         // FindAsync for active listings (not expired/dismissed)
-        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
-            .Returns(new List<TrackedListing> { expiredListing, activeListing, noDeadlineListing });
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedItem, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TrackedItem> { expiredListing, activeListing, noDeadlineListing });
 
         var count = await _sut.ExpirePassedDeadlinesAsync(groupId, CancellationToken.None);
 
         count.ShouldBe(1);
-        expiredListing.State.ShouldBe(ListingState.Expired);
+        expiredListing.State.ShouldBe(TrackedItemState.Expired);
         expiredListing.ExpiryReason.ShouldBe(ExpiryReason.DeadlinePassed);
-        activeListing.State.ShouldBe(ListingState.Alerted);
-        noDeadlineListing.State.ShouldBe(ListingState.New);
+        activeListing.State.ShouldBe(TrackedItemState.Alerted);
+        noDeadlineListing.State.ShouldBe(TrackedItemState.New);
     }
 
     private void SetupEmptyRepo()
     {
-        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
-            .Returns(new List<TrackedListing>());
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedItem, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TrackedItem>());
     }
 
-    private void SetupRepoWith(Guid groupId, params TrackedListing[] listings)
+    private void SetupRepoWith(Guid groupId, params TrackedItem[] listings)
     {
-        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedItem, bool>>>(), Arg.Any<CancellationToken>())
             .Returns(listings.ToList());
     }
 

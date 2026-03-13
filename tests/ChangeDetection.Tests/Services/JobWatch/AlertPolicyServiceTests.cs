@@ -29,7 +29,7 @@ public class AlertPolicyServiceTests : TestBase
 
         var result = _sut.Evaluate(dimensionsJson, "APPLY");
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.High);
+        result.AlertLevel.ShouldBe(AlertLevel.High);
         result.Reason.ShouldContain("All checks pass");
         await Task.CompletedTask;
     }
@@ -47,7 +47,7 @@ public class AlertPolicyServiceTests : TestBase
 
         var result = _sut.Evaluate(dimensionsJson, "SKIP");
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.Silent);
+        result.AlertLevel.ShouldBe(AlertLevel.Silent);
         result.Reason.ShouldContain("education");
         await Task.CompletedTask;
     }
@@ -65,7 +65,7 @@ public class AlertPolicyServiceTests : TestBase
 
         var result = _sut.Evaluate(dimensionsJson, "SKIP");
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.Silent);
+        result.AlertLevel.ShouldBe(AlertLevel.Silent);
         result.Reason.ShouldContain("dealbreakers");
         await Task.CompletedTask;
     }
@@ -83,7 +83,7 @@ public class AlertPolicyServiceTests : TestBase
 
         var result = _sut.Evaluate(dimensionsJson, "REVIEW");
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.Medium);
+        result.AlertLevel.ShouldBe(AlertLevel.Medium);
         result.Reason.ShouldContain("education");
         await Task.CompletedTask;
     }
@@ -104,7 +104,7 @@ public class AlertPolicyServiceTests : TestBase
         var result = _sut.Evaluate(dimensionsJson, "REVIEW");
 
         // salary FAIL should NOT make it SILENT — it's treated as STRETCH
-        result.AlertLevel.ShouldBe(JobAlertLevel.Medium);
+        result.AlertLevel.ShouldBe(AlertLevel.Medium);
         result.Reason.ShouldContain("salary");
         await Task.CompletedTask;
     }
@@ -122,9 +122,9 @@ public class AlertPolicyServiceTests : TestBase
         var deadline = DateTime.UtcNow.AddDays(2);
         var result = _sut.Evaluate(dimensionsJson, "REVIEW", deadline);
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.High);
+        result.AlertLevel.ShouldBe(AlertLevel.High);
         result.UrgencyApplied.ShouldBeTrue();
-        result.PreUrgencyLevel.ShouldBe(JobAlertLevel.Medium);
+        result.PreUrgencyLevel.ShouldBe(AlertLevel.Medium);
         result.Reason.ShouldContain("URGENT");
         await Task.CompletedTask;
     }
@@ -142,7 +142,7 @@ public class AlertPolicyServiceTests : TestBase
         var deadline = DateTime.UtcNow.AddDays(5);
         var result = _sut.Evaluate(dimensionsJson, "REVIEW", deadline);
 
-        result.AlertLevel.ShouldBe(JobAlertLevel.High);
+        result.AlertLevel.ShouldBe(AlertLevel.High);
         result.UrgencyApplied.ShouldBeTrue();
         result.DaysUntilDeadline.ShouldBe(5);
         await Task.CompletedTask;
@@ -162,7 +162,7 @@ public class AlertPolicyServiceTests : TestBase
         var result = _sut.Evaluate(dimensionsJson, "SKIP", deadline);
 
         // SILENT should remain SILENT even with deadline urgency
-        result.AlertLevel.ShouldBe(JobAlertLevel.Silent);
+        result.AlertLevel.ShouldBe(AlertLevel.Silent);
         result.UrgencyApplied.ShouldBeFalse();
         await Task.CompletedTask;
     }
@@ -171,25 +171,25 @@ public class AlertPolicyServiceTests : TestBase
     public async Task NullDimensions_DefaultsBasedOnRecommendation()
     {
         var result = _sut.Evaluate(null, "SKIP");
-        result.AlertLevel.ShouldBe(JobAlertLevel.Silent);
+        result.AlertLevel.ShouldBe(AlertLevel.Silent);
 
         var result2 = _sut.Evaluate(null, "APPLY");
-        result2.AlertLevel.ShouldBe(JobAlertLevel.Medium);
+        result2.AlertLevel.ShouldBe(AlertLevel.Medium);
         await Task.CompletedTask;
     }
 
     [Test]
     public async Task EvaluateRemoval_ReturnsInfoLevel()
     {
-        var listing = new TrackedListing
+        var listing = new TrackedItem
         {
             IdentityKey = "test|company",
-            Title = "Lab Scientist",
-            Company = "BioCorp"
+            DisplayName = "Lab Scientist",
+            DisplaySecondary = "BioCorp"
         };
 
         var result = _sut.EvaluateRemoval(listing);
-        result.AlertLevel.ShouldBe(JobAlertLevel.Info);
+        result.AlertLevel.ShouldBe(AlertLevel.Info);
         result.Reason.ShouldContain("Lab Scientist");
         result.Reason.ShouldContain("BioCorp");
         await Task.CompletedTask;

@@ -6,9 +6,9 @@ using ChangeDetection.Core.Interfaces;
 namespace ChangeDetection.Services.JobWatch;
 
 /// <summary>
-/// Generates formatted alert content with profile match breakdown for job notifications.
+/// Generates formatted alert content with profile match breakdown for notifications.
 /// </summary>
-public class JobAlertContentGenerator : IJobAlertContentGenerator
+public class AlertContentGenerator : IAlertContentGenerator
 {
     private static readonly Dictionary<string, string> StatusEmojis = new()
     {
@@ -18,23 +18,23 @@ public class JobAlertContentGenerator : IJobAlertContentGenerator
         ["UNKNOWN"] = "❓"
     };
 
-    private static readonly Dictionary<JobAlertLevel, string> LevelEmojis = new()
+    private static readonly Dictionary<AlertLevel, string> LevelEmojis = new()
     {
-        [JobAlertLevel.High] = "🔴",
-        [JobAlertLevel.Medium] = "🟡",
-        [JobAlertLevel.Silent] = "⚪",
-        [JobAlertLevel.Info] = "ℹ️"
+        [AlertLevel.High] = "🔴",
+        [AlertLevel.Medium] = "🟡",
+        [AlertLevel.Silent] = "⚪",
+        [AlertLevel.Info] = "ℹ️"
     };
 
-    public JobAlertContent Generate(TrackedListing listing, JobAlertPolicyResult policyResult)
+    public AlertContent Generate(TrackedItem item, AlertPolicyResult policyResult)
     {
         var levelEmoji = LevelEmojis.GetValueOrDefault(policyResult.AlertLevel, "⚪");
-        var summary = $"{levelEmoji} {listing.Title} at {listing.Company}";
+        var summary = $"{levelEmoji} {item.DisplayName} at {item.DisplaySecondary}";
 
-        var plainText = GeneratePlainText(listing, policyResult, levelEmoji);
-        var html = GenerateHtml(listing, policyResult, levelEmoji);
+        var plainText = GeneratePlainText(item, policyResult, levelEmoji);
+        var html = GenerateHtml(item, policyResult, levelEmoji);
 
-        return new JobAlertContent
+        return new AlertContent
         {
             PlainText = plainText,
             Html = html,
@@ -43,26 +43,26 @@ public class JobAlertContentGenerator : IJobAlertContentGenerator
         };
     }
 
-    private static string GeneratePlainText(TrackedListing listing, JobAlertPolicyResult policyResult, string levelEmoji)
+    private static string GeneratePlainText(TrackedItem item, AlertPolicyResult policyResult, string levelEmoji)
     {
         var sb = new StringBuilder();
 
         var label = policyResult.AlertLevel switch
         {
-            JobAlertLevel.High => "NEW MATCH",
-            JobAlertLevel.Medium => "WORTH REVIEWING",
-            JobAlertLevel.Info => "STATUS UPDATE",
+            AlertLevel.High => "NEW MATCH",
+            AlertLevel.Medium => "WORTH REVIEWING",
+            AlertLevel.Info => "STATUS UPDATE",
             _ => "LOGGED"
         };
 
-        sb.AppendLine($"{levelEmoji} {label}: {listing.Title} at {listing.Company}");
-        sb.AppendLine($"Location: {listing.Location ?? "Not specified"}");
+        sb.AppendLine($"{levelEmoji} {label}: {item.DisplayName} at {item.DisplaySecondary}");
+        sb.AppendLine($"Location: {item.DisplayContext ?? "Not specified"}");
 
-        if (listing.Deadline.HasValue)
-            sb.AppendLine($"Deadline: {listing.Deadline.Value:yyyy-MM-dd}");
+        if (item.Deadline.HasValue)
+            sb.AppendLine($"Deadline: {item.Deadline.Value:yyyy-MM-dd}");
 
-        if (!string.IsNullOrWhiteSpace(listing.Url))
-            sb.AppendLine($"Link: {listing.Url}");
+        if (!string.IsNullOrWhiteSpace(item.Url))
+            sb.AppendLine($"Link: {item.Url}");
 
         sb.AppendLine();
         sb.AppendLine("Profile match:");
@@ -80,32 +80,32 @@ public class JobAlertContentGenerator : IJobAlertContentGenerator
         }
 
         sb.AppendLine();
-        sb.AppendLine($"Recommendation: {listing.Recommendation ?? policyResult.Reason}");
+        sb.AppendLine($"Recommendation: {item.Recommendation ?? policyResult.Reason}");
 
         return sb.ToString();
     }
 
-    private static string GenerateHtml(TrackedListing listing, JobAlertPolicyResult policyResult, string levelEmoji)
+    private static string GenerateHtml(TrackedItem item, AlertPolicyResult policyResult, string levelEmoji)
     {
         var sb = new StringBuilder();
 
         var label = policyResult.AlertLevel switch
         {
-            JobAlertLevel.High => "NEW MATCH",
-            JobAlertLevel.Medium => "WORTH REVIEWING",
-            JobAlertLevel.Info => "STATUS UPDATE",
+            AlertLevel.High => "NEW MATCH",
+            AlertLevel.Medium => "WORTH REVIEWING",
+            AlertLevel.Info => "STATUS UPDATE",
             _ => "LOGGED"
         };
 
-        sb.AppendLine($"<h2>{levelEmoji} {label}: {Escape(listing.Title)} at {Escape(listing.Company)}</h2>");
+        sb.AppendLine($"<h2>{levelEmoji} {label}: {Escape(item.DisplayName)} at {Escape(item.DisplaySecondary)}</h2>");
         sb.AppendLine("<table style='border-collapse:collapse;'>");
-        sb.AppendLine($"<tr><td><strong>Location:</strong></td><td>{Escape(listing.Location ?? "Not specified")}</td></tr>");
+        sb.AppendLine($"<tr><td><strong>Location:</strong></td><td>{Escape(item.DisplayContext ?? "Not specified")}</td></tr>");
 
-        if (listing.Deadline.HasValue)
-            sb.AppendLine($"<tr><td><strong>Deadline:</strong></td><td>{listing.Deadline.Value:yyyy-MM-dd}</td></tr>");
+        if (item.Deadline.HasValue)
+            sb.AppendLine($"<tr><td><strong>Deadline:</strong></td><td>{item.Deadline.Value:yyyy-MM-dd}</td></tr>");
 
-        if (!string.IsNullOrWhiteSpace(listing.Url))
-            sb.AppendLine($"<tr><td><strong>Link:</strong></td><td><a href='{Escape(listing.Url)}'>{Escape(listing.Url)}</a></td></tr>");
+        if (!string.IsNullOrWhiteSpace(item.Url))
+            sb.AppendLine($"<tr><td><strong>Link:</strong></td><td><a href='{Escape(item.Url)}'>{Escape(item.Url)}</a></td></tr>");
 
         sb.AppendLine("</table>");
         sb.AppendLine("<h3>Profile Match</h3>");
@@ -134,7 +134,7 @@ public class JobAlertContentGenerator : IJobAlertContentGenerator
         if (policyResult.DaysUntilDeadline is > 0)
             sb.AppendLine($"<p>⏰ <strong>{policyResult.DaysUntilDeadline} days until deadline</strong></p>");
 
-        sb.AppendLine($"<p><strong>Recommendation:</strong> {Escape(listing.Recommendation ?? policyResult.Reason)}</p>");
+        sb.AppendLine($"<p><strong>Recommendation:</strong> {Escape(item.Recommendation ?? policyResult.Reason)}</p>");
 
         return sb.ToString();
     }

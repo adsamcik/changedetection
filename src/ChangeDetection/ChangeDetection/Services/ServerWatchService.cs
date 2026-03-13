@@ -32,7 +32,7 @@ public class ServerWatchService : IWatchService
     private readonly IPriceTrackingService _priceTrackingService;
     private readonly IPiiRedactor? _piiRedactor;
     private readonly IRepository<WatchGroup> _groupRepo;
-    private readonly IListingTrackingService _listingTrackingService;
+    private readonly IItemTrackingService _itemTrackingService;
     private readonly ILogger<ServerWatchService> _logger;
 
     public ServerWatchService(
@@ -56,7 +56,7 @@ public class ServerWatchService : IWatchService
         IDeduplicationService deduplicationService,
         IPriceTrackingService priceTrackingService,
         IRepository<WatchGroup> groupRepo,
-        IListingTrackingService listingTrackingService,
+        IItemTrackingService itemTrackingService,
         ILogger<ServerWatchService> logger,
         IPiiRedactor? piiRedactor = null)
     {
@@ -80,7 +80,7 @@ public class ServerWatchService : IWatchService
         _deduplicationService = deduplicationService;
         _priceTrackingService = priceTrackingService;
         _groupRepo = groupRepo;
-        _listingTrackingService = listingTrackingService;
+        _itemTrackingService = itemTrackingService;
         _logger = logger;
         _piiRedactor = piiRedactor;
     }
@@ -571,7 +571,7 @@ public class ServerWatchService : IWatchService
                     {
                         try
                         {
-                            var trackingResult = await _listingTrackingService.ProcessDiffAsync(
+                            var trackingResult = await _itemTrackingService.ProcessDiffAsync(
                                 watch.GroupId.Value,
                                 watch.Id,
                                 watch.OwnerId,
@@ -581,20 +581,20 @@ public class ServerWatchService : IWatchService
                                 changeEvent.Id,
                                 ct);
 
-                            if (trackingResult.NewListings.Count > 0 || trackingResult.ConfirmedExpired.Count > 0)
+                            if (trackingResult.NewItems.Count > 0 || trackingResult.ConfirmedExpired.Count > 0)
                             {
                                 _logger.LogInformation(
-                                    "Listing tracking for watch {WatchId}: {New} new, {Dup} dedup, {PotExp} potentially expired, {ConfExp} confirmed expired",
-                                    watch.Id, trackingResult.NewListings.Count, trackingResult.DuplicateListings.Count,
+                                    "Item tracking for watch {WatchId}: {New} new, {Dup} dedup, {PotExp} potentially expired, {ConfExp} confirmed expired",
+                                    watch.Id, trackingResult.NewItems.Count, trackingResult.DuplicateItems.Count,
                                     trackingResult.PotentiallyExpired.Count, trackingResult.ConfirmedExpired.Count);
                             }
 
-                            // Expire any listings whose deadlines have passed
-                            await _listingTrackingService.ExpirePassedDeadlinesAsync(watch.GroupId.Value, ct);
+                            // Expire any items whose deadlines have passed
+                            await _itemTrackingService.ExpirePassedDeadlinesAsync(watch.GroupId.Value, ct);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Listing tracking failed for watch {WatchId} — non-fatal, continuing", watch.Id);
+                            _logger.LogWarning(ex, "Item tracking failed for watch {WatchId} — non-fatal, continuing", watch.Id);
                         }
                     }
                     
