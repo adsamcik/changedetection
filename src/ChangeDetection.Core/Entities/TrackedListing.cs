@@ -71,11 +71,32 @@ public class TrackedListing : IOwnedEntity
     /// </summary>
     public int ConsecutiveAbsences { get; set; }
 
+    /// <summary>Why this listing expired (deadline passed, removed from source, manual).</summary>
+    public ExpiryReason? ExpiryReason { get; set; }
+
+    /// <summary>The ChangeEvent that first created this tracked listing.</summary>
+    public Guid? OriginChangeEventId { get; set; }
+
     /// <summary>Raw extracted data as JSON for reference.</summary>
     public string? ExtractedDataJson { get; set; }
 
     /// <summary>Additional watch IDs that also found this listing (cross-portal dedup).</summary>
     public List<Guid> AdditionalSourceWatchIds { get; set; } = [];
+}
+
+/// <summary>
+/// Why a tracked listing expired.
+/// </summary>
+public enum ExpiryReason
+{
+    /// <summary>Application deadline has passed.</summary>
+    DeadlinePassed,
+
+    /// <summary>Listing was removed from the source page (confirmed after 2+ absences).</summary>
+    RemovedFromSource,
+
+    /// <summary>Manually expired by the user.</summary>
+    Manual
 }
 
 /// <summary>

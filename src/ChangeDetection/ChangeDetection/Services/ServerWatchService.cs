@@ -32,6 +32,7 @@ public class ServerWatchService : IWatchService
     private readonly IPriceTrackingService _priceTrackingService;
     private readonly IPiiRedactor? _piiRedactor;
     private readonly IRepository<WatchGroup> _groupRepo;
+    private readonly IListingTrackingService _listingTrackingService;
     private readonly ILogger<ServerWatchService> _logger;
 
     public ServerWatchService(
@@ -55,6 +56,7 @@ public class ServerWatchService : IWatchService
         IDeduplicationService deduplicationService,
         IPriceTrackingService priceTrackingService,
         IRepository<WatchGroup> groupRepo,
+        IListingTrackingService listingTrackingService,
         ILogger<ServerWatchService> logger,
         IPiiRedactor? piiRedactor = null)
     {
@@ -78,6 +80,7 @@ public class ServerWatchService : IWatchService
         _deduplicationService = deduplicationService;
         _priceTrackingService = priceTrackingService;
         _groupRepo = groupRepo;
+        _listingTrackingService = listingTrackingService;
         _logger = logger;
         _piiRedactor = piiRedactor;
     }
@@ -562,6 +565,38 @@ public class ServerWatchService : IWatchService
                     }
 
                     await _eventRepo.InsertAsync(changeEvent, ct);
+
+                    // Track individual listings for group watches with schema extraction
+                    if (watch.GroupId.HasValue && changeEvent.ObjectsDiff is { HasChanges: true })
+                    {
+                        try
+                        {
+                            var trackingResult = await _listingTrackingService.ProcessDiffAsync(
+                                watch.GroupId.Value,
+                                watch.Id,
+                                watch.OwnerId,
+                                changeEvent.ObjectsDiff,
+                                changeEvent.MatchDimensionsJson,
+                                ExtractRecommendation(changeEvent.RelevanceReason),
+                                changeEvent.Id,
+                                ct);
+
+                            if (trackingResult.NewListings.Count > 0 || trackingResult.ConfirmedExpired.Count > 0)
+                            {
+                                _logger.LogInformation(
+                                    "Listing tracking for watch {WatchId}: {New} new, {Dup} dedup, {PotExp} potentially expired, {ConfExp} confirmed expired",
+                                    watch.Id, trackingResult.NewListings.Count, trackingResult.DuplicateListings.Count,
+                                    trackingResult.PotentiallyExpired.Count, trackingResult.ConfirmedExpired.Count);
+                            }
+
+                            // Expire any listings whose deadlines have passed
+                            await _listingTrackingService.ExpirePassedDeadlinesAsync(watch.GroupId.Value, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Listing tracking failed for watch {WatchId} — non-fatal, continuing", watch.Id);
+                        }
+                    }
                     
                     // Update adaptive scheduling metrics when a change is detected
                     UpdateAdaptiveMetrics(watch, watch.LastChanged);
@@ -669,6 +704,18 @@ public class ServerWatchService : IWatchService
     /// Updates the adaptive scheduling metrics after a change is detected.
     /// Uses exponential moving average to smooth out the change interval.
     /// </summary>
+    /// <summary>
+    /// Extracts the LLM recommendation (APPLY/REVIEW/SKIP) from the relevance reason string.
+    /// The scorer prefixes reason with "[RECOMMENDATION] rest of reason".
+    /// </summary>
+    private static string? ExtractRecommendation(string? relevanceReason)
+    {
+        if (string.IsNullOrWhiteSpace(relevanceReason)) return null;
+        if (!relevanceReason.StartsWith('[')) return null;
+        var end = relevanceReason.IndexOf(']');
+        return end > 1 ? relevanceReason[1..end] : null;
+    }
+
     private static void UpdateAdaptiveMetrics(WatchedSite watch, DateTime? previousChangeTime)
     {
         if (watch.ScheduleSettings.Mode != CheckScheduleMode.Adaptive)

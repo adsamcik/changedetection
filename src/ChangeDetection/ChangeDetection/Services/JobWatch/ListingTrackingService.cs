@@ -27,6 +27,20 @@ public class ListingTrackingService(
         string? recommendation,
         CancellationToken ct)
     {
+        return await ProcessDiffAsync(watchGroupId, sourceWatchId, ownerId,
+            diffResult, matchDimensionsJson, recommendation, changeEventId: null, ct);
+    }
+
+    public async Task<ListingTrackingResult> ProcessDiffAsync(
+        Guid watchGroupId,
+        Guid sourceWatchId,
+        Guid ownerId,
+        ObjectDiffResult diffResult,
+        string? matchDimensionsJson,
+        string? recommendation,
+        Guid? changeEventId,
+        CancellationToken ct)
+    {
         var result = new ListingTrackingResult();
         var existing = await GetListingsAsync(watchGroupId, ct);
         var existingByKey = existing.ToDictionary(l => l.IdentityKey, StringComparer.OrdinalIgnoreCase);
@@ -46,6 +60,14 @@ public class ListingTrackingService(
                     existingListing.AdditionalSourceWatchIds.Add(sourceWatchId);
                     await listingRepo.UpdateAsync(existingListing, ct);
                 }
+
+                // Reset absence counter if listing reappeared
+                if (existingListing.ConsecutiveAbsences > 0)
+                {
+                    existingListing.ConsecutiveAbsences = 0;
+                    await listingRepo.UpdateAsync(existingListing, ct);
+                }
+
                 result.DuplicateListings.Add(existingListing);
                 continue;
             }
@@ -68,6 +90,7 @@ public class ListingTrackingService(
                 AlertLevel = policyResult.AlertLevel,
                 MatchDimensionsJson = matchDimensionsJson,
                 Recommendation = recommendation,
+                OriginChangeEventId = changeEventId,
                 ExtractedDataJson = JsonSerializer.Serialize(added.Fields)
             };
 
@@ -93,9 +116,11 @@ public class ListingTrackingService(
             if (trackedListing.ConsecutiveAbsences >= AbsenceThreshold)
             {
                 trackedListing.State = ListingState.Expired;
+                trackedListing.ExpiryReason = Core.Entities.ExpiryReason.RemovedFromSource;
                 trackedListing.StateChangedAt = DateTime.UtcNow;
                 result.ConfirmedExpired.Add(trackedListing);
-                logger.LogInformation("Listing confirmed expired: {Title} at {Company}", trackedListing.Title, trackedListing.Company);
+                logger.LogInformation("Listing confirmed expired (removed from source): {Title} at {Company}",
+                    trackedListing.Title, trackedListing.Company);
             }
             else
             {
@@ -106,32 +131,21 @@ public class ListingTrackingService(
             await listingRepo.UpdateAsync(trackedListing, ct);
         }
 
-        // Reset absence counter for items still present
-        foreach (var added in diffResult.AddedItems)
-        {
-            var identityKey = BuildIdentityKey(added);
-            if (string.IsNullOrWhiteSpace(identityKey)) continue;
-            if (!existingByKey.TryGetValue(identityKey, out var trackedListing)) continue;
-            if (trackedListing.ConsecutiveAbsences <= 0) continue;
-
-            trackedListing.ConsecutiveAbsences = 0;
-            await listingRepo.UpdateAsync(trackedListing, ct);
-        }
-
         return result;
     }
 
     public async Task<IReadOnlyList<TrackedListing>> GetListingsAsync(Guid watchGroupId, CancellationToken ct)
     {
-        var all = await listingRepo.GetAllAsync(ct);
-        return all.Where(l => l.WatchGroupId == watchGroupId).ToList();
+        var results = await listingRepo.FindAsync(l => l.WatchGroupId == watchGroupId, ct);
+        return results.ToList();
     }
 
     public async Task<IReadOnlyList<TrackedListing>> GetListingsByStateAsync(
         Guid watchGroupId, ListingState state, CancellationToken ct)
     {
-        var all = await GetListingsAsync(watchGroupId, ct);
-        return all.Where(l => l.State == state).ToList();
+        var results = await listingRepo.FindAsync(
+            l => l.WatchGroupId == watchGroupId && l.State == state, ct);
+        return results.ToList();
     }
 
     public async Task<bool> TransitionStateAsync(Guid listingId, ListingState newState, string? reason, CancellationToken ct)
@@ -159,6 +173,9 @@ public class ListingTrackingService(
             case ListingState.Dismissed:
                 listing.DismissalReason = reason;
                 break;
+            case ListingState.Expired:
+                listing.ExpiryReason ??= Core.Entities.ExpiryReason.Manual;
+                break;
         }
 
         await listingRepo.UpdateAsync(listing, ct);
@@ -181,15 +198,20 @@ public class ListingTrackingService(
 
     public async Task<int> ExpirePassedDeadlinesAsync(Guid watchGroupId, CancellationToken ct)
     {
-        var active = await GetListingsAsync(watchGroupId, ct);
+        var active = await listingRepo.FindAsync(
+            l => l.WatchGroupId == watchGroupId
+                 && l.State != ListingState.Expired
+                 && l.State != ListingState.Dismissed, ct);
+
         var expiredCount = 0;
+        var now = DateTime.UtcNow.Date;
 
         foreach (var listing in active)
         {
-            if (listing.State is ListingState.Expired or ListingState.Dismissed) continue;
-            if (listing.Deadline is null || listing.Deadline.Value.Date >= DateTime.UtcNow.Date) continue;
+            if (listing.Deadline is null || listing.Deadline.Value.Date >= now) continue;
 
             listing.State = ListingState.Expired;
+            listing.ExpiryReason = Core.Entities.ExpiryReason.DeadlinePassed;
             listing.StateChangedAt = DateTime.UtcNow;
             await listingRepo.UpdateAsync(listing, ct);
             expiredCount++;

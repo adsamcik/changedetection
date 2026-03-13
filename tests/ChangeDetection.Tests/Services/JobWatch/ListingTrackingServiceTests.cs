@@ -27,7 +27,7 @@ public class ListingTrackingServiceTests : TestBase
     [Test]
     public async Task ProcessDiff_NewItems_CreatesTrackedListings()
     {
-        _repo.GetAllAsync(Arg.Any<CancellationToken>()).Returns([]);
+        SetupEmptyRepo();
 
         var diff = new ObjectDiffResult
         {
@@ -68,7 +68,7 @@ public class ListingTrackingServiceTests : TestBase
             Company = "BioCorp"
         };
 
-        _repo.GetAllAsync(Arg.Any<CancellationToken>()).Returns([existingListing]);
+        SetupRepoWith(groupId, existingListing);
 
         var diff = new ObjectDiffResult
         {
@@ -100,7 +100,7 @@ public class ListingTrackingServiceTests : TestBase
             ConsecutiveAbsences = 0
         };
 
-        _repo.GetAllAsync(Arg.Any<CancellationToken>()).Returns([existing]);
+        SetupRepoWith(groupId, existing);
 
         var diff = new ObjectDiffResult
         {
@@ -133,7 +133,7 @@ public class ListingTrackingServiceTests : TestBase
             ConsecutiveAbsences = 1 // Already absent once
         };
 
-        _repo.GetAllAsync(Arg.Any<CancellationToken>()).Returns([existing]);
+        SetupRepoWith(groupId, existing);
 
         var diff = new ObjectDiffResult
         {
@@ -186,42 +186,54 @@ public class ListingTrackingServiceTests : TestBase
     public async Task ExpirePassedDeadlines_ExpiresOverdueListings()
     {
         var groupId = Guid.NewGuid();
-        var listings = new List<TrackedListing>
+        var expiredListing = new TrackedListing
         {
-            new()
-            {
-                OwnerId = Guid.Empty,
-                WatchGroupId = groupId,
-                IdentityKey = "expired|co",
-                State = ListingState.Alerted,
-                Deadline = DateTime.UtcNow.AddDays(-2) // Past deadline
-            },
-            new()
-            {
-                OwnerId = Guid.Empty,
-                WatchGroupId = groupId,
-                IdentityKey = "active|co",
-                State = ListingState.Alerted,
-                Deadline = DateTime.UtcNow.AddDays(5) // Future deadline
-            },
-            new()
-            {
-                OwnerId = Guid.Empty,
-                WatchGroupId = groupId,
-                IdentityKey = "nodeadline|co",
-                State = ListingState.New,
-                Deadline = null
-            }
+            OwnerId = Guid.Empty,
+            WatchGroupId = groupId,
+            IdentityKey = "expired|co",
+            State = ListingState.Alerted,
+            Deadline = DateTime.UtcNow.AddDays(-2) // Past deadline
+        };
+        var activeListing = new TrackedListing
+        {
+            OwnerId = Guid.Empty,
+            WatchGroupId = groupId,
+            IdentityKey = "active|co",
+            State = ListingState.Alerted,
+            Deadline = DateTime.UtcNow.AddDays(5) // Future deadline
+        };
+        var noDeadlineListing = new TrackedListing
+        {
+            OwnerId = Guid.Empty,
+            WatchGroupId = groupId,
+            IdentityKey = "nodeadline|co",
+            State = ListingState.New,
+            Deadline = null
         };
 
-        _repo.GetAllAsync(Arg.Any<CancellationToken>()).Returns(listings);
+        // FindAsync for active listings (not expired/dismissed)
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TrackedListing> { expiredListing, activeListing, noDeadlineListing });
 
         var count = await _sut.ExpirePassedDeadlinesAsync(groupId, CancellationToken.None);
 
         count.ShouldBe(1);
-        listings[0].State.ShouldBe(ListingState.Expired);
-        listings[1].State.ShouldBe(ListingState.Alerted);
-        listings[2].State.ShouldBe(ListingState.New);
+        expiredListing.State.ShouldBe(ListingState.Expired);
+        expiredListing.ExpiryReason.ShouldBe(ExpiryReason.DeadlinePassed);
+        activeListing.State.ShouldBe(ListingState.Alerted);
+        noDeadlineListing.State.ShouldBe(ListingState.New);
+    }
+
+    private void SetupEmptyRepo()
+    {
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<TrackedListing>());
+    }
+
+    private void SetupRepoWith(Guid groupId, params TrackedListing[] listings)
+    {
+        _repo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TrackedListing, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(listings.ToList());
     }
 
     private static ExtractedObject CreateExtractedObject(string title, string company, string location)

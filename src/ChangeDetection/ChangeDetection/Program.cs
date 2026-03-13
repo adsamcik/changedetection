@@ -198,6 +198,8 @@ builder.Services.AddScoped(sp =>
     new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
 builder.Services.AddScoped(sp => 
     new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<LiteDbContext>(), "notification_outbox"));
+builder.Services.AddScoped(sp =>
+    new LiteDbRepository<TrackedListing>(sp.GetRequiredService<LiteDbContext>(), "tracked_listings"));
 
 // Register tenant-scoped repository wrappers for owned entities
 builder.Services.AddScoped<IRepository<WatchedSite>>(sp => 

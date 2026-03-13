@@ -241,7 +241,7 @@ public class ChangeCheckBackgroundService : BackgroundService
                 WatchId = watch.Id,
                 WatchName = watch.Name ?? watch.Url,
                 ChangeId = changeEvent.Id,
-                Summary = changeEvent.DiffSummary,
+                Summary = changeEvent.BriefSummary ?? changeEvent.DiffSummary,
                 DetectedAt = changeEvent.DetectedAt,
                 Importance = changeEvent.Importance.ToString(),
                 LinesAdded = changeEvent.LinesAdded,

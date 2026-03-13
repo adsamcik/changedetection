@@ -22,6 +22,19 @@ public interface IListingTrackingService
         CancellationToken ct);
 
     /// <summary>
+    /// Process diff with a link to the originating ChangeEvent.
+    /// </summary>
+    Task<ListingTrackingResult> ProcessDiffAsync(
+        Guid watchGroupId,
+        Guid sourceWatchId,
+        Guid ownerId,
+        ObjectDiffResult diffResult,
+        string? matchDimensionsJson,
+        string? recommendation,
+        Guid? changeEventId,
+        CancellationToken ct);
+
+    /// <summary>
     /// Get all tracked listings for a watch group.
     /// </summary>
     Task<IReadOnlyList<TrackedListing>> GetListingsAsync(Guid watchGroupId, CancellationToken ct);
