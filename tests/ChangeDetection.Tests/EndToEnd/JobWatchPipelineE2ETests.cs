@@ -552,11 +552,23 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
 
     /// <summary>
     /// Builds a UCPH-style vacancy table page with optional rows.
+    /// Always includes a baseline row so the first check succeeds extraction.
     /// </summary>
     private static string BuildVacancyPage(
-        params (string Title, string Faculty, string Dept, string Deadline, string? Extra)[] rows)
+        params (string Title, string Faculty, string Dept, string Deadline, string? Extra)[] additionalRows)
     {
-        var rowsHtml = string.Join("\n", rows.Select(r => $"""
+        // Always include a baseline row — real portals always have some listings.
+        // Without this, the first check finds 0 items → DriftDetected → circuit breaker opens.
+        var baselineRow = """
+            <tr class="vacancy-specs">
+                <td><a href="/all-vacancies/?show=00001">Existing Position — Administrative Officer</a></td>
+                <td>Administration</td>
+                <td>Central Office</td>
+                <td>01-01-2027</td>
+            </tr>
+            """;
+
+        var additionalHtml = string.Join("\n", additionalRows.Select(r => $"""
             <tr class="vacancy-specs">
                 <td><a href="/all-vacancies/?show={Math.Abs(r.Title.GetHashCode()) % 100000}">{r.Title}</a></td>
                 <td>{r.Faculty}</td>
@@ -571,7 +583,8 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
             <table class="vacancies">
             <thead><tr><th>TITLE</th><th>FACULTY</th><th>LOCATION</th><th>DEADLINE</th></tr></thead>
             <tbody>
-            {rowsHtml}
+            {baselineRow}
+            {additionalHtml}
             </tbody>
             </table>
             </body></html>

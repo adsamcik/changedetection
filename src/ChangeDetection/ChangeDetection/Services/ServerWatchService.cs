@@ -571,12 +571,20 @@ public class ServerWatchService : IWatchService
                     {
                         try
                         {
+                            // If filter rules suppressed the notification, pass null dimensions
+                            // so the alert policy defaults to Medium (not High). The filter
+                            // suppression itself prevents notification — tracking still records
+                            // the item but with a lower alert level.
+                            var trackDimensions = changeEvent.IsNotified
+                                ? null  // Pre-suppressed by filter → no LLM dimensions to route
+                                : changeEvent.MatchDimensionsJson;
+
                             var trackingResult = await _itemTrackingService.ProcessDiffAsync(
                                 watch.GroupId.Value,
                                 watch.Id,
                                 watch.OwnerId,
                                 changeEvent.ObjectsDiff,
-                                changeEvent.MatchDimensionsJson,
+                                trackDimensions,
                                 ExtractRecommendation(changeEvent.RelevanceReason),
                                 changeEvent.Id,
                                 watch.Schema?.IdentityFieldNames,
