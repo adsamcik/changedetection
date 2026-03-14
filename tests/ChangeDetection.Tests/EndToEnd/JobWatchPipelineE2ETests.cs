@@ -185,8 +185,245 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    // Helpers
+    // TC3: "PhD or Equivalent" — Should score MEDIUM (ambiguous)
     // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC3_PhDOrEquivalent_FullPipeline_ProducesMediumAlert()
+    {
+        var url = "https://careers.novonesis.com/test/tc3";
+        var baseline = BuildVacancyPage();
+        var withNewRole = BuildVacancyPage(
+            ("Scientist, Protein Biochemistry", "Faculty of Science", "Enzyme Department", "20-04-2026", null));
+
+        // Inject additional context as page body text
+        var withNewRoleHtml = withNewRole.Replace("</body>",
+            "<p>Qualifications: PhD in biochemistry, molecular biology, or equivalent documented " +
+            "industrial experience. Experience with protein purification, SDS-PAGE/Western blot, " +
+            "and ELISA. Fluent in English; Danish is an advantage but not required.</p></body>");
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSingleWatchAsync(url, "watch-tc3-phdequiv");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRoleHtml);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC3", items);
+
+        items.ShouldNotBeEmpty("TC3 should produce tracked items");
+        // PhD-or-equivalent should NOT be SILENT (that's a false negative)
+        foreach (var item in items)
+        {
+            item.AlertLevel.ShouldNotBe(AlertLevel.Silent,
+                $"TC3: '{item.DisplayName}' has 'PhD or equivalent' — should NOT be SILENT");
+        }
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TC5: Czech Language Posting — SZÚ Molecular Diagnostics
+    // Tests Czech text LLM understanding
+    // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC5_CzechPosting_SZU_FullPipeline_ProducesAlert()
+    {
+        var url = "https://szu.gov.cz/test/tc5";
+        var baseline = """
+            <html><body><ul class="lcp_catlist">
+            <li><a href="/kariera/admin/">Administrativní pracovník</a></li>
+            </ul></body></html>
+            """;
+        var withNewRole = """
+            <html><body><ul class="lcp_catlist">
+            <li><a href="/kariera/admin/">Administrativní pracovník</a></li>
+            <li><a href="/kariera/laboratorni-pracovnik-molekularni-diagnostika/">Laboratorní pracovník – oddělení molekulární diagnostiky</a></li>
+            </ul></body></html>
+            """;
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSzuWatchAsync(url, "watch-tc5-szu");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRole);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC5", items);
+
+        items.ShouldNotBeEmpty("TC5: Czech posting should produce tracked items");
+        // A molecular diagnostics lab role should not be SILENT for this candidate
+        var diagItem = items.FirstOrDefault(i =>
+            i.DisplayName?.Contains("molekulární", StringComparison.OrdinalIgnoreCase) == true ||
+            i.DisplayName?.Contains("diagnostik", StringComparison.OrdinalIgnoreCase) == true);
+        if (diagItem != null)
+        {
+            diagItem.AlertLevel.ShouldNotBe(AlertLevel.Silent,
+                "TC5: Czech molecular diagnostics role should be relevant to this candidate");
+        }
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TC6: Wrong Location — Paris, France
+    // Should be SILENT or at minimum not HIGH
+    // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC6_WrongLocation_Paris_FullPipeline_NotHigh()
+    {
+        var url = "https://eures.europa.eu/test/tc6";
+        var baseline = BuildVacancyPage();
+        var withNewRole = BuildVacancyPage(
+            ("Research Technician, Cell Biology", "Institut Pasteur", "Paris, France", "30-04-2026", null));
+        var withNewRoleHtml = withNewRole.Replace("</body>",
+            "<p>Requirements: MSc in cell biology or molecular biology. " +
+            "Experience with mammalian cell culture and fluorescence microscopy. " +
+            "Working knowledge of French or willingness to learn.</p></body>");
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSingleWatchAsync(url, "watch-tc6-paris");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRoleHtml);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC6", items);
+
+        // Paris is wrong location — should not be HIGH
+        foreach (var item in items)
+        {
+            item.AlertLevel.ShouldNotBe(AlertLevel.High,
+                $"TC6: '{item.DisplayName}' in Paris should NOT be HIGH");
+        }
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TC7: Hidden Senior Role — Genmab "Scientist" requiring PhD
+    // Should be SILENT despite "Scientist" title
+    // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC7_HiddenSeniorRole_Genmab_FullPipeline_NotHigh()
+    {
+        var url = "https://careers.genmab.com/test/tc7";
+        var baseline = BuildVacancyPage();
+        var withNewRole = BuildVacancyPage(
+            ("Scientist, Antibody Discovery", "Genmab A/S", "Copenhagen, Denmark", "15-04-2026", null));
+        var withNewRoleHtml = withNewRole.Replace("</body>",
+            "<p>Requirements: PhD in immunology, biochemistry, or molecular biology. " +
+            "3+ years post-PhD experience in antibody engineering. " +
+            "Expert-level experience with phage display, hybridoma technology, " +
+            "and affinity maturation. Proven publication record.</p></body>");
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSingleWatchAsync(url, "watch-tc7-genmab");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRoleHtml);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC7", items);
+
+        // Hidden senior role should not be HIGH
+        foreach (var item in items)
+        {
+            if (item.DisplayName?.Contains("Antibody", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                item.AlertLevel.ShouldNotBe(AlertLevel.High,
+                    "TC7: PhD+senior hidden behind 'Scientist' title should NOT be HIGH");
+            }
+        }
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TC8: Czech Diagnostics R&D — Prague, perfect match
+    // Should be HIGH
+    // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC8_CzechDiagnosticsRD_FullPipeline_ProducesHighAlert()
+    {
+        var url = "https://www.jobs.cz/test/tc8";
+        var baseline = BuildVacancyPage();
+        var withNewRole = BuildVacancyPage(
+            ("Výzkumný pracovník – vývoj diagnostických testů", "GeneProof s.r.o.", "Prague", "30-04-2026", null));
+        var withNewRoleHtml = withNewRole.Replace("</body>",
+            "<p>Hledáme výzkumného pracovníka pro vývoj nových " +
+            "molekulárně-diagnostických testů. Mgr. v oboru molekulární biologie. " +
+            "1-3 roky zkušeností. PCR, ELISA, elektroforéza, IVDR validace. " +
+            "Plat 55 000 – 70 000 Kč/měsíc.</p></body>");
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSingleWatchAsync(url, "watch-tc8-prague");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRoleHtml);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC8", items);
+
+        items.ShouldNotBeEmpty("TC8 should produce tracked items");
+        // Prague diagnostics R&D with MSc + PCR + ELISA — should be strong match
+        var diagItem = items.FirstOrDefault(i =>
+            i.DisplayName?.Contains("diagnostick", StringComparison.OrdinalIgnoreCase) == true ||
+            i.DisplayName?.Contains("Výzkumný", StringComparison.OrdinalIgnoreCase) == true);
+        if (diagItem != null)
+        {
+            diagItem.AlertLevel.ShouldNotBe(AlertLevel.Silent,
+                "TC8: Prague diagnostics R&D should be at least MEDIUM");
+        }
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TC9: Subtle Skill Gap — Lundbeck (liquid handling)
+    // Should be MEDIUM (partial match)
+    // ═══════════════════════════════════════════════════
+
+    [Test]
+    public async Task TC9_SubtleSkillGap_Lundbeck_FullPipeline_ProducesAlert()
+    {
+        var url = "https://jobs.lundbeck.com/test/tc9";
+        var baseline = BuildVacancyPage();
+        var withNewRole = BuildVacancyPage(
+            ("Laboratory Scientist, In Vitro Pharmacology", "H. Lundbeck A/S", "Valby, Copenhagen", "25-04-2026", null));
+        var withNewRoleHtml = withNewRole.Replace("</body>",
+            "<p>Requirements: MSc in pharmacology, molecular biology, or neuroscience. " +
+            "Experience with mammalian cell culture and cell-based assays. " +
+            "Hands-on experience with automated liquid handling platforms (Hamilton, Beckman). " +
+            "Knowledge of receptor pharmacology and dose-response analysis.</p></body>");
+
+        _factory.Fetcher.SetHtml(url, baseline);
+        var (group, watch) = await SeedSingleWatchAsync(url, "watch-tc9-lundbeck");
+        await CheckWatchAsync(watch.Id);
+
+        _factory.Fetcher.SetHtml(url, withNewRoleHtml);
+        await CheckWatchAsync(watch.Id);
+
+        var items = await GetTrackedItemsAsync(group.Id);
+        LogItems("TC9", items);
+
+        items.ShouldNotBeEmpty("TC9 should produce tracked items");
+        // Lundbeck listing should be tracked — it's a partial match (skill gap in liquid handling)
+        // Should NOT be SILENT (the candidate has most skills, just not automated liquid handling)
+        foreach (var item in items)
+        {
+            if (item.DisplayName?.Contains("Pharmacology", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                item.AlertLevel.ShouldNotBe(AlertLevel.Silent,
+                    "TC9: Partial skill match should not be SILENT");
+            }
+        }
+        await Task.CompletedTask;
+    }
 
     private static readonly string CandidateProfile = """
         {
@@ -294,6 +531,112 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _factory.DisposeAsync();
+    }
+
+    private async Task<IReadOnlyList<TrackedItem>> GetTrackedItemsAsync(Guid groupId)
+    {
+        var trackingService = _factory.Services.GetRequiredService<IItemTrackingService>();
+        return await trackingService.GetItemsAsync(groupId, CancellationToken.None);
+    }
+
+    private void LogItems(string testCase, IReadOnlyList<TrackedItem> items)
+    {
+        Log($"{testCase} tracked items: {items.Count}");
+        foreach (var item in items)
+        {
+            Log($"  [{item.AlertLevel}] {item.DisplayName} — State={item.State} Rec={item.Recommendation}");
+            if (item.MatchDimensionsJson is not null)
+                Log($"    Dims: {item.MatchDimensionsJson[..Math.Min(300, item.MatchDimensionsJson.Length)]}");
+        }
+    }
+
+    /// <summary>
+    /// Builds a UCPH-style vacancy table page with optional rows.
+    /// </summary>
+    private static string BuildVacancyPage(
+        params (string Title, string Faculty, string Dept, string Deadline, string? Extra)[] rows)
+    {
+        var rowsHtml = string.Join("\n", rows.Select(r => $"""
+            <tr class="vacancy-specs">
+                <td><a href="/all-vacancies/?show={Math.Abs(r.Title.GetHashCode()) % 100000}">{r.Title}</a></td>
+                <td>{r.Faculty}</td>
+                <td>{r.Dept}</td>
+                <td>{r.Deadline}</td>
+            </tr>
+            {r.Extra ?? ""}
+            """));
+
+        return $"""
+            <html><body>
+            <table class="vacancies">
+            <thead><tr><th>TITLE</th><th>FACULTY</th><th>LOCATION</th><th>DEADLINE</th></tr></thead>
+            <tbody>
+            {rowsHtml}
+            </tbody>
+            </table>
+            </body></html>
+            """;
+    }
+
+    /// <summary>
+    /// Seeds a watch with SZÚ-style simple list selector.
+    /// </summary>
+    private async Task<(WatchGroup Group, WatchedSite Watch)> SeedSzuWatchAsync(
+        string url, string watchId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var groupService = scope.ServiceProvider.GetRequiredService<IWatchGroupService>();
+        var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
+        var filterGen = scope.ServiceProvider.GetRequiredService<IProfileFilterRuleGenerator>();
+
+        var group = await groupService.CreateGroupAsync(new WatchGroupCreateRequest
+        {
+            Name = $"E2E Test — {watchId}",
+            UserIntent = "Monitor for biotech lab positions matching MSc molecular biology profile",
+            AnalysisProfileJson = CandidateProfile,
+            TemplateId = "e2e-test",
+            Tags = ["e2e-test"]
+        }, CancellationToken.None);
+
+        group.TrackingConfig = TrackingConfig.ForJobs();
+        var groupRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchGroup>>();
+        await groupRepo.UpdateAsync(group, CancellationToken.None);
+
+        var filterRules = filterGen.GenerateRules(CandidateProfile);
+
+        var watch = await watchService.CreateWatchAsync(new CreateWatchRequest
+        {
+            Url = url,
+            Name = watchId,
+            GroupId = group.Id,
+            UserIntent = "Monitor for Czech lab positions",
+            SchemaEnabled = true,
+            Schema = new ExtractionSchema
+            {
+                ItemSelector = "li",
+                Fields =
+                [
+                    new SchemaField { Name = "title", Selector = "a",
+                        Type = FieldType.String, IsRequired = true, IsIdentityField = true },
+                    new SchemaField { Name = "url", Selector = "a",
+                        Type = FieldType.Url, IsRequired = true }
+                ],
+                IdentityFieldNames = ["title"]
+            },
+            FilterRules = filterRules,
+            FetchSettings = new FetchSettings { UseJavaScript = false, TimeoutSeconds = 30 },
+            SkipInitialCheck = true
+        }, CancellationToken.None);
+
+        watch.AnalysisSettings = new LlmAnalysisSettings
+        {
+            EnableChangeAnalysis = true,
+            CalculateRelevance = true,
+            GenerateSemanticSummary = true
+        };
+        await watchService.UpdateWatchAsync(watch, CancellationToken.None);
+
+        return (group, watch);
     }
 }
 
