@@ -1344,9 +1344,19 @@ public class WatchSetupPipeline(
         if (session.FetchedContent == null || session.ContentAnalysis == null)
             return CreateFailedResult(session, PipelineStage.SelectorGeneration, "Missing content or analysis");
 
-        // Stage-level timeout for selector generation (may involve multiple LLM iterations)
+        // Stage-level timeout for selector generation (may involve multiple LLM iterations).
+        // Scale timeout based on content size — complex pages need more time for LLM processing.
+        var contentSize = (session.FetchedContent.CleanedHtml ?? session.FetchedContent.Html ?? "").Length;
+        var timeoutMinutes = contentSize > 20_000 ? 8 : 5;
         using var stageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        stageCts.CancelAfter(TimeSpan.FromMinutes(5));
+        stageCts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+
+        if (contentSize > 20_000)
+        {
+            logger.LogInformation(
+                "Large page detected ({Size} chars) — using extended {Timeout}min timeout for selector generation",
+                contentSize, timeoutMinutes);
+        }
 
         var maxIterations = options.MaxIterations > 0 ? options.MaxIterations : DefaultMaxIterations;
         var minConfidence = options.MinConfidence > 0 ? options.MinConfidence : DefaultMinConfidence;

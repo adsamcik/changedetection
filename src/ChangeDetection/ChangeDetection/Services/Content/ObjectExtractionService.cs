@@ -94,6 +94,15 @@ public class ObjectExtractionService(
 
             result.Objects = objects;
             result.Success = true;
+            result.TotalItemsOnPage = itemsHtml.Count;
+            result.WasTruncated = itemsHtml.Count > 50;
+
+            if (result.WasTruncated)
+            {
+                result.Issues.Add(
+                    $"Results truncated: {itemsHtml.Count} items found but only 50 extracted. " +
+                    $"{itemsHtml.Count - 50} items not processed.");
+            }
 
             logger.LogInformation("Successfully extracted {Count} objects with {WarningCount} warnings",
                 objects.Count, result.AmbiguousIdentityWarnings.Count);
@@ -315,8 +324,20 @@ public class ObjectExtractionService(
             Only output the JSON array, no additional text.
             """;
 
-        // Limit number of items to avoid token limits
-        var sampleItems = itemsHtml.Take(50).ToList();
+        // Limit number of items to avoid token limits.
+        // Log when truncation occurs so users know data is incomplete.
+        const int maxItemsForLlm = 50;
+        var totalItemCount = itemsHtml.Count;
+        var sampleItems = itemsHtml.Take(maxItemsForLlm).ToList();
+
+        if (totalItemCount > maxItemsForLlm)
+        {
+            logger.LogWarning(
+                "Extraction truncated: {TotalItems} items found but only {MaxItems} sent to LLM. " +
+                "{DroppedItems} items dropped. Consider pagination or splitting the extraction.",
+                totalItemCount, maxItemsForLlm, totalItemCount - maxItemsForLlm);
+        }
+
         var itemsText = string.Join("\n\n---ITEM---\n\n", sampleItems);
 
         var userPrompt = $$"""

@@ -39,6 +39,22 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                 var dealbreaker = item.GetString();
                 if (string.IsNullOrWhiteSpace(dealbreaker)) continue;
 
+                // For multi-word dealbreakers like "pure flow cytometry specialist",
+                // use regex with word boundaries so "Flow Cytometry Specialist"
+                // matches even without qualifier adjectives like "pure", "heavy".
+                // Qualifier words describe degree/emphasis and aren't matchable keywords.
+                var qualifierWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { "pure", "heavy", "mostly", "primarily", "mainly", "focused", "dedicated", "only", "full", "strict", "exclusive" };
+
+                var dbWords = dealbreaker.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => w.Length > 2 && !qualifierWords.Contains(w))
+                    .ToList();
+
+                var (dbOperator, dbValue) = dbWords.Count > 1
+                    ? (FilterOperator.Regex,
+                       $"(?i)(?=.*\\b{string.Join(")(?=.*\\b", dbWords.Select(Regex.Escape))})")
+                    : (FilterOperator.Contains, dealbreaker);
+
                 rules.Add(new FilterRule
                 {
                     Name = $"Dealbreaker: {dealbreaker}",
@@ -51,26 +67,26 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                         new FilterCondition
                         {
                             FieldName = "company",
-                            Operator = FilterOperator.Contains,
-                            Value = dealbreaker
+                            Operator = dbOperator,
+                            Value = dbValue
                         },
                         new FilterCondition
                         {
                             FieldName = "title",
-                            Operator = FilterOperator.Contains,
-                            Value = dealbreaker
+                            Operator = dbOperator,
+                            Value = dbValue
                         },
                         new FilterCondition
                         {
                             FieldName = "requirements",
-                            Operator = FilterOperator.Contains,
-                            Value = dealbreaker
+                            Operator = dbOperator,
+                            Value = dbValue
                         },
                         new FilterCondition
                         {
                             FieldName = "description",
-                            Operator = FilterOperator.Contains,
-                            Value = dealbreaker
+                            Operator = dbOperator,
+                            Value = dbValue
                         }
                     ],
                     Actions =
@@ -289,11 +305,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                 // Guard 2: location must NOT look like a department/institution name.
                 // If it does, this is a portal that puts org units in the location column,
                 // and we should NOT use it for geographic filtering (would cause false negatives).
+                // Includes common Nordic/European university abbreviations (KU, DTU, SDU, etc.)
+                // that don't contain "Department"/"Institut" but are still institution names.
                 conditions.Add(new FilterCondition
                 {
                     FieldName = "location",
                     Operator = FilterOperator.Regex,
-                    Value = @"(?i)\b(Departments?|Institu\w+|Faculty|Centers?|Centres?|Laborator\w+|Labs?|Sections?|Divisions?|Schools?|Museums?|Clinics?|Groups?|Units?)\b",
+                    Value = @"(?i)(\b(Departments?|Institu\w+|Faculty|Centers?|Centres?|Laborator\w+|Labs?|Sections?|Divisions?|Schools?|Museums?|Clinics?|Groups?|Units?)\b|^(KU|DIKU|DTU|AU|SDU|CBS|LIFE|AAU|RUC|SUND|SCIENCE|FOOD|PLEN|BRIC|NBI|NEXS|IGN)$)",
                     Negate = true // must NOT match — if it does, location is an org name, skip filter
                 });
 

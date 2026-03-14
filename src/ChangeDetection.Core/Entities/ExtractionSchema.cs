@@ -424,6 +424,22 @@ public class ObjectExtractionResult
     /// Warnings about objects with duplicate identity values.
     /// </summary>
     public List<string> AmbiguousIdentityWarnings { get; set; } = [];
+
+    /// <summary>
+    /// Non-fatal issues detected during extraction (truncation, missing optional fields, etc.)
+    /// </summary>
+    public List<string> Issues { get; set; } = [];
+
+    /// <summary>
+    /// Total items found on the page before any truncation limits.
+    /// Null if not applicable (e.g., LLM-only extraction without item selector).
+    /// </summary>
+    public int? TotalItemsOnPage { get; set; }
+
+    /// <summary>
+    /// Whether extraction results were truncated due to LLM token limits.
+    /// </summary>
+    public bool WasTruncated { get; set; }
 }
 
 /// <summary>

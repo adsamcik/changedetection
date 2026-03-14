@@ -456,6 +456,16 @@ public class CalibrationTests : TestBase
             "Globe Institute",
             "Biotech Research and Innovation Centre",
             "Natural History Museum Denmark",
+            // F14: UCPH abbreviated department names
+            "PLEN",
+            "FOOD",
+            "BRIC",
+            "NBI",
+            "DIKU",
+            "NEXS",
+            "IGN",
+            "SCIENCE",
+            "SUND",
         };
 
         var shouldNotGuard = new[]
@@ -465,6 +475,8 @@ public class CalibrationTests : TestBase
             "Berlin, Germany",
             "Måløv, Capital Region of Denmark, DK",
             "Kalundborg, Denmark",
+            "Prague, Czech Republic",
+            "Lyngby, Denmark",
         };
 
         foreach (var d in shouldGuard)
@@ -474,6 +486,49 @@ public class CalibrationTests : TestBase
             Regex.IsMatch(g, guardRegex).ShouldBeFalse($"Guard should NOT match (apply filter): '{g}'");
 
         Log($"Location guard: {shouldGuard.Length} departments guarded, {shouldNotGuard.Length} geographic passed");
+        await Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════
+    // Cross-cutting: Dealbreaker Word Decomposition (F21)
+    // ═══════════════════════════════════════════════
+
+    [Test]
+    public async Task DealbreakersUseWordDecomposition_MatchesPartialPhrases()
+    {
+        var rules = _ruleGen.GenerateRules(CandidateProfile);
+
+        // "pure flow cytometry specialist" → multi-word dealbreaker should use regex
+        var flowRule = rules.FirstOrDefault(r =>
+            r.Name.Contains("Dealbreaker") && r.Name.Contains("flow cytometry", StringComparison.OrdinalIgnoreCase));
+        flowRule.ShouldNotBeNull("Should have a dealbreaker rule for flow cytometry");
+
+        // The title condition should use Regex (not Contains) for multi-word dealbreakers
+        var titleCondition = flowRule!.Conditions.First(c => c.FieldName == "title");
+        titleCondition.Operator.ShouldBe(FilterOperator.Regex,
+            "Multi-word dealbreakers should use Regex for word-boundary matching");
+
+        var regex = titleCondition.Value!;
+
+        // "Flow Cytometry Specialist" should match even without "pure"
+        // because the key words (flow, cytometry, specialist) are all present
+        Regex.IsMatch("Flow Cytometry Specialist", regex)
+            .ShouldBeTrue("Should match 'Flow Cytometry Specialist' (key words present)");
+
+        // A role where flow cytometry is one of many techniques should NOT match
+        // because "specialist" is missing
+        Regex.IsMatch("Lab Scientist using flow cytometry", regex)
+            .ShouldBeFalse("Should NOT match without 'specialist' — it's one technique among many");
+
+        // Single-word dealbreaker ("SOTIO") should use Contains, not Regex
+        var sotioRule = rules.FirstOrDefault(r =>
+            r.Name.Contains("Dealbreaker") && r.Name.Contains("SOTIO", StringComparison.OrdinalIgnoreCase));
+        sotioRule.ShouldNotBeNull("Should have a SOTIO dealbreaker rule");
+        var sotioCondition = sotioRule!.Conditions.First(c => c.FieldName == "company");
+        sotioCondition.Operator.ShouldBe(FilterOperator.Contains,
+            "Single-word dealbreakers should use simple Contains");
+
+        Log("Dealbreaker word decomposition: multi-word uses regex, single-word uses Contains");
         await Task.CompletedTask;
     }
 

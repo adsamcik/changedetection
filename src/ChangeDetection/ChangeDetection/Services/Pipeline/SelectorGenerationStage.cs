@@ -131,9 +131,11 @@ public class SelectorGenerationStage(
         ContentAnalysis analysis,
         CancellationToken ct)
     {
-        // Use DomCompactor to reduce HTML size while preserving selector-relevant structure
+        // Use DomCompactor to reduce HTML size while preserving selector-relevant structure.
+        // Scale token budget with page complexity — larger pages need more context for accurate selectors.
         var rawHtml = content.CleanedHtml ?? content.Html ?? "";
-        var compactionResult = domCompactor.CompactToTokenBudget(rawHtml, targetTokens: 2000);
+        var targetTokens = rawHtml.Length > 20_000 ? 3000 : 2000;
+        var compactionResult = domCompactor.CompactToTokenBudget(rawHtml, targetTokens: targetTokens);
         var htmlSample = compactionResult.Html;
         
         logger.LogDebug(

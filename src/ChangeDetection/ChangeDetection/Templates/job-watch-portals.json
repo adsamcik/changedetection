@@ -60,25 +60,26 @@
       "id": "watch-novonesis",
       "name": "Novonesis Careers Denmark",
       "description": "R&D/lab roles at Novonesis Denmark",
-      "url": "https://novozymes.wd103.myworkdayjobs.com/en-US/Novonesis_Careers",
+      "url": "https://novozymes.wd103.myworkdayjobs.com/en-US/Novonesis_Careers?q=scientist+laboratory+research",
       "tier": "tier-1",
       "checkIntervalHours": 24,
       "extraTags": ["denmark", "biotech"],
       "fetchSettings": {
         "useJavaScript": true,
-        "timeoutSeconds": 60,
-        "waitAfterLoadMs": 5000,
+        "timeoutSeconds": 90,
+        "waitAfterLoadMs": 8000,
         "waitForSelector": "[data-automation-id='jobResults']"
       },
       "schema": {
-        "itemSelector": "[data-automation-id='jobResults'] li",
+        "itemSelector": "[data-automation-id='jobResults'] li, section[data-automation-id='jobResults'] ul > li",
         "fields": [
           { "name": "title", "selector": "a[data-automation-id='jobTitle']", "type": "String", "isRequired": true, "isIdentityField": true },
           { "name": "url", "selector": "a[data-automation-id='jobTitle']", "type": "Url", "isRequired": true },
-          { "name": "location", "selector": "dd.css-129m7dg, [data-automation-id='locations'] dd, dd", "type": "String" }
+          { "name": "location", "selector": "[data-automation-id='locations'] dd, dd.css-129m7dg, dd", "type": "String" },
+          { "name": "posted_date", "selector": "[data-automation-id='postedOn'] dd, dd:last-of-type", "type": "String" }
         ],
         "identityFields": ["title"],
-        "_notes": "Old URL novonesis.com/en/careers/jobs?location=Denmark was a frontend wrapper that ignored the location param and showed 140 global results. Backend is Workday (wd103). Switched to direct Workday URL. Selectors use data-automation-id attributes which are stable across Workday versions. Location selector has fallbacks — dd class names change per Workday release. Shows all Novonesis positions; geographic filtering handled by profile target_locations rules."
+        "_notes": "Workday SPA (wd103). URL includes search query to bias toward science roles — Workday ignores location URL params, so geographic filtering is handled by profile target_locations rules. Selectors use data-automation-id attributes (stable across Workday versions). Increased timeout and wait for SPA hydration. Added posted_date field and secondary item selector for variant Workday layouts."
       }
     },
     {
