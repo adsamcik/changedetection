@@ -561,6 +561,13 @@ public class SetupConversationHub(
                         createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
                         logger.LogInformation("Created watch {WatchId} after recovery for URL {Url}", createdWatch.Id, createRequest.Url);
                         
+                        // Auto-create tracking group for schema-enabled watches
+                        if (createdWatch.SchemaEnabled && createdWatch.Schema != null)
+                        {
+                            try { await AutoCreateTrackingGroupAsync(createdWatch, recoveryResult, pipelineCt); }
+                            catch (Exception groupEx) { logger.LogWarning(groupEx, "Auto-group creation failed for recovered watch {WatchId}", createdWatch.Id); }
+                        }
+                        
                         // Mark session as completed so it's excluded from pending list
                         var convSessionAfterRecovery = sessionManager.GetSession(sessionId);
                         if (convSessionAfterRecovery != null)
@@ -710,6 +717,20 @@ public class SetupConversationHub(
                 
                 createdWatch = await watchService.CreateWatchAsync(createRequest, pipelineCt);
                 logger.LogInformation("Created watch {WatchId} for URL {Url}", createdWatch.Id, createRequest.Url);
+                
+                // Auto-create a watch group with tracking if the watch uses schema extraction.
+                // This connects the watch to the item tracking + alert policy pipeline.
+                if (createdWatch.SchemaEnabled && createdWatch.Schema != null)
+                {
+                    try
+                    {
+                        await AutoCreateTrackingGroupAsync(createdWatch, finalResult, pipelineCt);
+                    }
+                    catch (Exception groupEx)
+                    {
+                        logger.LogWarning(groupEx, "Auto-group creation failed for watch {WatchId} — watch still created, tracking disabled", createdWatch.Id);
+                    }
+                }
                 
                 // Mark session as completed so it's excluded from pending list
                 var convSessionAfterCreate = sessionManager.GetSession(sessionId);
@@ -1074,6 +1095,59 @@ public class SetupConversationHub(
         }
 
         return rules;
+    }
+
+    /// <summary>
+    /// Auto-creates a WatchGroup with TrackingConfig when a schema-enabled watch is created
+    /// via the setup conversation. This connects the watch to the item tracking and
+    /// alert policy pipeline that would otherwise only be available through JobWatchSeeder.
+    /// </summary>
+    private async Task AutoCreateTrackingGroupAsync(
+        WatchedSite createdWatch,
+        PipelineResult pipelineResult,
+        CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var groupService = scope.ServiceProvider.GetRequiredService<IWatchGroupService>();
+        var groupRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchGroup>>();
+        var watchSvc = scope.ServiceProvider.GetRequiredService<IWatchService>();
+
+        var userIntent = pipelineResult.Session.ContentAnalysis?.UserIntent
+            ?? createdWatch.Description
+            ?? "Monitor for changes";
+
+        var group = await groupService.CreateGroupAsync(new WatchGroupCreateRequest
+        {
+            Name = createdWatch.Name ?? createdWatch.Url,
+            Description = userIntent,
+            UserIntent = userIntent,
+            Tags = ["auto-created"]
+        }, ct);
+
+        // Set TrackingConfig based on detected content type
+        group.TrackingConfig = pipelineResult.Session.ContentAnalysis?.ContentType switch
+        {
+            ContentType.PriceInfo or ContentType.ProductListing => TrackingConfig.ForProducts(),
+            _ => TrackingConfig.ForJobs() // Default — works for job listings, news, etc.
+        };
+
+        await groupRepo.UpdateAsync(group, ct);
+
+        // Add the watch to the group
+        createdWatch.GroupId = group.Id;
+        createdWatch.UserIntent = userIntent;
+
+        // Enable LLM analysis for tracking to work
+        createdWatch.AnalysisSettings.EnableChangeAnalysis = true;
+        createdWatch.AnalysisSettings.CalculateRelevance = true;
+        createdWatch.AnalysisSettings.GenerateSemanticSummary = true;
+
+        await watchSvc.UpdateWatchAsync(createdWatch, ct);
+
+        logger.LogInformation(
+            "Auto-created tracking group {GroupId} for watch {WatchId} (type: {ContentType})",
+            group.Id, createdWatch.Id,
+            pipelineResult.Session.ContentAnalysis?.ContentType ?? ContentType.Unknown);
     }
 }
 
