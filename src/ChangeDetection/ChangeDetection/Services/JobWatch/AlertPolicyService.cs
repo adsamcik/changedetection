@@ -11,8 +11,12 @@ namespace ChangeDetection.Services.JobWatch;
 /// </summary>
 public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPolicyService
 {
+    // Education is intentionally NOT a hard-fail dimension.
+    // "PhD or equivalent" and "advanced degree" are common in European biotech
+    // and should produce MEDIUM (STRETCH), not SILENT. Only dealbreakers and
+    // location are hard gates — the user should see everything else for review.
     private static readonly HashSet<string> DefaultHardFailDimensions =
-        ["education", "dealbreakers", "location"];
+        ["dealbreakers", "location"];
 
     public AlertPolicyResult Evaluate(
         string? dimensionsJson,

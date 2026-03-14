@@ -245,15 +245,13 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                         ],
                         Actions =
                         [
+                            // Tag only — do NOT suppress or downgrade importance.
+                            // Deterministic skill matching misses synonyms (immunoassay≠ELISA,
+                            // FACS≠flow cytometry). Let the LLM handle skill interpretation.
                             new FilterAction
                             {
                                 Type = FilterActionType.AddTag,
                                 Parameters = new Dictionary<string, string> { ["tag"] = "SKILL_GAP" }
-                            },
-                            new FilterAction
-                            {
-                                Type = FilterActionType.SetImportance,
-                                Parameters = new Dictionary<string, string> { ["level"] = "Low" }
                             }
                         ]
                     });
@@ -502,6 +500,54 @@ public class ProfileFilterRuleGenerator : IProfileFilterRuleGenerator
                         ]
                     });
                 }
+            }
+        }
+
+        // Already-applied companies — tag but don't suppress.
+        // User should see reposted roles but know they've already applied.
+        if (profile.TryGetProperty("applied_companies", out var appliedCompanies) &&
+            appliedCompanies.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in appliedCompanies.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var company = item.GetString();
+                if (string.IsNullOrWhiteSpace(company)) continue;
+
+                rules.Add(new FilterRule
+                {
+                    Name = $"Already applied: {company}",
+                    Description = $"Auto-generated: user has already applied to {company}. Tag for awareness, do not suppress.",
+                    Priority = priority--,
+                    Logic = FilterLogic.Or,
+                    Conditions =
+                    [
+                        new FilterCondition
+                        {
+                            FieldName = "company",
+                            Operator = FilterOperator.Contains,
+                            Value = company
+                        },
+                        new FilterCondition
+                        {
+                            FieldName = "title",
+                            Operator = FilterOperator.Contains,
+                            Value = company
+                        }
+                    ],
+                    Actions =
+                    [
+                        new FilterAction
+                        {
+                            Type = FilterActionType.AddTag,
+                            Parameters = new Dictionary<string, string> { ["tag"] = "ALREADY_APPLIED" }
+                        },
+                        new FilterAction
+                        {
+                            Type = FilterActionType.RequireReview
+                        }
+                    ]
+                });
             }
         }
 

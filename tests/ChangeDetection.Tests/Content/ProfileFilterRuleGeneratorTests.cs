@@ -116,7 +116,8 @@ public class ProfileFilterRuleGeneratorTests : TestBase
         organoidRule.Conditions.ShouldContain(c => c.FieldName == "title");
         organoidRule.Actions.ShouldContain(a => a.Type == FilterActionType.AddTag
             && a.Parameters.GetValueOrDefault("tag") == "SKILL_GAP");
-        organoidRule.Actions.ShouldContain(a => a.Type == FilterActionType.SetImportance);
+        // Skill gap rules no longer set importance — LLM handles synonym interpretation
+        organoidRule.Actions.ShouldNotContain(a => a.Type == FilterActionType.SetImportance);
 
         await Task.CompletedTask;
     }

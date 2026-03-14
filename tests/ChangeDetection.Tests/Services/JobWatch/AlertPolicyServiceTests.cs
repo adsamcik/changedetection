@@ -35,8 +35,10 @@ public class AlertPolicyServiceTests : TestBase
     }
 
     [Test]
-    public async Task EducationFail_ReturnsSilentAlert()
+    public async Task EducationFail_ReturnsMediumAlert_NotSilent()
     {
+        // Education is NOT a hard-fail dimension (career advisor feedback #1).
+        // "PhD or equivalent" must produce MEDIUM, not SILENT.
         var dimensionsJson = """
             {
                 "education": { "score": 0.0, "status": "FAIL", "reason": "PhD required" },
@@ -47,8 +49,8 @@ public class AlertPolicyServiceTests : TestBase
 
         var result = _sut.Evaluate(dimensionsJson, "SKIP");
 
-        result.AlertLevel.ShouldBe(AlertLevel.Silent);
-        result.Reason.ShouldContain("education");
+        // Education FAIL is treated as STRETCH (non-hard-fail dimension) → MEDIUM
+        result.AlertLevel.ShouldBe(AlertLevel.Medium);
         await Task.CompletedTask;
     }
 
@@ -153,7 +155,7 @@ public class AlertPolicyServiceTests : TestBase
     {
         var dimensionsJson = """
             {
-                "education": { "score": 0.0, "status": "FAIL", "reason": "PhD required" },
+                "dealbreakers": { "score": 0.0, "status": "FAIL", "reason": "Dealbreaker triggered" },
                 "skills": { "score": 0.9, "status": "PASS", "reason": "OK" }
             }
             """;

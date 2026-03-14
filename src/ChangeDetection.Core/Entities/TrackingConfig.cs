@@ -57,7 +57,7 @@ public class TrackingConfig
     /// Dimension names that cause a SILENT alert when they FAIL.
     /// Other dimension FAILs are treated as STRETCH (medium priority).
     /// </summary>
-    public List<string> HardFailDimensions { get; set; } = ["education", "dealbreakers", "location"];
+    public List<string> HardFailDimensions { get; set; } = ["dealbreakers", "location"];
 
     /// <summary>
     /// Number of consecutive absences before confirming an item as expired.
@@ -85,7 +85,7 @@ public class TrackingConfig
         DisplaySecondaryField = "company",
         DisplayContextField = "location",
         DeadlineField = "deadline",
-        HardFailDimensions = ["education", "dealbreakers", "location"]
+        HardFailDimensions = ["dealbreakers", "location"]
     };
 
     /// <summary>

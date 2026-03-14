@@ -82,7 +82,7 @@ public class CalibrationTests : TestBase
     // ═══════════════════════════════════════════════
 
     [Test]
-    public async Task TC2_PhDRequired_SeniorScientist_ShouldBeSilent()
+    public async Task TC2_PhDRequired_SeniorScientist_ShouldBeSuppressed()
     {
         var fields = new Dictionary<string, string?>
         {
@@ -92,15 +92,18 @@ public class CalibrationTests : TestBase
             ["url"] = "/job/Maloev-Senior-Research-Scientist/123/"
         };
 
-        // Filter layer: PhD rule should suppress
+        // PRIMARY defense: deterministic PhD filter suppresses via education_required field
         AssertSuppressed(fields, "DISQUALIFIED_PHD", "TC2 should trigger PhD disqualification");
 
-        // Alert policy: education FAIL → SILENT (hard-fail dimension)
+        // SECONDARY: alert policy — education FAIL is now MEDIUM (not SILENT)
+        // because education is no longer a hard-fail dimension (advisor feedback #1).
+        // The deterministic filter is what actually prevents notification.
         var result = _alertPolicy.Evaluate(
             DimensionsWithFail("education", "PhD required"), "SKIP", null, _config);
+        result.AlertLevel.ShouldBe(AlertLevel.Medium,
+            "TC2: education FAIL → MEDIUM (not SILENT). Filter rule is the primary defense.");
 
-        result.AlertLevel.ShouldBe(AlertLevel.Silent, "TC2: PhD required should be SILENT");
-        Log($"TC2: {result.AlertLevel} — {result.Reason}");
+        Log($"TC2: Filter=SUPPRESSED, AlertPolicy={result.AlertLevel} — {result.Reason}");
         await Task.CompletedTask;
     }
 

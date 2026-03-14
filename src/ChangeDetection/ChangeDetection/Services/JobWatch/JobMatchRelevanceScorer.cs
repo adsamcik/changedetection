@@ -71,14 +71,40 @@ public class JobMatchRelevanceScorer(
             STRETCH (partially meets or ambiguous — e.g., "PhD or equivalent experience"), 
             or UNKNOWN (insufficient information to determine).
 
+            ## CRITICAL: Education Evaluation Rules
+            - "PhD required" with NO alternative → education: FAIL
+            - "PhD or equivalent experience" / "PhD or equivalent documented industrial experience" → education: STRETCH (NOT FAIL — the candidate may qualify through experience)
+            - "Advanced degree" / "Advanced degree in life sciences" → education: STRETCH (MSc IS an advanced degree)
+            - "MSc or PhD" / "BSc or MSc" → education: PASS
+            - "PhD fellowship" / "PhD position" / "PhD student" / "PhD project" in TITLE → education: FAIL (this IS a PhD program, not a job for an MSc holder)
+            - Education not stated → education: PASS with note
+
+            ## CRITICAL: Biotech Cross-Language Skill Mapping
+            Recognize these equivalences across languages:
+            - "Laborant" (Czech) = laboratory technician. "Laborant" (Danish) = lab technician/scientist
+            - "Mgr." / "Ing." (Czech) = MSc equivalent
+            - "FACS" = flow cytometry = fluorescence-activated cell sorting
+            - "Immunoassay" = ELISA (includes sandwich ELISA, MSD, Meso Scale Discovery)
+            - "RT-PCR" / "qPCR" / "real-time PCR" / "quantitative PCR" = PCR variants
+            - "Immunoblot" / "immunoblotting" = western blot
+            - "Cellekulturer" (Danish) = cell culture
+            - "Tkáňové kultury" (Czech) = tissue/cell culture
+
+            ## CRITICAL: Dealbreaker Proportion Nuance
+            The dealbreaker "pure flow cytometry specialist" means a role where flow cytometry
+            is the PRIMARY daily activity (>50% of work). Having flow cytometry as ONE technique
+            among several is fine (candidate has flow cytometry in techniques_strong).
+            - "Flow Cytometry Specialist" at Beckman Coulter (instrument company) = DEALBREAKER
+            - "Lab Scientist using flow cytometry among other techniques" = NOT a dealbreaker
+
             Common dimensions to check (use only those relevant to the profile):
             - education: Does the change content require qualifications the profile holder has?
-            - skills: Are required skills present in the profile's strong/basic techniques?
+            - skills: Are required skills present in the profile's strong/basic techniques? Use synonym mapping above.
             - location: Is the location acceptable per the profile?
             - salary: Is compensation above the profile's floor?
             - experience: Does the experience level match?
             - language: Can the profile holder work in the required language?
-            - dealbreakers: Does anything in the change trigger a dealbreaker from the profile?
+            - dealbreakers: Does anything in the change trigger a dealbreaker from the profile? Apply proportion nuance.
 
             Extract only positions that appear to be newly added or newly visible in this detected change.
             If the diff is ambiguous, include only listings you can support from the provided content.
