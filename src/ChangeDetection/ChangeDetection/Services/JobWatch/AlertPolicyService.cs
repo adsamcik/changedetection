@@ -116,7 +116,11 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
             reason = "All checks pass — strong profile match";
         }
 
-        // Override with LLM recommendation if it contradicts
+        // Override with LLM recommendation if it contradicts dimension-based assessment.
+        // Listing pages often lack detailed fields (education_required, skills_required, salary),
+        // so dimensions show STRETCH/UNKNOWN. The LLM's holistic assessment fills this gap —
+        // if it confidently recommends APPLY despite incomplete dimension data, escalate to HIGH.
+        // Hard fails (dealbreakers, location) still force SILENT regardless.
         if (recommendation is not null)
         {
             if (recommendation.Equals("SKIP", StringComparison.OrdinalIgnoreCase) && baseLevel == AlertLevel.High)
@@ -126,8 +130,12 @@ public class AlertPolicyService(ILogger<AlertPolicyService> logger) : IAlertPoli
             }
             else if (recommendation.Equals("APPLY", StringComparison.OrdinalIgnoreCase) && baseLevel == AlertLevel.Medium)
             {
-                // Don't escalate MEDIUM→HIGH based on recommendation alone, but note it
-                reason = $"[LLM: APPLY] {reason}";
+                // LLM confidently recommends APPLY — escalate MEDIUM→HIGH.
+                // This trusts the LLM's semantic understanding when dimension data is incomplete
+                // (e.g., listing pages missing education/skills fields → STRETCH/UNKNOWN).
+                // Hard-fail dimensions already forced SILENT above, so this is safe.
+                baseLevel = AlertLevel.High;
+                reason = $"✅ LLM recommends APPLY | {reason}";
             }
         }
 

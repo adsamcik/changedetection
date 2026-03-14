@@ -634,12 +634,16 @@
 
     private static string ExtractRecommendation(string? reason, float? score)
     {
-        if (!string.IsNullOrEmpty(reason))
+        // Extract recommendation from the bracket prefix: "[APPLY] reason..." or "[REVIEW] reason..."
+        // Must use bracket format to avoid false matches (e.g., "apply immediately" in the text).
+        if (!string.IsNullOrEmpty(reason) && reason.StartsWith('['))
         {
-            var upper = reason.ToUpperInvariant();
-            if (upper.Contains("APPLY")) return "APPLY";
-            if (upper.Contains("SKIP")) return "SKIP";
-            if (upper.Contains("REVIEW")) return "REVIEW";
+            var end = reason.IndexOf(']');
+            if (end > 1)
+            {
+                var tag = reason[1..end].ToUpperInvariant();
+                if (tag is "APPLY" or "REVIEW" or "SKIP") return tag;
+            }
         }
 
         return score switch

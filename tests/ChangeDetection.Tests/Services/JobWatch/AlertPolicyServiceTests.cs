@@ -181,6 +181,89 @@ public class AlertPolicyServiceTests : TestBase
     }
 
     [Test]
+    public async Task ApplyRecommendation_WithStretch_EscalatesToHigh()
+    {
+        // When LLM confidently recommends APPLY but dimensions show STRETCH
+        // (common with listing pages lacking detailed fields), escalate to HIGH.
+        var dimensionsJson = """
+            {
+                "education": { "score": 0.5, "status": "STRETCH", "reason": "MSc but PhD preferred" },
+                "skills": { "score": 0.7, "status": "STRETCH", "reason": "Partial skill overlap" },
+                "location": { "score": 1.0, "status": "PASS", "reason": "Prague" },
+                "dealbreakers": { "score": 1.0, "status": "PASS", "reason": "No dealbreakers" }
+            }
+            """;
+
+        var result = _sut.Evaluate(dimensionsJson, "APPLY");
+
+        result.AlertLevel.ShouldBe(AlertLevel.High,
+            "APPLY with STRETCH (no hard-fail) should escalate to HIGH");
+        result.Reason.ShouldContain("APPLY");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ApplyRecommendation_WithHardFail_StaysSilent()
+    {
+        // APPLY recommendation must NOT override hard-fail dimensions.
+        var dimensionsJson = """
+            {
+                "education": { "score": 0.9, "status": "PASS", "reason": "MSc OK" },
+                "skills": { "score": 0.9, "status": "PASS", "reason": "Skills match" },
+                "location": { "score": 0.0, "status": "FAIL", "reason": "Paris — not in targets" },
+                "dealbreakers": { "score": 1.0, "status": "PASS", "reason": "No dealbreakers" }
+            }
+            """;
+
+        var result = _sut.Evaluate(dimensionsJson, "APPLY");
+
+        result.AlertLevel.ShouldBe(AlertLevel.Silent,
+            "APPLY must NOT override hard-fail (location) → stays SILENT");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ReviewRecommendation_WithStretch_StaysMedium()
+    {
+        // REVIEW (uncertain) should NOT escalate — only APPLY has enough confidence.
+        var dimensionsJson = """
+            {
+                "education": { "score": 0.5, "status": "STRETCH", "reason": "PhD or equivalent" },
+                "skills": { "score": 0.9, "status": "PASS", "reason": "Skills match" },
+                "location": { "score": 1.0, "status": "PASS", "reason": "Copenhagen" }
+            }
+            """;
+
+        var result = _sut.Evaluate(dimensionsJson, "REVIEW");
+
+        result.AlertLevel.ShouldBe(AlertLevel.Medium,
+            "REVIEW with STRETCH should stay MEDIUM — only APPLY escalates");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ApplyRecommendation_WithUnknownDimensions_EscalatesToHigh()
+    {
+        // When dimensions are UNKNOWN (listing page missing fields) but LLM says APPLY,
+        // should escalate if there are few PASSes.
+        var dimensionsJson = """
+            {
+                "education": { "score": 0.0, "status": "UNKNOWN", "reason": "Not specified in listing" },
+                "skills": { "score": 0.0, "status": "UNKNOWN", "reason": "Not specified" },
+                "location": { "score": 1.0, "status": "PASS", "reason": "Prague" },
+                "dealbreakers": { "score": 1.0, "status": "PASS", "reason": "No dealbreakers" }
+            }
+            """;
+
+        var result = _sut.Evaluate(dimensionsJson, "APPLY");
+
+        // Only 2 PASSes with UNKNOWNs → dimension logic gives MEDIUM → APPLY escalates to HIGH
+        result.AlertLevel.ShouldBe(AlertLevel.High,
+            "APPLY with UNKNOWNs (no hard-fail) should escalate to HIGH");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task EvaluateRemoval_ReturnsInfoLevel()
     {
         var listing = new TrackedItem
