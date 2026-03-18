@@ -29,7 +29,8 @@ public class PipelineExecutor(
         Guid watchId,
         IBlockStateStore stateStore,
         object? page,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool isDryRun = false)
     {
         var stopwatch = Stopwatch.StartNew();
         var blockResults = new Dictionary<string, BlockResult>();
@@ -129,6 +130,7 @@ public class PipelineExecutor(
                 Page = page,
                 Services = services,
                 IsFirstRun = isFirstRun,
+                IsDryRun = isDryRun,
                 PipelineDefinition = definition,
                 AllBlockOutputs = blockOutputs
             };
@@ -151,7 +153,7 @@ public class PipelineExecutor(
             }
 
             // Check LLM budget before executing LLM blocks
-            if (IsLlmBlock(blockDef.Type))
+            if (IsLlmBlock(blockDef.Type) && !isDryRun)
             {
                 var (exceeded, currentCost) = await CheckLlmBudgetAsync(
                     watchId, budgetCache, linkedCt);
@@ -211,7 +213,7 @@ public class PipelineExecutor(
             }
 
             // Record LLM cost after successful execution
-            if (IsLlmBlock(blockDef.Type) && result.Success)
+            if (IsLlmBlock(blockDef.Type) && result.Success && !isDryRun)
             {
                 await RecordLlmCostAsync(watchId, blockId, result, services, linkedCt);
             }

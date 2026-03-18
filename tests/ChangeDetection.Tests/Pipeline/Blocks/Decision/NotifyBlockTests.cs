@@ -69,6 +69,25 @@ public class NotifyBlockTests : TestBase
     }
 
     [Test]
+    public async Task ExecuteAsync_DryRun_Skips()
+    {
+        var signal = JsonSerializer.SerializeToElement(new { signal = true });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("notify-1")
+            .WithInput("signal", signal)
+            .WithDryRun()
+            .WithFirstRun()
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Success.ShouldBeTrue();
+        result.Status.ShouldBe(BlockExecutionStatus.Skipped);
+        result.SkipReason.ShouldBe("Preview mode — notifications suppressed");
+    }
+
+    [Test]
     public async Task ExecuteAsync_NoSignal_Skips()
     {
         var context = new BlockContextBuilder()

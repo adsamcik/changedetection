@@ -25,6 +25,7 @@ public class BlockContext
 
     public required IServiceProvider Services { get; init; }
     public required bool IsFirstRun { get; init; }
+    public bool IsDryRun { get; init; }
 
     /// <summary>
     /// Reference to the pipeline definition for block config access.

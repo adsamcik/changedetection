@@ -21,6 +21,7 @@ public class BlockContextBuilder
     private object? _page;
     private IServiceProvider _services = Substitute.For<IServiceProvider>();
     private bool _isFirstRun;
+    private bool _isDryRun;
     private PipelineDefinition? _pipelineDefinition;
     private JsonElement? _previousOutput;
 
@@ -84,6 +85,12 @@ public class BlockContextBuilder
         return this;
     }
 
+    public BlockContextBuilder WithDryRun(bool isDryRun = true)
+    {
+        _isDryRun = isDryRun;
+        return this;
+    }
+
     public BlockContextBuilder WithLogger(ILogger logger)
     {
         _logger = logger;
@@ -120,6 +127,7 @@ public class BlockContextBuilder
         Page = _page,
         Services = _services,
         IsFirstRun = _isFirstRun,
+        IsDryRun = _isDryRun,
         PipelineDefinition = _pipelineDefinition
     };
 

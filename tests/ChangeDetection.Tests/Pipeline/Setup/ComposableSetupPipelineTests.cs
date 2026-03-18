@@ -231,7 +231,7 @@ public class ComposableSetupPipelineTests : TestBase
         // Mock dry run
         _pipelineExecutor.ExecuteAsync(
                 Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
-                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult
             {
                 Success = true,
@@ -319,7 +319,7 @@ public class ComposableSetupPipelineTests : TestBase
 
         _pipelineExecutor.ExecuteAsync(
                 Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
-                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult
             {
                 Success = true,
@@ -355,6 +355,108 @@ public class ComposableSetupPipelineTests : TestBase
             Arg.Any<string>(),
             Arg.Any<LlmRequestOptions>(),
             Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_DryRun_UsesCachedHtmlAndReturnsPreviewMetadata()
+    {
+        var intentJson = """
+            {
+                "url": "https://example.com/product",
+                "intent": "Track price changes",
+                "changeType": "price",
+                "summary": "I'll watch example.com for price changes"
+            }
+            """;
+
+        var analysisJson = """
+            {
+                "contentType": "product",
+                "regions": ["price section"],
+                "hasPagination": false,
+                "needsJavaScript": false,
+                "recommendedSelector": ".price",
+                "pageSummary": "Product page"
+            }
+            """;
+
+        var pipelineBlocksJson = """
+            {
+                "blocks": [
+                    { "id": "input-1", "type": "Input", "config": null, "position": 0 },
+                    { "id": "navigate-1", "type": "Navigate", "config": { "timeoutSeconds": 30 }, "position": 1 },
+                    { "id": "output-1", "type": "Output", "config": null, "position": 2 }
+                ],
+                "estimatedLlmCallsPerRun": 0
+            }
+            """;
+
+        var qcJson = """{ "valid": true, "issues": [], "suggestions": [] }""";
+
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                SuccessResponse(intentJson),
+                SuccessResponse(analysisJson),
+                SuccessResponse(pipelineBlocksJson),
+                SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult
+            {
+                IsSuccess = true,
+                Html = "<html><body><div class='price'>$49.99</div></body></html>",
+                HttpStatusCode = 200,
+                DurationMs = 300
+            });
+
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(new PipelineExecutionResult
+            {
+                Success = true,
+                BlockResults = new Dictionary<string, BlockResult>
+                {
+                    ["navigate-1"] = BlockResult.Succeeded(JsonDocument.Parse("""{"html":"<html><body><div class='price'>$49.99</div></body></html>","url":"https://example.com/product"}""").RootElement),
+                    ["output-1"] = BlockResult.Succeeded(JsonDocument.Parse("""{"price":49.99}""").RootElement)
+                },
+                OutputData = JsonDocument.Parse("""{"price":49.99}""").RootElement,
+                ExecutionDurationMs = 321,
+                WasBaseline = true,
+                IsDegraded = false,
+                SkippedBlockIds = ["notify-1"]
+            });
+
+        var request = new SetupRequest { UserInput = "Track price at https://example.com/product" };
+        string? sessionId = null;
+
+        await foreach (var progress in _sut.StartSetupAsync(request))
+        {
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+                sessionId = progress.Detail.Replace("Session: ", "");
+        }
+
+        var confirmProgress = new List<SetupProgress>();
+        await foreach (var progress in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            confirmProgress.Add(progress);
+
+        var proposal = confirmProgress.Last().Proposal!;
+        proposal.DryRun.ShouldNotBeNull();
+        proposal.DryRun.ExecutionDurationMs.ShouldBe(321);
+        proposal.DryRun.WasBaseline.ShouldBeTrue();
+        proposal.DryRun.SkippedBlockIds.ShouldContain("notify-1");
+        proposal.DryRun.BlockOutputs["output-1"]!.ToString()!.ShouldContain("\"price\":49.99");
+
+        await _pipelineExecutor.Received(1).ExecuteAsync(
+            Arg.Is<PipelineDefinition>(definition => HasCachedHtml(
+                definition,
+                "navigate-1",
+                "<html><body><div class='price'>$49.99</div></body></html>")),
+            Arg.Any<Guid>(),
+            Arg.Any<IBlockStateStore>(),
+            Arg.Any<object?>(),
+            Arg.Any<CancellationToken>(),
+            true);
     }
 
     [Test]
@@ -412,7 +514,7 @@ public class ComposableSetupPipelineTests : TestBase
 
         _pipelineExecutor.ExecuteAsync(
                 Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
-                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult
             {
                 Success = true,
@@ -623,7 +725,7 @@ public class ComposableSetupPipelineTests : TestBase
 
         _pipelineExecutor.ExecuteAsync(
                 Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
-                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult
             {
                 Success = true,
@@ -746,7 +848,7 @@ public class ComposableSetupPipelineTests : TestBase
 
         _pipelineExecutor.ExecuteAsync(
                 Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
-                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult
             {
                 Success = true,
@@ -821,7 +923,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -880,7 +982,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -943,7 +1045,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -999,7 +1101,7 @@ public class ComposableSetupPipelineTests : TestBase
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
         // Dry run FAILS
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = false, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = false, IsDegraded = true, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1064,7 +1166,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1125,7 +1227,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), OutputData = JsonDocument.Parse("""{"price": 9.99}""").RootElement, ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1192,7 +1294,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), OutputData = JsonDocument.Parse("""{"price": 9.99}""").RootElement, ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1250,7 +1352,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1297,7 +1399,7 @@ public class ComposableSetupPipelineTests : TestBase
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
             .Returns(new FetchResult { IsSuccess = true, Html = "<html><body><div class='price'>$9.99</div></body></html>", HttpStatusCode = 200, DurationMs = 100 });
 
-        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(), Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(new PipelineExecutionResult { Success = true, BlockResults = new Dictionary<string, BlockResult>(), ExecutionDurationMs = 100, WasBaseline = true, IsDegraded = false, SkippedBlockIds = [] });
 
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
@@ -1335,4 +1437,16 @@ public class ComposableSetupPipelineTests : TestBase
         _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
             .Returns(returnValues[0], returnValues.Skip(1).ToArray());
     }
+
+    private static bool HasCachedHtml(PipelineDefinition definition, string blockId, string expectedHtml)
+    {
+        var navigateBlock = definition.Blocks.FirstOrDefault(block => block.Id == blockId);
+        if (navigateBlock?.Config is not { } config || config.ValueKind != JsonValueKind.Object)
+            return false;
+
+        return config.TryGetProperty("_cachedHtml", out var cachedHtml) &&
+               cachedHtml.ValueKind == JsonValueKind.String &&
+               cachedHtml.GetString() == expectedHtml;
+    }
 }
+

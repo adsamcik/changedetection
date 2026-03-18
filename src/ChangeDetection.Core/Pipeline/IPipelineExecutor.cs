@@ -10,5 +10,6 @@ public interface IPipelineExecutor
         Guid watchId,
         IBlockStateStore stateStore,
         object? page,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool isDryRun = false);
 }

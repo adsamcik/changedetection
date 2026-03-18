@@ -35,6 +35,17 @@ public class NavigateBlock : IPipelineBlock
         if (string.IsNullOrWhiteSpace(url))
             return BlockResult.Failed("Navigate block received an empty or invalid URL.");
 
+        if (TryGetCachedHtml(context, out var cachedHtml))
+        {
+            var cachedOutput = JsonSerializer.SerializeToElement(new
+            {
+                html = cachedHtml,
+                url
+            });
+
+            return BlockResult.Succeeded(cachedOutput);
+        }
+
         var urlValidator = context.Services.GetRequiredService<IUrlValidator>();
         var validationError = urlValidator.Validate(url);
         if (validationError is not null)
@@ -57,6 +68,27 @@ public class NavigateBlock : IPipelineBlock
         });
 
         return BlockResult.Succeeded(output);
+    }
+
+    private static bool TryGetCachedHtml(BlockContext context, out string cachedHtml)
+    {
+        cachedHtml = string.Empty;
+
+        if (!context.IsDryRun || context.PipelineDefinition is not PipelineDefinition pipeline)
+            return false;
+
+        var blockDef = pipeline.Blocks.FirstOrDefault(
+            b => string.Equals(b.Id, context.BlockInstanceId, StringComparison.OrdinalIgnoreCase));
+
+        if (blockDef?.Config is not { ValueKind: JsonValueKind.Object } config ||
+            !config.TryGetProperty("_cachedHtml", out var cached) ||
+            cached.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        cachedHtml = cached.GetString() ?? string.Empty;
+        return true;
     }
 
     private static FetchOptions BuildFetchOptions(BlockContext context)

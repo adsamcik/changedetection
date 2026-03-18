@@ -28,6 +28,9 @@ public class NotifyBlock : IPipelineBlock
     {
         context.CancellationToken.ThrowIfCancellationRequested();
 
+        if (context.IsDryRun)
+            return BlockResult.Skip("Preview mode — notifications suppressed");
+
         if (context.IsFirstRun)
             return BlockResult.Skip("First run — baseline capture, no notifications");
 

@@ -178,6 +178,31 @@ public class NavigateBlockTests : TestBase
     }
 
     [Test]
+    public async Task ExecuteAsync_DryRunWithCachedHtml_UsesCachedHtml()
+    {
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("nav-1", "Navigate",
+            new { _cachedHtml = "<html><body>Cached</body></html>" });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("nav-1")
+            .WithInput("url", (object)"https://example.com")
+            .WithServices(CreateServices())
+            .WithPipelineDefinition(pipeline)
+            .WithDryRun()
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Success.ShouldBeTrue();
+        result.Output.ShouldNotBeNull();
+        result.Output!.Value.GetProperty("html").GetString().ShouldBe("<html><body>Cached</body></html>");
+        result.Output!.Value.GetProperty("url").GetString().ShouldBe("https://example.com");
+
+        await _fetcher.DidNotReceiveWithAnyArgs()
+            .FetchAsync(default!, default!, default);
+    }
+
+    [Test]
     public async Task BlockType_ReturnsNavigate()
     {
         _sut.BlockType.ShouldBe("Navigate");

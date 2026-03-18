@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
@@ -280,7 +281,7 @@ public class ComposableSetupPipeline(
         DryRunResult dryRunResult;
         try
         {
-            dryRunResult = await ExecuteDryRunAsync(pipeline, ct);
+            dryRunResult = await ExecuteDryRunAsync(pipeline, session, ct);
             session.DryRunResult = dryRunResult;
         }
         catch (Exception ex)
@@ -398,7 +399,7 @@ public class ComposableSetupPipeline(
                 session.AssembledPipeline = revisedPipeline;
                 session.LlmCallCount++;
 
-                var dryRunResult = await ExecuteDryRunAsync(revisedPipeline, ct);
+                var dryRunResult = await ExecuteDryRunAsync(revisedPipeline, session, ct);
                 session.DryRunResult = dryRunResult;
 
                 var adversarialResult = await RunAdversarialTestAsync(revisedPipeline, dryRunResult, session.Intent!, ct);
@@ -987,14 +988,16 @@ public class ComposableSetupPipeline(
         };
     }
 
-    private async Task<DryRunResult> ExecuteDryRunAsync(PipelineDefinition pipeline, CancellationToken ct)
+    private async Task<DryRunResult> ExecuteDryRunAsync(PipelineDefinition pipeline, SetupSession session, CancellationToken ct)
     {
         try
         {
             var tempWatchId = Guid.NewGuid();
             var stateStore = new InMemoryBlockStateStore();
+            var dryRunPipeline = CreateDryRunPipeline(pipeline, session);
 
-            var result = await pipelineExecutor.ExecuteAsync(pipeline, tempWatchId, stateStore, null, ct);
+            var result = await pipelineExecutor.ExecuteAsync(
+                dryRunPipeline, tempWatchId, stateStore, null, ct, isDryRun: true);
 
             var blockOutputs = new Dictionary<string, object?>();
             foreach (var (blockId, blockResult) in result.BlockResults)
@@ -1016,6 +1019,9 @@ public class ComposableSetupPipeline(
             {
                 Success = result.Success,
                 BlockOutputs = blockOutputs,
+                ExecutionDurationMs = result.ExecutionDurationMs,
+                SkippedBlockIds = [.. result.SkippedBlockIds],
+                WasBaseline = result.WasBaseline,
                 SampleOutput = sampleOutput,
                 Error = result.Error
             };
@@ -1028,6 +1034,27 @@ public class ComposableSetupPipeline(
                 Error = ex.Message
             };
         }
+    }
+
+    private static PipelineDefinition CreateDryRunPipeline(PipelineDefinition pipeline, SetupSession session)
+    {
+        if (string.IsNullOrWhiteSpace(session.FetchedHtml))
+            return pipeline;
+
+        var blocks = pipeline.Blocks.Select(block =>
+        {
+            if (!string.Equals(block.Type, "Navigate", StringComparison.OrdinalIgnoreCase))
+                return block;
+
+            var config = block.Config is { ValueKind: JsonValueKind.Object } existingConfig
+                ? JsonNode.Parse(existingConfig.GetRawText())!.AsObject()
+                : new JsonObject();
+
+            config["_cachedHtml"] = session.FetchedHtml;
+            return block with { Config = JsonSerializer.SerializeToElement(config) };
+        }).ToList();
+
+        return pipeline with { Blocks = blocks };
     }
 
     private async Task<AdversarialTestResult> RunAdversarialTestAsync(

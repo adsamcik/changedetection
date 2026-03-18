@@ -90,6 +90,9 @@ public record DryRunResult
 {
     public bool Success { get; init; }
     public Dictionary<string, object?> BlockOutputs { get; init; } = [];
+    public long ExecutionDurationMs { get; init; }
+    public List<string> SkippedBlockIds { get; init; } = [];
+    public bool WasBaseline { get; init; }
     public string? Error { get; init; }
     public string? SampleOutput { get; init; }
 }
