@@ -4,6 +4,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.BlockExecution;
+using ChangeDetection.Services.Persistence;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -145,6 +146,7 @@ public class PipelineExecutorTests : TestBase
         public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
         public IReadOnlyList<PortDescriptor> OutputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
         public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+        public bool IsCacheable => true;
         public int ExecutionCount { get; private set; }
 
         public Task<BlockResult> ExecuteAsync(BlockContext context)
@@ -161,10 +163,102 @@ public class PipelineExecutorTests : TestBase
         public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
         public IReadOnlyList<PortDescriptor> OutputPorts => [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }];
         public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+        public bool IsCacheable => true;
 
         public Task<BlockResult> ExecuteAsync(BlockContext context)
         {
             var output = JsonSerializer.SerializeToElement(new { price = 29.99 });
+            return Task.FromResult(BlockResult.Succeeded(output));
+        }
+    }
+
+    private class VariableNavigateBlock(string html) : IPipelineBlock
+    {
+        public string Html { get; set; } = html;
+        public string BlockType => "Navigate";
+        public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "url", Type = PortType.Url }];
+        public IReadOnlyList<PortDescriptor> OutputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
+        public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Infrastructure;
+        public int ExecutionCount { get; private set; }
+
+        public Task<BlockResult> ExecuteAsync(BlockContext context)
+        {
+            ExecutionCount++;
+            var output = JsonSerializer.SerializeToElement(new { html = Html });
+            return Task.FromResult(BlockResult.Succeeded(output));
+        }
+    }
+
+    private class HtmlOutputTestBlock : IPipelineBlock
+    {
+        public string BlockType => "Output";
+        public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
+        public IReadOnlyList<PortDescriptor> OutputPorts => [];
+        public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Delivery;
+
+        public Task<BlockResult> ExecuteAsync(BlockContext context)
+        {
+            var output = context.Inputs.TryGetValue("html", out var input)
+                ? input
+                : JsonSerializer.SerializeToElement(new { html = "" });
+            return Task.FromResult(BlockResult.Succeeded(output));
+        }
+    }
+
+    private class DiffOutputTestBlock : IPipelineBlock
+    {
+        public string BlockType => "Output";
+        public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "result", Type = PortType.DiffResult }];
+        public IReadOnlyList<PortDescriptor> OutputPorts => [];
+        public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Delivery;
+
+        public Task<BlockResult> ExecuteAsync(BlockContext context)
+        {
+            var output = context.Inputs.TryGetValue("result", out var input)
+                ? input
+                : JsonSerializer.SerializeToElement(new { changed = false });
+            return Task.FromResult(BlockResult.Succeeded(output));
+        }
+    }
+
+    private class CacheableComparisonBlock : IPipelineBlock
+    {
+        public string BlockType => "HashCompare";
+        public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
+        public IReadOnlyList<PortDescriptor> OutputPorts => [new PortDescriptor { Name = "result", Type = PortType.DiffResult }];
+        public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Analysis;
+        public bool IsCacheable => true;
+        public int ExecutionCount { get; private set; }
+
+        public Task<BlockResult> ExecuteAsync(BlockContext context)
+        {
+            ExecutionCount++;
+            var output = JsonSerializer.SerializeToElement(new
+            {
+                changed = true,
+                revision = ExecutionCount
+            });
+            return Task.FromResult(BlockResult.Succeeded(output));
+        }
+    }
+
+    private class NonCacheableLlmExtractTestBlock : IPipelineBlock
+    {
+        public string BlockType => "LlmExtract";
+        public IReadOnlyList<PortDescriptor> InputPorts => [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
+        public IReadOnlyList<PortDescriptor> OutputPorts => [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }];
+        public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+        public bool IsCacheable => false;
+        public int ExecutionCount { get; private set; }
+
+        public Task<BlockResult> ExecuteAsync(BlockContext context)
+        {
+            ExecutionCount++;
+            var output = JsonSerializer.SerializeToElement(new
+            {
+                extracted = true,
+                run = ExecutionCount
+            });
             return Task.FromResult(BlockResult.Succeeded(output));
         }
     }
@@ -253,6 +347,8 @@ public class PipelineExecutorTests : TestBase
         var store = Substitute.For<IBlockStateStore>();
         store.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns((JsonElement?)null);
+        store.GetCachedOutputAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
         return store;
     }
 
@@ -262,7 +358,185 @@ public class PipelineExecutorTests : TestBase
         var previousOutput = JsonSerializer.SerializeToElement(new { price = 19.99 });
         store.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(previousOutput);
+        store.GetCachedOutputAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
         return store;
+    }
+
+    private (string Path, LiteDbContext Context, LiteDbBlockStateStore Store) CreateLiteDbStateStore()
+    {
+        var tempDbPath = Path.Combine(Path.GetTempPath(), $"pipelineexecutor_cache_{Guid.NewGuid():N}.db");
+        var context = new LiteDbContext($"Filename={tempDbPath};Connection=shared");
+        var store = new LiteDbBlockStateStore(context, CreateLogger<LiteDbBlockStateStore>());
+        return (tempDbPath, context, store);
+    }
+
+    private static void DeleteLiteDbStore(string path)
+    {
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+
+    private static (BlockRegistry Registry, PipelineDefinition Pipeline, VariableNavigateBlock NavigateBlock, FilterTestBlock FilterBlock)
+        BuildCacheableFilterPipeline(JsonElement? filterConfig = null)
+    {
+        var registry = new BlockRegistry();
+        BlockRegistry.RegisterCoreBlocks(registry);
+
+        var navigateBlock = new VariableNavigateBlock("<html>same</html>");
+        var filterBlock = new FilterTestBlock();
+
+        registry.Register("Input",
+            inputPorts: [],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "url", Type = PortType.Url },
+                new PortDescriptor { Name = "config", Type = PortType.Configuration }
+            ],
+            factory: _ => new InputTestBlock());
+
+        registry.Register("Navigate",
+            inputPorts: [new PortDescriptor { Name = "url", Type = PortType.Url }],
+            outputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            factory: _ => navigateBlock);
+
+        registry.Register("Filter",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            factory: _ => filterBlock);
+
+        registry.Register("Output",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [],
+            factory: _ => new HtmlOutputTestBlock());
+
+        var pipeline = new PipelineDefinition
+        {
+            SchemaVersion = 1,
+            Blocks =
+            [
+                new BlockDefinition { Id = "input-1", Type = "Input" },
+                new BlockDefinition { Id = "navigate-1", Type = "Navigate" },
+                new BlockDefinition { Id = "filter-1", Type = "Filter", Config = filterConfig },
+                new BlockDefinition { Id = "output-1", Type = "Output" }
+            ],
+            Connections =
+            [
+                new ConnectionDefinition { FromBlockId = "input-1", FromPort = "url", ToBlockId = "navigate-1", ToPort = "url" },
+                new ConnectionDefinition { FromBlockId = "navigate-1", FromPort = "html", ToBlockId = "filter-1", ToPort = "html" },
+                new ConnectionDefinition { FromBlockId = "filter-1", FromPort = "html", ToBlockId = "output-1", ToPort = "html" }
+            ]
+        };
+
+        return (registry, pipeline, navigateBlock, filterBlock);
+    }
+
+    private static (BlockRegistry Registry, PipelineDefinition Pipeline, VariableNavigateBlock NavigateBlock, NonCacheableLlmExtractTestBlock LlmBlock)
+        BuildNonCacheableLlmPipeline()
+    {
+        var registry = new BlockRegistry();
+        BlockRegistry.RegisterCoreBlocks(registry);
+
+        var navigateBlock = new VariableNavigateBlock("<html>same</html>");
+        var llmBlock = new NonCacheableLlmExtractTestBlock();
+
+        registry.Register("Input",
+            inputPorts: [],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "url", Type = PortType.Url },
+                new PortDescriptor { Name = "config", Type = PortType.Configuration }
+            ],
+            factory: _ => new InputTestBlock());
+
+        registry.Register("Navigate",
+            inputPorts: [new PortDescriptor { Name = "url", Type = PortType.Url }],
+            outputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            factory: _ => navigateBlock);
+
+        registry.Register("LlmExtract",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => llmBlock);
+
+        registry.Register("Output",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [],
+            factory: _ => new OutputTestBlock());
+
+        var pipeline = new PipelineDefinition
+        {
+            SchemaVersion = 1,
+            Blocks =
+            [
+                new BlockDefinition { Id = "input-1", Type = "Input" },
+                new BlockDefinition { Id = "navigate-1", Type = "Navigate" },
+                new BlockDefinition { Id = "llm-1", Type = "LlmExtract" },
+                new BlockDefinition { Id = "output-1", Type = "Output" }
+            ],
+            Connections =
+            [
+                new ConnectionDefinition { FromBlockId = "input-1", FromPort = "url", ToBlockId = "navigate-1", ToPort = "url" },
+                new ConnectionDefinition { FromBlockId = "navigate-1", FromPort = "html", ToBlockId = "llm-1", ToPort = "html" },
+                new ConnectionDefinition { FromBlockId = "llm-1", FromPort = "data", ToBlockId = "output-1", ToPort = "data" }
+            ]
+        };
+
+        return (registry, pipeline, navigateBlock, llmBlock);
+    }
+
+    private static (BlockRegistry Registry, PipelineDefinition Pipeline, VariableNavigateBlock NavigateBlock, CacheableComparisonBlock CompareBlock)
+        BuildCacheableComparisonPipeline()
+    {
+        var registry = new BlockRegistry();
+        BlockRegistry.RegisterCoreBlocks(registry);
+
+        var navigateBlock = new VariableNavigateBlock("<html>same</html>");
+        var compareBlock = new CacheableComparisonBlock();
+
+        registry.Register("Input",
+            inputPorts: [],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "url", Type = PortType.Url },
+                new PortDescriptor { Name = "config", Type = PortType.Configuration }
+            ],
+            factory: _ => new InputTestBlock());
+
+        registry.Register("Navigate",
+            inputPorts: [new PortDescriptor { Name = "url", Type = PortType.Url }],
+            outputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            factory: _ => navigateBlock);
+
+        registry.Register("HashCompare",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
+            factory: _ => compareBlock);
+
+        registry.Register("Output",
+            inputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
+            outputPorts: [],
+            factory: _ => new DiffOutputTestBlock());
+
+        var pipeline = new PipelineDefinition
+        {
+            SchemaVersion = 1,
+            Blocks =
+            [
+                new BlockDefinition { Id = "input-1", Type = "Input" },
+                new BlockDefinition { Id = "navigate-1", Type = "Navigate" },
+                new BlockDefinition { Id = "compare-1", Type = "HashCompare" },
+                new BlockDefinition { Id = "output-1", Type = "Output" }
+            ],
+            Connections =
+            [
+                new ConnectionDefinition { FromBlockId = "input-1", FromPort = "url", ToBlockId = "navigate-1", ToPort = "url" },
+                new ConnectionDefinition { FromBlockId = "navigate-1", FromPort = "html", ToBlockId = "compare-1", ToPort = "html" },
+                new ConnectionDefinition { FromBlockId = "compare-1", FromPort = "result", ToBlockId = "output-1", ToPort = "result" }
+            ]
+        };
+
+        return (registry, pipeline, navigateBlock, compareBlock);
     }
 
     /// <summary>
@@ -713,6 +987,8 @@ public class PipelineExecutorTests : TestBase
             watchId.ToString(),
             "input-1",
             Arg.Any<JsonElement>(),
+            Arg.Any<string?>(),
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -895,5 +1171,170 @@ public class PipelineExecutorTests : TestBase
         // Output block should still execute
         result.BlockResults.ShouldContainKey("output-1");
         result.BlockResults["output-1"].Success.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_CacheHitWithSameInput_UsesCachedOutputAndResavesState()
+    {
+        var (registry, pipeline, _, filterBlock) = BuildCacheableFilterPipeline();
+        var executor = CreateExecutor(registry);
+        var watchId = Guid.NewGuid();
+        var (path, context, stateStore) = CreateLiteDbStateStore();
+
+        try
+        {
+            var firstRun = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+            var secondRun = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+            firstRun.Success.ShouldBeTrue();
+            secondRun.Success.ShouldBeTrue();
+            filterBlock.ExecutionCount.ShouldBe(1);
+            secondRun.BlockResults["filter-1"].CacheHit.ShouldBeTrue();
+            secondRun.BlockResults["filter-1"].Status.ShouldBe(BlockExecutionStatus.Completed);
+
+            var history = await stateStore.GetHistoryAsync(watchId.ToString(), "filter-1", maxResults: 10);
+            history.Count.ShouldBe(2);
+        }
+        finally
+        {
+            context.Dispose();
+            DeleteLiteDbStore(path);
+        }
+    }
+
+    [Test]
+    public async Task ExecuteAsync_DifferentInput_InvalidatesBlockCache()
+    {
+        var (registry, pipeline, navigateBlock, filterBlock) = BuildCacheableFilterPipeline();
+        var executor = CreateExecutor(registry);
+        var watchId = Guid.NewGuid();
+        var (path, context, stateStore) = CreateLiteDbStateStore();
+
+        try
+        {
+            await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+            navigateBlock.Html = "<html>changed</html>";
+            var secondRun = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+            secondRun.Success.ShouldBeTrue();
+            secondRun.BlockResults["filter-1"].CacheHit.ShouldBeFalse();
+            filterBlock.ExecutionCount.ShouldBe(2);
+        }
+        finally
+        {
+            context.Dispose();
+            DeleteLiteDbStore(path);
+        }
+    }
+
+    [Test]
+    public async Task ExecuteAsync_FirstRun_DoesNotCheckBlockCache()
+    {
+        var (registry, pipeline, _, filterBlock) = BuildCacheableFilterPipeline();
+        var executor = CreateExecutor(registry);
+        var stateStore = CreateEmptyStateStore();
+
+        var result = await executor.ExecuteAsync(pipeline, Guid.NewGuid(), stateStore, page: null);
+
+        result.Success.ShouldBeTrue();
+        filterBlock.ExecutionCount.ShouldBe(1);
+        await stateStore.DidNotReceive().GetCachedOutputAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ExecuteAsync_NonCacheableLlmExtract_AlwaysExecutes()
+    {
+        var (registry, pipeline, _, llmBlock) = BuildNonCacheableLlmPipeline();
+        var executor = CreateExecutor(registry);
+        var watchId = Guid.NewGuid();
+        var (path, context, stateStore) = CreateLiteDbStateStore();
+
+        try
+        {
+            await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+            var secondRun = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+            secondRun.Success.ShouldBeTrue();
+            secondRun.BlockResults["llm-1"].CacheHit.ShouldBeFalse();
+            llmBlock.ExecutionCount.ShouldBe(2);
+        }
+        finally
+        {
+            context.Dispose();
+            DeleteLiteDbStore(path);
+        }
+    }
+
+    [Test]
+    public async Task ExecuteAsync_PipelineConfigChange_InvalidatesBlockCache()
+    {
+        var filterConfigA = JsonSerializer.SerializeToElement(new { css = ".price" });
+        var filterConfigB = JsonSerializer.SerializeToElement(new { css = ".title" });
+
+        var (registry, pipelineA, _, filterBlock) = BuildCacheableFilterPipeline(filterConfigA);
+        var executor = CreateExecutor(registry);
+        var watchId = Guid.NewGuid();
+        var (path, context, stateStore) = CreateLiteDbStateStore();
+
+        var pipelineB = pipelineA with
+        {
+            Blocks = pipelineA.Blocks
+                .Select(block => block.Id == "filter-1"
+                    ? block with { Config = filterConfigB }
+                    : block)
+                .ToList()
+        };
+
+        try
+        {
+            await executor.ExecuteAsync(pipelineA, watchId, stateStore, page: null);
+            var secondRun = await executor.ExecuteAsync(pipelineB, watchId, stateStore, page: null);
+
+            secondRun.Success.ShouldBeTrue();
+            secondRun.BlockResults["filter-1"].CacheHit.ShouldBeFalse();
+            filterBlock.ExecutionCount.ShouldBe(2);
+        }
+        finally
+        {
+            context.Dispose();
+            DeleteLiteDbStore(path);
+        }
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ComparisonCacheHit_ProducesSyntheticUnchangedResult()
+    {
+        var (registry, pipeline, _, compareBlock) = BuildCacheableComparisonPipeline();
+        var executor = CreateExecutor(registry);
+        var watchId = Guid.NewGuid();
+        var (path, context, stateStore) = CreateLiteDbStateStore();
+
+        try
+        {
+            await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+            var secondRun = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+            secondRun.Success.ShouldBeTrue();
+            compareBlock.ExecutionCount.ShouldBe(1);
+            secondRun.BlockResults["compare-1"].CacheHit.ShouldBeTrue();
+            secondRun.BlockResults["compare-1"].Status.ShouldBe(BlockExecutionStatus.Completed);
+            secondRun.BlockResults["compare-1"].Output.ShouldNotBeNull();
+            secondRun.BlockResults["compare-1"].Output.Value.GetProperty("changed").GetBoolean().ShouldBeFalse();
+
+            var storedOutput = await stateStore.GetPreviousOutputAsync(watchId.ToString(), "compare-1");
+            storedOutput.ShouldNotBeNull();
+            storedOutput.Value.GetProperty("changed").GetBoolean().ShouldBeFalse();
+        }
+        finally
+        {
+            context.Dispose();
+            DeleteLiteDbStore(path);
+        }
     }
 }

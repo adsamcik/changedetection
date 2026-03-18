@@ -56,7 +56,7 @@ public class ThrottleBlock : IPipelineBlock
             });
 
             await context.StateStore.SaveOutputAsync(
-                context.WatchId.ToString(), context.BlockInstanceId, stateToSave, ct);
+                context.WatchId.ToString(), context.BlockInstanceId, stateToSave, ct: ct);
 
             return BlockResult.Succeeded(dataElement);
         }

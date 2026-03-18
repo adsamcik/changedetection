@@ -1399,7 +1399,23 @@ public class ComposableSetupPipeline(
             return Task.FromResult(_store.TryGetValue(key, out var value) ? value : (JsonElement?)null);
         }
 
-        public Task SaveOutputAsync(string watchId, string blockInstanceId, JsonElement output, CancellationToken ct = default)
+        public Task<JsonElement?> GetCachedOutputAsync(
+            string watchId,
+            string blockInstanceId,
+            string inputHash,
+            string pipelineHash,
+            CancellationToken ct = default)
+        {
+            return Task.FromResult((JsonElement?)null);
+        }
+
+        public Task SaveOutputAsync(
+            string watchId,
+            string blockInstanceId,
+            JsonElement output,
+            string? inputHash = null,
+            string? pipelineHash = null,
+            CancellationToken ct = default)
         {
             var key = $"{watchId}:{blockInstanceId}";
             _store[key] = output;

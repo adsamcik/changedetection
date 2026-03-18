@@ -10,8 +10,7 @@ public enum BlockExecutionStatus
     Completed,
     Failed,
     Skipped,
-    Baseline,
-    ExtractionDegraded
+    Baseline
 }
 
 /// <summary>
@@ -25,6 +24,7 @@ public record BlockResult
     public string? Error { get; init; }
     public required BlockExecutionStatus Status { get; init; }
     public string? SkipReason { get; init; }
+    public bool CacheHit { get; init; }
 
     /// <summary>Creates a successful result with output data.</summary>
     public static BlockResult Succeeded(JsonElement output) => new()
@@ -58,12 +58,12 @@ public record BlockResult
         Status = BlockExecutionStatus.Baseline
     };
 
-    /// <summary>Creates a degraded extraction result that suppresses persistence and downstream execution.</summary>
-    public static BlockResult ExtractionDegraded(string reason) => new()
+    /// <summary>Creates a successful completed result from cached output.</summary>
+    public static BlockResult CachedResult(JsonElement output) => new()
     {
         Success = true,
-        Output = null,
-        Status = BlockExecutionStatus.ExtractionDegraded,
-        SkipReason = reason
+        Output = output,
+        Status = BlockExecutionStatus.Completed,
+        CacheHit = true
     };
 }

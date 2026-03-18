@@ -12,5 +12,7 @@ public class BlockExecutionSnapshotEntity
     public required string BlockInstanceId { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public required string OutputJson { get; set; }
+    public string? InputHash { get; set; }
+    public string? PipelineDefinitionHash { get; set; }
     public long? DurationMs { get; set; }
 }

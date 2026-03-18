@@ -21,6 +21,7 @@ public class ExtractSchemaBlock : IPipelineBlock
         [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }];
 
     public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+    public bool IsCacheable => true;
 
     public async Task<BlockResult> ExecuteAsync(BlockContext context)
     {

@@ -9,7 +9,19 @@ namespace ChangeDetection.Core.Pipeline;
 public interface IBlockStateStore
 {
     Task<JsonElement?> GetPreviousOutputAsync(string watchId, string blockInstanceId, CancellationToken ct = default);
-    Task SaveOutputAsync(string watchId, string blockInstanceId, JsonElement output, CancellationToken ct = default);
+    Task<JsonElement?> GetCachedOutputAsync(
+        string watchId,
+        string blockInstanceId,
+        string inputHash,
+        string pipelineHash,
+        CancellationToken ct = default);
+    Task SaveOutputAsync(
+        string watchId,
+        string blockInstanceId,
+        JsonElement output,
+        string? inputHash = null,
+        string? pipelineHash = null,
+        CancellationToken ct = default);
     Task<IReadOnlyList<BlockExecutionSnapshot>> GetHistoryAsync(string watchId, string blockInstanceId, int maxResults = 10, CancellationToken ct = default);
 }
 

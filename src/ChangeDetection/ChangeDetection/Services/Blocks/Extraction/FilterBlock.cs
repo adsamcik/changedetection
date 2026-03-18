@@ -20,6 +20,7 @@ public class FilterBlock : IPipelineBlock
         [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }];
 
     public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+    public bool IsCacheable => true;
 
     public async Task<BlockResult> ExecuteAsync(BlockContext context)
     {

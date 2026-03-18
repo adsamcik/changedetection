@@ -90,7 +90,7 @@ public class LookupHistoryBlock : IPipelineBlock
             });
 
             await context.StateStore.SaveOutputAsync(
-                context.WatchId.ToString(), context.BlockInstanceId, output, ct);
+                context.WatchId.ToString(), context.BlockInstanceId, output, ct: ct);
 
             return BlockResult.Succeeded(output);
         }

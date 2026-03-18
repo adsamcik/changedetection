@@ -54,6 +54,36 @@ public class BlockStateStoreTests : TestBase
     }
 
     [Test]
+    public async Task GetCachedOutput_MatchingHashes_ReturnsMostRecentMatch()
+    {
+        var watchId = "watch-1";
+        var blockId = "block-1";
+        var cachedOutput = CreateJsonElement(new { price = 29.99 });
+
+        await _store.SaveOutputAsync(watchId, blockId, cachedOutput, "input-a", "pipeline-a");
+        await Task.Delay(200);
+        await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { price = 99.99 }), "input-b", "pipeline-a");
+
+        var result = await _store.GetCachedOutputAsync(watchId, blockId, "input-a", "pipeline-a");
+
+        result.ShouldNotBeNull();
+        result.Value.GetProperty("price").GetDouble().ShouldBe(29.99);
+    }
+
+    [Test]
+    public async Task GetCachedOutput_NonMatchingHashes_ReturnsNull()
+    {
+        var watchId = "watch-1";
+        var blockId = "block-1";
+
+        await _store.SaveOutputAsync(watchId, blockId, CreateJsonElement(new { price = 29.99 }), "input-a", "pipeline-a");
+
+        var result = await _store.GetCachedOutputAsync(watchId, blockId, "input-a", "pipeline-b");
+
+        result.ShouldBeNull();
+    }
+
+    [Test]
     public async Task GetPreviousOutput_NoData_ReturnsNull()
     {
         var result = await _store.GetPreviousOutputAsync("nonexistent-watch", "nonexistent-block");

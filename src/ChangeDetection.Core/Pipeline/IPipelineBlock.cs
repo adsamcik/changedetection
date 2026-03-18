@@ -15,5 +15,8 @@ public interface IPipelineBlock
     /// <summary>Determines error handling behavior for this block type.</summary>
     BlockCriticalityTier CriticalityTier { get; }
 
+    /// <summary>Enables content-aware output caching when block execution is deterministic.</summary>
+    bool IsCacheable => false;
+
     Task<BlockResult> ExecuteAsync(BlockContext context);
 }

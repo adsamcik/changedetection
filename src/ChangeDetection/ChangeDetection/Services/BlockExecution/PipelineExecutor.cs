@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -29,8 +31,7 @@ public class PipelineExecutor(
         Guid watchId,
         IBlockStateStore stateStore,
         object? page,
-        CancellationToken ct = default,
-        bool isDryRun = false)
+        CancellationToken ct = default)
     {
         var stopwatch = Stopwatch.StartNew();
         var blockResults = new Dictionary<string, BlockResult>();
@@ -59,6 +60,7 @@ public class PipelineExecutor(
 
         // 2. Topological sort
         var sortedBlockIds = TopologicalSort(definition);
+        var pipelineHash = ComputePipelineSemanticHash(definition);
 
         // 3. Determine first run
         var isFirstRun = await IsFirstRunAsync(watchId, definition, stateStore, ct);
@@ -67,7 +69,6 @@ public class PipelineExecutor(
         var downstreamMap = BuildDownstreamMap(definition);
         var skippedSet = new HashSet<string>(StringComparer.Ordinal);
         var blockOutputs = new Dictionary<string, JsonElement?>(StringComparer.Ordinal);
-        string? currentHtml = null;
         var isDegraded = false;
         var runTimestamp = DateTime.UtcNow;
         var loggerFactory = services.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
@@ -130,7 +131,6 @@ public class PipelineExecutor(
                 Page = page,
                 Services = services,
                 IsFirstRun = isFirstRun,
-                IsDryRun = isDryRun,
                 PipelineDefinition = definition,
                 AllBlockOutputs = blockOutputs
             };
@@ -152,8 +152,43 @@ public class PipelineExecutor(
                 break;
             }
 
+            string? inputHash = null;
+            if (block.IsCacheable)
+            {
+                var computedInputHash = ComputeInputHash(inputs);
+                inputHash = computedInputHash;
+                if (!context.IsFirstRun)
+                {
+                    var cached = await stateStore.GetCachedOutputAsync(
+                        watchId.ToString(), blockId, computedInputHash, pipelineHash, linkedCt);
+
+                    if (cached.HasValue)
+                    {
+                        var cachedOutput = IsComparisonBlock(block)
+                            ? CreateSyntheticUnchangedComparisonOutput(cached.Value)
+                            : cached.Value;
+
+                        logger.LogInformation(
+                            "↺ Cache hit for block '{BlockId}' (type: {BlockType})",
+                            blockId, blockDef.Type);
+
+                        var cachedResult = BlockResult.CachedResult(cachedOutput);
+                        blockResults[blockId] = cachedResult;
+                        blockOutputs[blockId] = cachedOutput;
+                        await stateStore.SaveOutputAsync(
+                            watchId.ToString(),
+                            blockId,
+                            cachedOutput,
+                            inputHash,
+                            pipelineHash,
+                            linkedCt);
+                        continue;
+                    }
+                }
+            }
+
             // Check LLM budget before executing LLM blocks
-            if (IsLlmBlock(blockDef.Type) && !isDryRun)
+            if (IsLlmBlock(blockDef.Type))
             {
                 var (exceeded, currentCost) = await CheckLlmBudgetAsync(
                     watchId, budgetCache, linkedCt);
@@ -177,35 +212,16 @@ public class PipelineExecutor(
             blockResults[blockId] = result;
             logger.LogInformation("✓ Block '{BlockId}' completed: Success={Success}, HasOutput={HasOutput}", blockId, result.Success, result.Output is not null);
 
-            if (result.Success && block.CriticalityTier == BlockCriticalityTier.Extraction)
-            {
-                var degraded = await EvaluateExtractionQualityAsync(
-                    watchId, blockId, blockDef, result, stateStore, linkedCt);
-                if (degraded is not null)
-                {
-                    result = degraded;
-                    blockResults[blockId] = result;
-                    isDegraded = true;
-                    MarkDownstreamSkipped(blockId, downstreamMap, skippedSet);
-                    await TryAutoHealAsync(watchId, blockId, blockDef.Type,
-                        degraded.SkipReason ?? "Extraction degraded", definition, linkedCt);
-                    continue;
-                }
-            }
-
             if (result.Output.HasValue)
             {
                 blockOutputs[blockId] = result.Output;
-
-                if (string.Equals(blockDef.Type, "Navigate", StringComparison.OrdinalIgnoreCase) &&
-                    result.Output.Value.ValueKind == JsonValueKind.Object &&
-                    result.Output.Value.TryGetProperty("html", out var htmlProp) &&
-                    htmlProp.ValueKind == JsonValueKind.String)
-                {
-                    currentHtml = htmlProp.GetString();
-                }
-
-                await stateStore.SaveOutputAsync(watchId.ToString(), blockId, result.Output.Value, linkedCt);
+                await stateStore.SaveOutputAsync(
+                    watchId.ToString(),
+                    blockId,
+                    result.Output.Value,
+                    inputHash,
+                    pipelineHash,
+                    linkedCt);
             }
             else
             {
@@ -213,7 +229,7 @@ public class PipelineExecutor(
             }
 
             // Record LLM cost after successful execution
-            if (IsLlmBlock(blockDef.Type) && result.Success && !isDryRun)
+            if (IsLlmBlock(blockDef.Type) && result.Success)
             {
                 await RecordLlmCostAsync(watchId, blockId, result, services, linkedCt);
             }
@@ -223,7 +239,7 @@ public class PipelineExecutor(
             {
                 // Attempt auto-healing for failed blocks
                 await TryAutoHealAsync(watchId, blockId, blockDef.Type,
-                    result.Error ?? "Unknown error", definition, currentHtml, stateStore, linkedCt);
+                    result.Error ?? "Unknown error", definition, linkedCt);
 
                 switch (block.CriticalityTier)
                 {
@@ -526,6 +542,63 @@ public class PipelineExecutor(
         return inputs;
     }
 
+    private static string ComputeInputHash(IReadOnlyDictionary<string, JsonElement> resolvedInputs)
+    {
+        var semanticInputs = resolvedInputs
+            .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+            .Select(kvp => new
+            {
+                kvp.Key,
+                Value = kvp.Value
+            })
+            .ToArray();
+
+        var json = JsonSerializer.Serialize(semanticInputs);
+        return ComputeSha256Hash(json);
+    }
+
+    private static string ComputePipelineSemanticHash(PipelineDefinition definition)
+    {
+        var semanticDefinition = new
+        {
+            definition.SchemaVersion,
+            Blocks = definition.Blocks.Select(block => new
+            {
+                block.Id,
+                block.Type,
+                block.Config
+            }).ToArray(),
+            Connections = definition.Connections.ToArray()
+        };
+
+        var json = JsonSerializer.Serialize(semanticDefinition);
+        return ComputeSha256Hash(json);
+    }
+
+    private static string ComputeSha256Hash(string content)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
+        return Convert.ToHexStringLower(bytes);
+    }
+
+    private static bool IsComparisonBlock(IPipelineBlock block) =>
+        block.OutputPorts.Any(port => port.Type == PortType.DiffResult);
+
+    private static JsonElement CreateSyntheticUnchangedComparisonOutput(JsonElement cachedOutput)
+    {
+        if (cachedOutput.ValueKind != JsonValueKind.Object)
+            return JsonSerializer.SerializeToElement(new { changed = false });
+
+        var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var property in cachedOutput.EnumerateObject())
+        {
+            values[property.Name] = property.Value.Clone();
+        }
+
+        values["changed"] = JsonSerializer.SerializeToElement(false);
+        return JsonSerializer.SerializeToElement(values);
+    }
+
     /// <summary>
     /// Checks if a Condition block's output indicates BooleanSignal=false.
     /// </summary>
@@ -547,52 +620,6 @@ public class PipelineExecutor(
         return false;
     }
 
-    private async Task<BlockResult?> EvaluateExtractionQualityAsync(
-        Guid watchId,
-        string blockId,
-        BlockDefinition blockDef,
-        BlockResult result,
-        IBlockStateStore stateStore,
-        CancellationToken ct)
-    {
-        if (!result.Success || !result.Output.HasValue)
-            return null;
-
-        if (blockDef.Config is { ValueKind: JsonValueKind.Object } config &&
-            config.TryGetProperty("allowEmpty", out var allowEmptyElement) &&
-            allowEmptyElement.ValueKind == JsonValueKind.True)
-        {
-            return null;
-        }
-
-        var currentCount = CountExtractedFields(result.Output.Value);
-        if (currentCount > 0)
-            return null;
-
-        var previous = await stateStore.GetPreviousOutputAsync(watchId.ToString(), blockId, ct);
-        if (!previous.HasValue)
-            return null;
-
-        var previousCount = CountExtractedFields(previous.Value);
-        if (previousCount == 0)
-            return null;
-
-        logger.LogWarning(
-            "Extraction block '{BlockId}' returned 0 fields after previously extracting {PreviousCount}. Marking run degraded.",
-            blockId, previousCount);
-
-        return BlockResult.ExtractionDegraded(
-            $"Extraction returned 0 fields (previously {previousCount})");
-    }
-
-    private static int CountExtractedFields(JsonElement output) =>
-        output.ValueKind == JsonValueKind.Object
-            ? output.EnumerateObject().Count(p =>
-                !p.Name.StartsWith("_meta", StringComparison.OrdinalIgnoreCase) &&
-                !p.Name.EndsWith("_source", StringComparison.OrdinalIgnoreCase) &&
-                p.Value.ValueKind != JsonValueKind.Null)
-            : 0;
-
     /// <summary>
     /// Returns true if the block type is an LLM block (LlmExtract, LlmEvaluate, LlmCraftPrompt).
     /// </summary>
@@ -607,8 +634,7 @@ public class PipelineExecutor(
     /// takes effect on the next execution.
     /// </summary>
     private async Task TryAutoHealAsync(Guid watchId, string blockInstanceId, string blockType,
-        string errorMessage, PipelineDefinition pipeline, string? currentHtml,
-        IBlockStateStore stateStore, CancellationToken ct)
+        string errorMessage, PipelineDefinition pipeline, CancellationToken ct)
     {
         try
         {
@@ -622,19 +648,6 @@ public class PipelineExecutor(
 
             // Look up setup-time HTML for Layer 2 diagnosis
             string? setupTimeHtml = null;
-            string? latestHtml = null;
-            var navigateBlockId = pipeline.FindBlockInstanceId("Navigate");
-            if (navigateBlockId is not null)
-            {
-                var prevOutput = await stateStore.GetPreviousOutputAsync(watchId.ToString(), navigateBlockId, ct);
-                if (prevOutput.HasValue &&
-                    prevOutput.Value.ValueKind == JsonValueKind.Object &&
-                    prevOutput.Value.TryGetProperty("html", out var htmlProp))
-                {
-                    latestHtml = htmlProp.GetString();
-                }
-            }
-
             var watchRepo = services.GetService(typeof(IRepository<WatchedSite>)) as IRepository<WatchedSite>;
             if (watchRepo is not null)
             {
@@ -650,9 +663,7 @@ public class PipelineExecutor(
                 ErrorMessage = errorMessage,
                 ConsecutiveFailures = failureCount,
                 Pipeline = pipeline,
-                CurrentHtml = currentHtml,
                 SetupTimeHtml = setupTimeHtml,
-                LatestSuccessfulHtml = latestHtml,
                 Services = services
             };
 

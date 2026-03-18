@@ -20,6 +20,7 @@ public class DataFilterBlock : IPipelineBlock
         [new PortDescriptor { Name = "filtered", Type = PortType.ExtractedObjects }];
 
     public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Extraction;
+    public bool IsCacheable => true;
 
     public Task<BlockResult> ExecuteAsync(BlockContext context)
     {

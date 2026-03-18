@@ -86,14 +86,16 @@ public class PortTypeTests : TestBase
     }
 
     [Test]
-    public async Task BlockResult_ExtractionDegraded_HasCorrectStatus()
+    public async Task BlockResult_CachedResult_HasCorrectStatus()
     {
-        var result = BlockResult.ExtractionDegraded("Extraction returned 0 fields");
+        var output = JsonDocument.Parse("""{"cached": true}""").RootElement.Clone();
+
+        var result = BlockResult.CachedResult(output);
 
         result.Success.ShouldBeTrue();
-        result.Status.ShouldBe(BlockExecutionStatus.ExtractionDegraded);
-        result.SkipReason.ShouldBe("Extraction returned 0 fields");
-        result.Output.ShouldBeNull();
+        result.Status.ShouldBe(BlockExecutionStatus.Completed);
+        result.CacheHit.ShouldBeTrue();
+        result.Output.ShouldNotBeNull();
         result.Error.ShouldBeNull();
         await Task.CompletedTask;
     }

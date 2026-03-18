@@ -23,6 +23,8 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
         collection.EnsureIndex(x => x.WatchId);
         collection.EnsureIndex(x => x.BlockInstanceId);
         collection.EnsureIndex(x => x.Timestamp);
+        collection.EnsureIndex(x => x.InputHash);
+        collection.EnsureIndex(x => x.PipelineDefinitionHash);
         return collection;
     }
 
@@ -39,7 +41,9 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
                 .Id(x => x.Id)
                 .Field(x => x.WatchId, "WatchId")
                 .Field(x => x.BlockInstanceId, "BlockInstanceId")
-                .Field(x => x.OutputJson, "OutputJson");
+                .Field(x => x.OutputJson, "OutputJson")
+                .Field(x => x.InputHash, "InputHash")
+                .Field(x => x.PipelineDefinitionHash, "PipelineDefinitionHash");
             _mapperConfigured = true;
         }
     }
@@ -70,7 +74,50 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
         }
     }
 
-    public async Task SaveOutputAsync(string watchId, string blockInstanceId, JsonElement output, CancellationToken ct = default)
+    public async Task<JsonElement?> GetCachedOutputAsync(
+        string watchId,
+        string blockInstanceId,
+        string inputHash,
+        string pipelineHash,
+        CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var entity = _collection.Query()
+                .Where(x =>
+                    x.WatchId == watchId &&
+                    x.BlockInstanceId == blockInstanceId &&
+                    x.InputHash == inputHash &&
+                    x.PipelineDefinitionHash == pipelineHash)
+                .OrderByDescending(x => x.Timestamp)
+                .Limit(1)
+                .FirstOrDefault();
+
+            if (entity is null)
+            {
+                logger.LogDebug(
+                    "No cached output found for watch {WatchId}, block {BlockInstanceId}, input hash {InputHash}, pipeline hash {PipelineHash}",
+                    watchId, blockInstanceId, inputHash, pipelineHash);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(entity.OutputJson);
+            return doc.RootElement.Clone();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SaveOutputAsync(
+        string watchId,
+        string blockInstanceId,
+        JsonElement output,
+        string? inputHash = null,
+        string? pipelineHash = null,
+        CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
@@ -80,11 +127,15 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
                 WatchId = watchId,
                 BlockInstanceId = blockInstanceId,
                 Timestamp = DateTime.UtcNow,
-                OutputJson = System.Text.Json.JsonSerializer.Serialize(output)
+                OutputJson = System.Text.Json.JsonSerializer.Serialize(output),
+                InputHash = inputHash,
+                PipelineDefinitionHash = pipelineHash
             };
 
             _collection.Insert(entity);
-            logger.LogDebug("Saved output for watch {WatchId}, block {BlockInstanceId}", watchId, blockInstanceId);
+            logger.LogDebug(
+                "Saved output for watch {WatchId}, block {BlockInstanceId}, input hash {InputHash}, pipeline hash {PipelineHash}",
+                watchId, blockInstanceId, inputHash, pipelineHash);
 
             // Prune old snapshots to prevent unbounded growth
             var allSnapshots = _collection.Find(s => s.WatchId == watchId && s.BlockInstanceId == blockInstanceId)

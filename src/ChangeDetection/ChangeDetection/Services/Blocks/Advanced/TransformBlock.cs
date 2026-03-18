@@ -18,6 +18,7 @@ public partial class TransformBlock : IPipelineBlock
         [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }];
 
     public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Analysis;
+    public bool IsCacheable => true;
 
     public Task<BlockResult> ExecuteAsync(BlockContext context)
     {
