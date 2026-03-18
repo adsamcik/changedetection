@@ -101,6 +101,12 @@ public class ExtractSchemaBlock : IPipelineBlock
             context.Logger.LogInformation("ExtractSchemaBlock: {Field} ({Source}) = {Value}", field, source ?? "unresolved", truncated ?? "(null)");
         }
 
+        var extractedCount = data.Count(kvp =>
+            !kvp.Key.EndsWith("_source", StringComparison.OrdinalIgnoreCase)
+            && kvp.Value is not null);
+        data["_meta_extractedCount"] = extractedCount.ToString();
+        data["_meta_totalFields"] = schema.Count.ToString();
+
         var output = JsonSerializer.SerializeToElement(data);
         return await Task.FromResult(BlockResult.Succeeded(output));
     }

@@ -175,6 +175,22 @@ public class PipelineExecutor(
             blockResults[blockId] = result;
             logger.LogInformation("✓ Block '{BlockId}' completed: Success={Success}, HasOutput={HasOutput}", blockId, result.Success, result.Output is not null);
 
+            if (result.Success && block.CriticalityTier == BlockCriticalityTier.Extraction)
+            {
+                var degraded = await EvaluateExtractionQualityAsync(
+                    watchId, blockId, blockDef, result, stateStore, linkedCt);
+                if (degraded is not null)
+                {
+                    result = degraded;
+                    blockResults[blockId] = result;
+                    isDegraded = true;
+                    MarkDownstreamSkipped(blockId, downstreamMap, skippedSet);
+                    await TryAutoHealAsync(watchId, blockId, blockDef.Type,
+                        degraded.SkipReason ?? "Extraction degraded", definition, linkedCt);
+                    continue;
+                }
+            }
+
             if (result.Output.HasValue)
             {
                 blockOutputs[blockId] = result.Output;
@@ -528,6 +544,52 @@ public class PipelineExecutor(
 
         return false;
     }
+
+    private async Task<BlockResult?> EvaluateExtractionQualityAsync(
+        Guid watchId,
+        string blockId,
+        BlockDefinition blockDef,
+        BlockResult result,
+        IBlockStateStore stateStore,
+        CancellationToken ct)
+    {
+        if (!result.Success || !result.Output.HasValue)
+            return null;
+
+        if (blockDef.Config is { ValueKind: JsonValueKind.Object } config &&
+            config.TryGetProperty("allowEmpty", out var allowEmptyElement) &&
+            allowEmptyElement.ValueKind == JsonValueKind.True)
+        {
+            return null;
+        }
+
+        var currentCount = CountExtractedFields(result.Output.Value);
+        if (currentCount > 0)
+            return null;
+
+        var previous = await stateStore.GetPreviousOutputAsync(watchId.ToString(), blockId, ct);
+        if (!previous.HasValue)
+            return null;
+
+        var previousCount = CountExtractedFields(previous.Value);
+        if (previousCount == 0)
+            return null;
+
+        logger.LogWarning(
+            "Extraction block '{BlockId}' returned 0 fields after previously extracting {PreviousCount}. Marking run degraded.",
+            blockId, previousCount);
+
+        return BlockResult.ExtractionDegraded(
+            $"Extraction returned 0 fields (previously {previousCount})");
+    }
+
+    private static int CountExtractedFields(JsonElement output) =>
+        output.ValueKind == JsonValueKind.Object
+            ? output.EnumerateObject().Count(p =>
+                !p.Name.StartsWith("_meta", StringComparison.OrdinalIgnoreCase) &&
+                !p.Name.EndsWith("_source", StringComparison.OrdinalIgnoreCase) &&
+                p.Value.ValueKind != JsonValueKind.Null)
+            : 0;
 
     /// <summary>
     /// Returns true if the block type is an LLM block (LlmExtract, LlmEvaluate, LlmCraftPrompt).

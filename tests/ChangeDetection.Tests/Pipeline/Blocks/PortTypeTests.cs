@@ -84,4 +84,17 @@ public class PortTypeTests : TestBase
         result.Error.ShouldBeNull();
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task BlockResult_ExtractionDegraded_HasCorrectStatus()
+    {
+        var result = BlockResult.ExtractionDegraded("Extraction returned 0 fields");
+
+        result.Success.ShouldBeTrue();
+        result.Status.ShouldBe(BlockExecutionStatus.ExtractionDegraded);
+        result.SkipReason.ShouldBe("Extraction returned 0 fields");
+        result.Output.ShouldBeNull();
+        result.Error.ShouldBeNull();
+        await Task.CompletedTask;
+    }
 }

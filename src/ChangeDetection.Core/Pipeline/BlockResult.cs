@@ -10,7 +10,8 @@ public enum BlockExecutionStatus
     Completed,
     Failed,
     Skipped,
-    Baseline
+    Baseline,
+    ExtractionDegraded
 }
 
 /// <summary>
@@ -55,5 +56,14 @@ public record BlockResult
         Success = true,
         Output = output,
         Status = BlockExecutionStatus.Baseline
+    };
+
+    /// <summary>Creates a degraded extraction result that suppresses persistence and downstream execution.</summary>
+    public static BlockResult ExtractionDegraded(string reason) => new()
+    {
+        Success = true,
+        Output = null,
+        Status = BlockExecutionStatus.ExtractionDegraded,
+        SkipReason = reason
     };
 }

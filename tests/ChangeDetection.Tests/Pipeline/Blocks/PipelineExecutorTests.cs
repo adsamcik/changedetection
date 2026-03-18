@@ -6,6 +6,7 @@ using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.BlockExecution;
+using ChangeDetection.Services.AutoHealing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -218,16 +219,24 @@ public class PipelineExecutorTests : TestBase
         return new PipelineExecutor(registry, validator, serviceProvider, executorLogger);
     }
 
+    private PipelineExecutor CreateExecutor(
+        BlockRegistry registry,
+        params (Type ServiceType, object Instance)[] registrations)
+    {
+        var validatorLogger = CreateLogger<PipelineValidator>();
+        var validator = new PipelineValidator(validatorLogger);
+        var serviceProvider = BuildServiceProvider(registrations);
+        var executorLogger = CreateLogger<PipelineExecutor>();
+        return new PipelineExecutor(registry, validator, serviceProvider, executorLogger);
+    }
+
     private static IServiceProvider BuildServiceProvider(
-        IFailureTracker? failureTracker = null,
-        IAutoHealingService? healingService = null,
-        IRepository<WatchedSite>? watchRepo = null)
+        params (Type ServiceType, object Instance)[] registrations)
     {
         var sp = Substitute.For<IServiceProvider>();
         sp.GetService(typeof(ILoggerFactory)).Returns(NullLoggerFactory.Instance);
-        sp.GetService(typeof(IFailureTracker)).Returns(failureTracker);
-        sp.GetService(typeof(IAutoHealingService)).Returns(healingService);
-        sp.GetService(typeof(IRepository<WatchedSite>)).Returns(watchRepo);
+        foreach (var (serviceType, instance) in registrations)
+            sp.GetService(serviceType).Returns(instance);
         return sp;
     }
 
@@ -591,6 +600,287 @@ public class PipelineExecutorTests : TestBase
             watchId.ToString(),
             "input-1",
             Arg.Any<JsonElement>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ExtractionDegradesAfterPreviouslyNonEmptyOutput_SkipsPersistenceAndDownstream()
+    {
+        var (registry, pipeline) = BuildSimpleValidPipeline();
+        var degradedOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = (string?)null,
+            title = (string?)null,
+            price_source = (string?)null,
+            title_source = (string?)null,
+            _meta_extractedCount = "0",
+            _meta_totalFields = "2"
+        });
+
+        registry.Register("ExtractSchema",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ =>
+            {
+                var block = Substitute.For<IPipelineBlock>();
+                block.BlockType.Returns("ExtractSchema");
+                block.CriticalityTier.Returns(BlockCriticalityTier.Extraction);
+                block.ExecuteAsync(Arg.Any<BlockContext>())
+                    .Returns(BlockResult.Succeeded(degradedOutput));
+                return block;
+            });
+
+        var stateStore = Substitute.For<IBlockStateStore>();
+        var previousOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = "$19.99",
+            title = "Widget",
+            category = "Tools"
+        });
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), "extract-1", Arg.Any<CancellationToken>())
+            .Returns(previousOutput);
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Is<string>(id => id != "extract-1"), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
+
+        var watchId = Guid.NewGuid();
+        var result = await CreateExecutor(registry).ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+        result.Success.ShouldBeTrue();
+        result.IsDegraded.ShouldBeTrue();
+        result.BlockResults["extract-1"].Status.ShouldBe(BlockExecutionStatus.ExtractionDegraded);
+        result.BlockResults["extract-1"].SkipReason.ShouldContain("previously 3");
+        result.SkippedBlockIds.ShouldContain("hash-1");
+        result.SkippedBlockIds.ShouldContain("output-1");
+        result.BlockResults["hash-1"].Status.ShouldBe(BlockExecutionStatus.Skipped);
+        result.BlockResults["output-1"].Status.ShouldBe(BlockExecutionStatus.Skipped);
+        await stateStore.DidNotReceive().SaveOutputAsync(
+            watchId.ToString(),
+            "extract-1",
+            Arg.Any<JsonElement>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ExtractionWithSomeFields_DoesNotDegrade()
+    {
+        var (registry, pipeline) = BuildSimpleValidPipeline();
+        var partialOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = "$29.99",
+            title = (string?)null,
+            category = "Tools",
+            price_source = "css",
+            title_source = (string?)null,
+            category_source = "css",
+            _meta_extractedCount = "2",
+            _meta_totalFields = "3"
+        });
+
+        registry.Register("ExtractSchema",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ =>
+            {
+                var block = Substitute.For<IPipelineBlock>();
+                block.BlockType.Returns("ExtractSchema");
+                block.CriticalityTier.Returns(BlockCriticalityTier.Extraction);
+                block.ExecuteAsync(Arg.Any<BlockContext>())
+                    .Returns(BlockResult.Succeeded(partialOutput));
+                return block;
+            });
+
+        var stateStore = Substitute.For<IBlockStateStore>();
+        var previousOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = "$19.99",
+            title = "Widget",
+            category = "Old"
+        });
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), "extract-1", Arg.Any<CancellationToken>())
+            .Returns(previousOutput);
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Is<string>(id => id != "extract-1"), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
+
+        var result = await CreateExecutor(registry).ExecuteAsync(pipeline, Guid.NewGuid(), stateStore, page: null);
+
+        result.IsDegraded.ShouldBeFalse();
+        result.BlockResults["extract-1"].Status.ShouldBe(BlockExecutionStatus.Completed);
+        result.BlockResults["output-1"].Success.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_FirstRunEmptyExtraction_DoesNotDegrade()
+    {
+        var (registry, pipeline) = BuildSimpleValidPipeline();
+        var emptyOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = (string?)null,
+            title = (string?)null,
+            price_source = (string?)null,
+            title_source = (string?)null,
+            _meta_extractedCount = "0",
+            _meta_totalFields = "2"
+        });
+
+        registry.Register("ExtractSchema",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ =>
+            {
+                var block = Substitute.For<IPipelineBlock>();
+                block.BlockType.Returns("ExtractSchema");
+                block.CriticalityTier.Returns(BlockCriticalityTier.Extraction);
+                block.ExecuteAsync(Arg.Any<BlockContext>())
+                    .Returns(BlockResult.Succeeded(emptyOutput));
+                return block;
+            });
+
+        var stateStore = CreateEmptyStateStore();
+        var result = await CreateExecutor(registry).ExecuteAsync(pipeline, Guid.NewGuid(), stateStore, page: null);
+
+        result.WasBaseline.ShouldBeTrue();
+        result.IsDegraded.ShouldBeFalse();
+        result.BlockResults["extract-1"].Status.ShouldBe(BlockExecutionStatus.Completed);
+        result.BlockResults["output-1"].Success.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_AllowEmptyExtraction_DoesNotDegrade()
+    {
+        var (registry, originalPipeline) = BuildSimpleValidPipeline();
+        var pipeline = new PipelineDefinition
+        {
+            SchemaVersion = originalPipeline.SchemaVersion,
+            Connections = [.. originalPipeline.Connections],
+            Blocks =
+            [
+                .. originalPipeline.Blocks.Select(block => block.Id == "extract-1"
+                    ? new BlockDefinition
+                    {
+                        Id = block.Id,
+                        Type = block.Type,
+                        Config = JsonSerializer.SerializeToElement(new
+                        {
+                            allowEmpty = true
+                        })
+                    }
+                    : new BlockDefinition
+                    {
+                        Id = block.Id,
+                        Type = block.Type,
+                        Config = block.Config
+                    })
+            ]
+        };
+
+        var emptyOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = (string?)null,
+            title = (string?)null,
+            price_source = (string?)null,
+            title_source = (string?)null,
+            _meta_extractedCount = "0",
+            _meta_totalFields = "2"
+        });
+
+        registry.Register("ExtractSchema",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ =>
+            {
+                var block = Substitute.For<IPipelineBlock>();
+                block.BlockType.Returns("ExtractSchema");
+                block.CriticalityTier.Returns(BlockCriticalityTier.Extraction);
+                block.ExecuteAsync(Arg.Any<BlockContext>())
+                    .Returns(BlockResult.Succeeded(emptyOutput));
+                return block;
+            });
+
+        var stateStore = Substitute.For<IBlockStateStore>();
+        var previousOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = "$19.99",
+            title = "Widget",
+            category = "Tools"
+        });
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), "extract-1", Arg.Any<CancellationToken>())
+            .Returns(previousOutput);
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Is<string>(id => id != "extract-1"), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
+
+        var result = await CreateExecutor(registry).ExecuteAsync(pipeline, Guid.NewGuid(), stateStore, page: null);
+
+        result.IsDegraded.ShouldBeFalse();
+        result.BlockResults["extract-1"].Status.ShouldBe(BlockExecutionStatus.Completed);
+        result.BlockResults["output-1"].Success.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ExtractionDegradation_TriggersAutoHealing()
+    {
+        var (registry, pipeline) = BuildSimpleValidPipeline();
+        var degradedOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = (string?)null,
+            title = (string?)null,
+            price_source = (string?)null,
+            title_source = (string?)null,
+            _meta_extractedCount = "0",
+            _meta_totalFields = "2"
+        });
+
+        registry.Register("ExtractSchema",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ =>
+            {
+                var block = Substitute.For<IPipelineBlock>();
+                block.BlockType.Returns("ExtractSchema");
+                block.CriticalityTier.Returns(BlockCriticalityTier.Extraction);
+                block.ExecuteAsync(Arg.Any<BlockContext>())
+                    .Returns(BlockResult.Succeeded(degradedOutput));
+                return block;
+            });
+
+        var stateStore = Substitute.For<IBlockStateStore>();
+        var previousOutput = JsonSerializer.SerializeToElement(new
+        {
+            price = "$19.99",
+            title = "Widget",
+            category = "Tools"
+        });
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), "extract-1", Arg.Any<CancellationToken>())
+            .Returns(previousOutput);
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Is<string>(id => id != "extract-1"), Arg.Any<CancellationToken>())
+            .Returns((JsonElement?)null);
+
+        var failureTracker = Substitute.For<IFailureTracker>();
+        failureTracker.RecordFailureAsync(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(3);
+
+        var autoHealing = Substitute.For<IAutoHealingService>();
+        autoHealing.AttemptHealAsync(Arg.Any<HealingContext>(), Arg.Any<CancellationToken>())
+            .Returns(new HealingResult { Outcome = HealingOutcome.NoActionNeeded, Message = "queued" });
+
+        var executor = CreateExecutor(registry,
+            (typeof(IFailureTracker), failureTracker),
+            (typeof(IAutoHealingService), autoHealing));
+
+        var watchId = Guid.NewGuid();
+        var result = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+        result.IsDegraded.ShouldBeTrue();
+        await failureTracker.Received(1).RecordFailureAsync(
+            watchId,
+            "extract-1",
+            Arg.Is<string>(msg => msg.Contains("previously 3")),
+            Arg.Any<CancellationToken>());
+        await autoHealing.Received(1).AttemptHealAsync(
+            Arg.Is<HealingContext>(ctx =>
+                ctx.WatchId == watchId &&
+                ctx.BlockInstanceId == "extract-1" &&
+                ctx.BlockType == "ExtractSchema" &&
+                ctx.ErrorMessage.Contains("previously 3")),
             Arg.Any<CancellationToken>());
     }
 

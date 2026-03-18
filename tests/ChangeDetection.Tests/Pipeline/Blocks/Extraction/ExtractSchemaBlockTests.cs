@@ -60,6 +60,8 @@ public class ExtractSchemaBlockTests : TestBase
         var data = result.Output!.Value;
         data.GetProperty("price").GetString().ShouldBe("$29.99");
         data.GetProperty("title").GetString().ShouldBe("Widget");
+        data.GetProperty("_meta_extractedCount").GetString().ShouldBe("2");
+        data.GetProperty("_meta_totalFields").GetString().ShouldBe("2");
 
         _extractor.Received(1).ExtractText(inputHtml, cssSelector: ".price");
         _extractor.Received(1).ExtractText(inputHtml, cssSelector: "h1");
