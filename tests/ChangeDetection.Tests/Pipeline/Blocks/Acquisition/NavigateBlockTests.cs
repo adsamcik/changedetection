@@ -89,7 +89,59 @@ public class NavigateBlockTests : TestBase
 
         await _fetcher.Received(1).FetchAsync(
             "https://example.com",
-            Arg.Is<FetchOptions>(o => o.UseJavaScript && o.TimeoutSeconds == 60),
+            Arg.Is<FetchOptions>(o => o.UseJavaScript && o.Mode == FetchMode.Browser && o.TimeoutSeconds == 60),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ExecuteAsync_WithLightweightHttp_PassesLightweightFetchMode()
+    {
+        _fetcher
+            .FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html></html>" });
+
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("nav-1", "Navigate", new { useLightweight = true, timeout = 60000 });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("nav-1")
+            .WithInput("url", (object)"https://example.com")
+            .WithServices(CreateServices())
+            .WithPipelineDefinition(pipeline)
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Success.ShouldBeTrue();
+
+        await _fetcher.Received(1).FetchAsync(
+            "https://example.com",
+            Arg.Is<FetchOptions>(o => !o.UseJavaScript && o.Mode == FetchMode.LightweightHttp && o.TimeoutSeconds == 60),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ExecuteAsync_WithoutModeFlags_DefaultsToAuto()
+    {
+        _fetcher
+            .FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html></html>" });
+
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("nav-1", "Navigate", new { timeout = 60000 });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("nav-1")
+            .WithInput("url", (object)"https://example.com")
+            .WithServices(CreateServices())
+            .WithPipelineDefinition(pipeline)
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Success.ShouldBeTrue();
+
+        await _fetcher.Received(1).FetchAsync(
+            "https://example.com",
+            Arg.Is<FetchOptions>(o => !o.UseJavaScript && o.Mode == FetchMode.Auto && o.TimeoutSeconds == 60),
             Arg.Any<CancellationToken>());
     }
 

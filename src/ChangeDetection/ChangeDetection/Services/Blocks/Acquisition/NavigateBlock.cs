@@ -72,8 +72,16 @@ public class NavigateBlock : IPipelineBlock
         if (blockDef?.Config is not { ValueKind: JsonValueKind.Object } config)
             return options;
 
-        if (config.TryGetProperty("useJavaScript", out var js) && js.ValueKind == JsonValueKind.True)
-            options.UseJavaScript = true;
+        var useJavaScript = config.TryGetProperty("useJavaScript", out var js) && js.ValueKind == JsonValueKind.True;
+        var useLightweight = config.TryGetProperty("useLightweight", out var lightweight) && lightweight.ValueKind == JsonValueKind.True;
+
+        options.Mode = useJavaScript
+            ? FetchMode.Browser
+            : useLightweight
+                ? FetchMode.LightweightHttp
+                : FetchMode.Auto;
+
+        options.UseJavaScript = useJavaScript;
 
         if (config.TryGetProperty("timeout", out var timeout) && timeout.TryGetInt32(out var timeoutMs))
             options.TimeoutSeconds = Math.Max(1, timeoutMs / 1000);

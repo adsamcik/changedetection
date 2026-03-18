@@ -148,6 +148,13 @@ builder.Services.AddHttpClient("GoogleCSE");
 // Named HttpClient for Brave Search API
 builder.Services.AddHttpClient("BraveSearch");
 builder.Services.AddHttpClient("NewsData");
+builder.Services.AddHttpClient("LightweightFetch")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = System.Net.DecompressionMethods.GZip
+            | System.Net.DecompressionMethods.Deflate
+            | System.Net.DecompressionMethods.Brotli
+    });
 
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");

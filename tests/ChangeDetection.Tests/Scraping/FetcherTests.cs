@@ -15,6 +15,7 @@ public class FetchOptionsTests
 
         // Assert
         options.UseJavaScript.ShouldBeFalse();
+        options.Mode.ShouldBe(FetchMode.Auto);
         options.TimeoutSeconds.ShouldBe(30);
         options.UserAgent.ShouldBeNull();
         options.ProxyUrl.ShouldBeNull();
@@ -35,6 +36,7 @@ public class FetchOptionsTests
         var options = new FetchOptions
         {
             UseJavaScript = true,
+            Mode = FetchMode.Browser,
             TimeoutSeconds = 60,
             UserAgent = "TestAgent/1.0",
             ProxyUrl = "http://proxy.example.com",
@@ -48,6 +50,7 @@ public class FetchOptionsTests
 
         // Assert
         options.UseJavaScript.ShouldBeTrue();
+        options.Mode.ShouldBe(FetchMode.Browser);
         options.TimeoutSeconds.ShouldBe(60);
         options.UserAgent.ShouldBe("TestAgent/1.0");
         options.ProxyUrl.ShouldBe("http://proxy.example.com");
@@ -57,6 +60,19 @@ public class FetchOptionsTests
         options.ViewportWidth.ShouldBe(1280);
         options.ViewportHeight.ShouldBe(720);
         options.Headers["X-Custom"].ShouldBe("value");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FetchOptions_UseJavaScript_ForcesBrowserEffectiveMode()
+    {
+        var options = new FetchOptions
+        {
+            Mode = FetchMode.LightweightHttp,
+            UseJavaScript = true
+        };
+
+        options.EffectiveMode.ShouldBe(FetchMode.Browser);
         await Task.CompletedTask;
     }
 }

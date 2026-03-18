@@ -62,9 +62,17 @@ public class TimeoutSettings
 /// <summary>
 /// Options for fetching content.
 /// </summary>
+public enum FetchMode
+{
+    Auto,
+    LightweightHttp,
+    Browser
+}
+
 public class FetchOptions
 {
     public bool UseJavaScript { get; set; }
+    public FetchMode Mode { get; set; } = FetchMode.Auto;
     public Dictionary<string, string> Headers { get; set; } = [];
     public string? ProxyUrl { get; set; }
 
@@ -110,6 +118,11 @@ public class FetchOptions
     /// If set, element screenshots will be captured based on this selector.
     /// </summary>
     public string? ElementSelector { get; set; }
+
+    /// <summary>
+    /// Gets the effective fetch mode, preserving legacy <see cref="UseJavaScript"/> behavior.
+    /// </summary>
+    public FetchMode EffectiveMode => UseJavaScript ? FetchMode.Browser : Mode;
 }
 
 /// <summary>

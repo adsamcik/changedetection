@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using ChangeDetection.Core.Interfaces;
@@ -39,10 +40,29 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
         
         try
         {
-            // Use simple HTTP client for non-JS pages
-            if (!options.UseJavaScript)
+            switch (options.EffectiveMode)
             {
-                return await FetchWithHttpClientAsync(url, options, progress, linkedCts.Token);
+                case FetchMode.LightweightHttp:
+                    return await FetchWithHttpClientAsync(url, options, progress, linkedCts.Token);
+
+                case FetchMode.Auto:
+                {
+                    var httpResult = await FetchWithHttpClientAsync(url, options, progress, linkedCts.Token);
+                    var needsBrowser = !httpResult.IsSuccess
+                        || string.IsNullOrWhiteSpace(httpResult.Html)
+                        || LightweightFetchHeuristics.NeedsJavaScript(httpResult.Html);
+
+                    if (!needsBrowser)
+                        return httpResult;
+
+                    _logger.LogInformation(
+                        "Auto mode falling back to Playwright for {Url}",
+                        url);
+                    break;
+                }
+
+                case FetchMode.Browser:
+                    break;
             }
 
             await EnsureInitializedAsync(linkedCts.Token);
@@ -103,28 +123,15 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
         var stopwatch = Stopwatch.StartNew();
         var timeouts = options.EffectiveTimeouts;
         var connectionTimer = Stopwatch.StartNew();
-        
-        using var client = _httpClientFactory.CreateClient();
+
+        using var client = _httpClientFactory.CreateClient("LightweightFetch");
         client.Timeout = TimeSpan.FromSeconds(timeouts.NavigationTimeoutSeconds);
-
-        if (!string.IsNullOrEmpty(options.UserAgent))
-        {
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
-        }
-        else
-        {
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        }
-
-        foreach (var header in options.Headers)
-        {
-            client.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
-        }
 
         try
         {
+            using var request = BuildHttpRequest(url, options);
             // Use ResponseHeadersRead to detect response timeout vs content download timeout
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             
             progress.TimeToFirstByteMs = connectionTimer.ElapsedMilliseconds;
             progress.ReceivedInitialResponse = true;
@@ -232,6 +239,64 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
         }
     }
 
+    private static HttpRequestMessage BuildHttpRequest(string url, FetchOptions options)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var headers = new Dictionary<string, string>(BrowserHeaders.Chrome, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(options.UserAgent))
+        {
+            headers["User-Agent"] = options.UserAgent;
+        }
+
+        foreach (var header in options.Headers)
+        {
+            headers[header.Key] = header.Value;
+        }
+
+        foreach (var header in headers)
+        {
+            if (string.Equals(header.Key, "User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.UserAgent.Clear();
+                request.Headers.UserAgent.ParseAdd(header.Value);
+                continue;
+            }
+
+            if (string.Equals(header.Key, "Accept", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.Accept.Clear();
+                request.Headers.Accept.ParseAdd(header.Value);
+                continue;
+            }
+
+            if (string.Equals(header.Key, "Accept-Language", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.AcceptLanguage.Clear();
+                request.Headers.AcceptLanguage.ParseAdd(header.Value);
+                continue;
+            }
+
+            if (string.Equals(header.Key, "Accept-Encoding", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.AcceptEncoding.Clear();
+                request.Headers.AcceptEncoding.ParseAdd(header.Value);
+                continue;
+            }
+
+            if (string.Equals(header.Key, "Connection", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.Connection.Clear();
+                request.Headers.Connection.ParseAdd(header.Value);
+                continue;
+            }
+
+            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        return request;
+    }
+
     /// <summary>
     /// Reads HTTP response content with a size limit to prevent memory exhaustion.
     /// Returns null if the content exceeds the size limit.
@@ -286,7 +351,7 @@ public class PlaywrightFetcher : IContentFetcher, IAsyncDisposable
             },
             UserAgent = options.UserAgent
                 ?? deviceSettings?.UserAgent
-                ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                ?? BrowserHeaders.Chrome["User-Agent"],
             IsMobile = deviceSettings?.IsMobile ?? false,
             HasTouch = deviceSettings?.HasTouch ?? false,
             DeviceScaleFactor = deviceSettings?.DeviceScaleFactor ?? 1.0f
