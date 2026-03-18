@@ -278,6 +278,7 @@ builder.Services.AddSingleton<ILlmKernelFactory, ClaudeKernelFactory>();
 builder.Services.AddSingleton<ILlmKernelFactory, CopilotKernelFactory>();
 
 builder.Services.AddScoped<IContentExtractor, ContentExtractor>();
+builder.Services.AddScoped<IStructuredDataExtractor, StructuredDataExtractor>();
 builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
 builder.Services.AddSingleton<ITrustAutopilot, TrustAutopilot>();
 builder.Services.AddScoped<IDomCompactor, DomCompactor>();

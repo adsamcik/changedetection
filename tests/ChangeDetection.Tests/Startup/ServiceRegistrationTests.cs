@@ -1,5 +1,6 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline.AutoHealing;
+using ChangeDetection.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,6 +35,7 @@ public class ServiceRegistrationTests : TestBase, IAsyncDisposable
     [Arguments(typeof(IDiffService))]
     [Arguments(typeof(IContentFetcher))]
     [Arguments(typeof(IContentExtractor))]
+    [Arguments(typeof(IStructuredDataExtractor))]
     [Arguments(typeof(IDomCompactor))]
     [Arguments(typeof(INotificationService))]
     [Arguments(typeof(INotificationOutboxService))]
