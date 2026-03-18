@@ -1,4 +1,5 @@
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Services;
 using Microsoft.AspNetCore.Hosting;
@@ -60,6 +61,8 @@ public class ServiceRegistrationTests : TestBase, IAsyncDisposable
     [Arguments(typeof(IDatabaseBackupService))]
     [Arguments(typeof(ISessionPersistenceService))]
     [Arguments(typeof(IInputAnchorValidator))]
+    [Arguments(typeof(IPlatformDetector))]
+    [Arguments(typeof(IPipelineTemplateRegistry))]
     public async Task CoreService_ShouldResolveFromDI(Type serviceType)
     {
         Log("Resolving {0} from DI container", serviceType.Name);

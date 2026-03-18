@@ -16,11 +16,14 @@ public class ComposableSetupPipeline(
     IPipelineExecutor pipelineExecutor,
     IPipelineValidator pipelineValidator,
     IBlockRegistry blockRegistry,
+    IPlatformDetector platformDetector,
+    IPipelineTemplateRegistry templateRegistry,
     IRepository<WatchedSite> watchRepo,
     ILogger<ComposableSetupPipeline> logger) : IComposableSetupPipeline
 {
     private static readonly ConcurrentDictionary<string, SetupSession> Sessions = new();
     private static readonly TimeSpan SessionExpiration = TimeSpan.FromMinutes(30);
+    private const float TemplateConfidenceThreshold = 0.9f;
 
     public async IAsyncEnumerable<SetupProgress> StartSetupAsync(
         SetupRequest request,
@@ -104,9 +107,32 @@ public class ComposableSetupPipeline(
 
         try
         {
-            analysis = await AnalyzeContentAsync(session.FetchedHtml, intent, ct);
-            session.ContentAnalysis = analysis;
-            session.LlmCallCount++;
+            var detectedPlatform = DetectPlatform(intent.Url, session.FetchedHtml);
+            session.DetectedPlatform = detectedPlatform;
+
+            if (TryGetTemplatePipeline(detectedPlatform, intent, out var selectedTemplate, out var templatePipeline))
+            {
+                analysis = BuildTemplateAnalysis(intent, detectedPlatform!, selectedTemplate!);
+                session.ContentAnalysis = analysis;
+                session.SelectedTemplate = selectedTemplate;
+                session.AssembledPipeline = SpecializeTemplatePipeline(
+                    templatePipeline!,
+                    intent,
+                    analysis,
+                    detectedPlatform!,
+                    selectedTemplate!);
+
+                logger.LogInformation(
+                    "Detected platform: {Platform} (confidence: {Confidence}). Using pre-built template.",
+                    detectedPlatform!.PlatformName,
+                    detectedPlatform.Confidence);
+            }
+            else
+            {
+                analysis = await AnalyzeContentAsync(session.FetchedHtml, intent, ct);
+                session.ContentAnalysis = analysis;
+                session.LlmCallCount++;
+            }
         }
         catch (Exception ex)
         {
@@ -207,11 +233,20 @@ public class ComposableSetupPipeline(
 
         PipelineDefinition? pipeline = null;
         string? buildError = null;
+        string? templateBuildDetail = null;
 
         try
         {
-            pipeline = await BuildPipelineAsync(session.Intent!, session.ContentAnalysis!, session.FetchedHtml!, ct);
-            session.AssembledPipeline = pipeline;
+            if (session.AssembledPipeline is not null)
+            {
+                pipeline = session.AssembledPipeline;
+                templateBuildDetail = session.SelectedTemplate?.Description;
+            }
+            else
+            {
+                pipeline = await BuildPipelineAsync(session.Intent!, session.ContentAnalysis!, session.FetchedHtml!, ct);
+                session.AssembledPipeline = pipeline;
+            }
         }
         catch (Exception ex)
         {
@@ -223,6 +258,15 @@ public class ComposableSetupPipeline(
         {
             yield return FailedProgress(SetupPhase.PipelineBuilding, "Failed to build the monitoring pipeline.", buildError);
             yield break;
+        }
+
+        if (templateBuildDetail is not null)
+        {
+            yield return Progress(
+                SetupPhase.PipelineBuilding,
+                SetupProgressType.Progress,
+                $"Detected platform: {session.DetectedPlatform?.PlatformName ?? "known site"} (confidence: {session.DetectedPlatform?.Confidence ?? 0:0.00}). Using pre-built template.",
+                templateBuildDetail);
         }
 
         yield return Progress(SetupPhase.PipelineBuilding, SetupProgressType.Progress,
@@ -1156,6 +1200,123 @@ public class ComposableSetupPipeline(
             return TimeSpan.FromDays(Math.Max(1, days));
 
         return TimeSpan.FromMinutes(30);
+    }
+
+    private DetectedPlatform? DetectPlatform(string url, string? html)
+        => platformDetector.DetectFromContent(url, html ?? string.Empty);
+
+    private bool TryGetTemplatePipeline(
+        DetectedPlatform? detectedPlatform,
+        ParsedIntent intent,
+        out PipelineTemplate? selectedTemplate,
+        out PipelineDefinition? pipeline)
+    {
+        selectedTemplate = null;
+        pipeline = null;
+
+        if (detectedPlatform is null || detectedPlatform.Confidence < TemplateConfidenceThreshold)
+            return false;
+
+        selectedTemplate = templateRegistry.GetTemplate(detectedPlatform.PlatformId, intent.Intent);
+        if (selectedTemplate is null)
+            return false;
+
+        pipeline = selectedTemplate.Pipeline;
+        return true;
+    }
+
+    private static ContentAnalysisResult BuildTemplateAnalysis(
+        ParsedIntent intent,
+        DetectedPlatform detectedPlatform,
+        PipelineTemplate selectedTemplate)
+    {
+        var contentType = detectedPlatform.PlatformId switch
+        {
+            "workday" => "listing",
+            "wordpress" => "feed",
+            "shopify" => "product",
+            _ => "other"
+        };
+
+        var selector = detectedPlatform.PlatformId switch
+        {
+            "shopify" => ".price, .product__price, [data-product-price]",
+            _ => null
+        };
+
+        return new ContentAnalysisResult
+        {
+            ContentType = contentType,
+            Regions = detectedPlatform.PlatformId switch
+            {
+                "workday" => ["job listings", "job metadata"],
+                "wordpress" => ["post feed", "latest entries"],
+                "shopify" => ["product price", "product title"],
+                _ => []
+            },
+            HasPagination = detectedPlatform.PlatformId == "workday",
+            NeedsJavaScript = detectedPlatform.PlatformId == "shopify",
+            RecommendedSelector = selector,
+            PageSummary = $"Detected {detectedPlatform.PlatformName} ({detectedPlatform.Confidence:0.00}) and selected the \"{selectedTemplate.Description}\" template for \"{intent.Intent}\"."
+        };
+    }
+
+    private static PipelineDefinition SpecializeTemplatePipeline(
+        PipelineDefinition template,
+        ParsedIntent intent,
+        ContentAnalysisResult analysis,
+        DetectedPlatform detectedPlatform,
+        PipelineTemplate selectedTemplate)
+    {
+        var sourceUrl = BuildTemplateSourceUrl(intent.Url, detectedPlatform.PlatformId);
+
+        var blocks = template.Blocks.Select(block =>
+        {
+            if (!string.Equals(block.Type, "Input", StringComparison.OrdinalIgnoreCase))
+                return block;
+
+            return block with
+            {
+                Config = JsonSerializer.SerializeToElement(new
+                {
+                    url = sourceUrl,
+                    intent = intent.Intent,
+                    platform = detectedPlatform.PlatformId
+                })
+            };
+        }).ToList();
+
+        return template with
+        {
+            Blocks = blocks,
+            Metadata = new PipelineMetadata
+            {
+                DisplayTitle = $"{intent.Summary ?? intent.Intent} ({detectedPlatform.PlatformName})",
+                CreatedAt = DateTime.UtcNow,
+                UserIntent = intent.Intent,
+                EstimatedLlmCallsPerRun = template.Metadata?.EstimatedLlmCallsPerRun ?? 0,
+                CardType = analysis.ContentType
+            }
+        };
+    }
+
+    private static string BuildTemplateSourceUrl(string url, string platformId)
+    {
+        if (!string.Equals(platformId, "wordpress", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return url;
+
+        if (uri.AbsolutePath.EndsWith("/feed", StringComparison.OrdinalIgnoreCase) ||
+            uri.AbsolutePath.EndsWith("/feed/", StringComparison.OrdinalIgnoreCase) ||
+            uri.Query.Contains("feed=", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        var builder = new UriBuilder(uri);
+        var path = builder.Path.TrimEnd('/');
+        builder.Path = string.IsNullOrEmpty(path) ? "/feed/" : $"{path}/feed/";
+        return builder.Uri.ToString();
     }
 
     private record MutationAnalysis

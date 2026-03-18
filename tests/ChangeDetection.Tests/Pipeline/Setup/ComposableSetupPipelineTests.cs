@@ -21,6 +21,8 @@ public class ComposableSetupPipelineTests : TestBase
     private IPipelineValidator _pipelineValidator = null!;
     private IBlockRegistry _blockRegistry = null!;
     private IRepository<WatchedSite> _watchRepo = null!;
+    private IPlatformDetector _platformDetector = null!;
+    private IPipelineTemplateRegistry _templateRegistry = null!;
     private ComposableSetupPipeline _sut = null!;
 
     [Before(Test)]
@@ -32,6 +34,8 @@ public class ComposableSetupPipelineTests : TestBase
         _pipelineValidator = Substitute.For<IPipelineValidator>();
         _blockRegistry = Substitute.For<IBlockRegistry>();
         _watchRepo = Substitute.For<IRepository<WatchedSite>>();
+        _platformDetector = new PlatformDetector();
+        _templateRegistry = new PipelineTemplateRegistry();
 
         // Default block registry behavior
         _blockRegistry.IsRegistered(Arg.Any<string>()).Returns(true);
@@ -92,7 +96,7 @@ public class ComposableSetupPipelineTests : TestBase
         var logger = CreateLogger<ComposableSetupPipeline>();
         _sut = new ComposableSetupPipeline(
             _llmChain, _contentFetcher, _pipelineExecutor,
-            _pipelineValidator, _blockRegistry, _watchRepo, logger);
+            _pipelineValidator, _blockRegistry, _platformDetector, _templateRegistry, _watchRepo, logger);
     }
 
     [Test]
@@ -277,6 +281,80 @@ public class ComposableSetupPipelineTests : TestBase
         confirmProgress.ShouldContain(p => p.Phase == SetupPhase.DryRun);
         confirmProgress.ShouldContain(p => p.Phase == SetupPhase.AdversarialTest);
         confirmProgress.ShouldContain(p => p.Phase == SetupPhase.QcValidation);
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_KnownPlatform_UsesTemplateAndSkipsPipelineAssemblyLlm()
+    {
+        var intentJson = """
+            {
+                "url": "https://acme.myworkdayjobs.com/en-US/Careers",
+                "intent": "Track new job openings",
+                "changeType": "jobs",
+                "summary": "I'll watch the Workday careers page for new jobs"
+            }
+            """;
+
+        var qcJson = """
+            {
+                "valid": true,
+                "issues": [],
+                "suggestions": []
+            }
+            """;
+
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                SuccessResponse(intentJson),
+                SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult
+            {
+                IsSuccess = true,
+                Html = "<html><head><script>window.__NEXT_DATA__={};</script></head><body>Careers</body></html>",
+                HttpStatusCode = 200,
+                DurationMs = 250
+            });
+
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>())
+            .Returns(new PipelineExecutionResult
+            {
+                Success = true,
+                BlockResults = new Dictionary<string, BlockResult>(),
+                OutputData = JsonDocument.Parse("""[{"title":"Engineer"}]""").RootElement,
+                ExecutionDurationMs = 150,
+                WasBaseline = true,
+                IsDegraded = false,
+                SkippedBlockIds = []
+            });
+
+        var request = new SetupRequest { UserInput = "Track new jobs at https://acme.myworkdayjobs.com/en-US/Careers" };
+        string? sessionId = null;
+        await foreach (var progress in _sut.StartSetupAsync(request))
+        {
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+                sessionId = progress.Detail.Replace("Session: ", "");
+        }
+
+        sessionId.ShouldNotBeNull();
+
+        var confirmProgress = new List<SetupProgress>();
+        await foreach (var progress in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            confirmProgress.Add(progress);
+
+        var checkpoint2 = confirmProgress.Last();
+        checkpoint2.Proposal.ShouldNotBeNull();
+        checkpoint2.Proposal.Pipeline.Blocks.ShouldContain(b => b.Type == "LlmExtract");
+        checkpoint2.Proposal.Pipeline.Metadata!.DisplayTitle.ShouldContain("Workday");
+        checkpoint2.Proposal.HumanSummary.ShouldContain("Track new job openings");
+
+        await _llmChain.Received(2).ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Any<LlmRequestOptions>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Test]

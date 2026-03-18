@@ -126,6 +126,8 @@ public class SetupSession
     public required string UserInput { get; set; }
     public Guid? OwnerId { get; set; }
     public ParsedIntent? Intent { get; set; }
+    public DetectedPlatform? DetectedPlatform { get; set; }
+    public PipelineTemplate? SelectedTemplate { get; set; }
     public string? FetchedHtml { get; set; }
     public ContentAnalysisResult? ContentAnalysis { get; set; }
     public PipelineDefinition? AssembledPipeline { get; set; }

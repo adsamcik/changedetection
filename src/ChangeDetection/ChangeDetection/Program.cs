@@ -380,6 +380,8 @@ builder.Services.AddSingleton<IBlockRegistry>(sp =>
     BlockRegistry.RegisterCoreBlocks(registry);
     return registry;
 });
+builder.Services.AddSingleton<IPlatformDetector, PlatformDetector>();
+builder.Services.AddSingleton<IPipelineTemplateRegistry, PipelineTemplateRegistry>();
 builder.Services.AddScoped<IPipelineValidator, PipelineValidator>();
 builder.Services.AddScoped<IPipelineExecutor, PipelineExecutor>();
 builder.Services.AddScoped<IBlockStateStore, LiteDbBlockStateStore>();
