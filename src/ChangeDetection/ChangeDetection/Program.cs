@@ -151,6 +151,11 @@ builder.Services.AddHttpClient("NewsData");
 
 // Add named HttpClient for Blazor prerendering with dynamic base address
 builder.Services.AddHttpClient("BlazorPrerender");
+builder.Services.AddHttpClient("LinkValidate-NoRedirect")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    });
 
 // Add HttpContextAccessor for getting the current request's base address
 builder.Services.AddHttpContextAccessor();

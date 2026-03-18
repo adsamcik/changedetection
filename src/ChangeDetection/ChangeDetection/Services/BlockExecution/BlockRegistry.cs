@@ -237,6 +237,12 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             factory: _ => new EnrichBlock());
 
+        // LinkValidate: data → data (validated links)
+        registry.Register("LinkValidate",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new LinkValidateBlock());
+
         // Search: query → results + text
         registry.Register("Search",
             inputPorts: [new PortDescriptor { Name = "query", Type = PortType.PlainText, Description = "Search query string" }],

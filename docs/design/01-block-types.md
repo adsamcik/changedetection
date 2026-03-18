@@ -55,6 +55,7 @@ Every pipeline starts with an **Input** node and ends with an **Output** node.
 |-------|--------|-------|
 | **Route** | `{ conditions: [{if, then_branch}] }` | Conditional branching. Different execution paths based on data. |
 | **Enrich** | `{ urlField, extractSchema }` | Follow dynamic URL from extracted data to get more context. Sub-navigate + extract. |
+| **LinkValidate** | `{ urlFields, language?, followRedirects? }` | Follows URLs from extracted data, checks liveness. Detects dead links, 404s, death signals in 6+ languages. |
 | **LookupHistory** | `{ field, period }` | Query past values for trend analysis. |
 | **Aggregate** | `{ groupBy, summarize }` | Combine batch results into summary. For digest-style notifications. |
 | **Throttle** | `{ maxFrequency, cooldown }` | Rate limit notifications. |
