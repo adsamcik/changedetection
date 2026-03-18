@@ -133,6 +133,12 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
             factory: _ => new ListDiffBlock());
 
+        // RelevanceScore: data → result
+        registry.Register("RelevanceScore",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
+            factory: _ => new RelevanceScoreBlock());
+
         // StructDiff: data → result
         registry.Register("StructDiff",
             inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],

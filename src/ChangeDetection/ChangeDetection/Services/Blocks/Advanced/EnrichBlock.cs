@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
@@ -25,65 +26,19 @@ public class EnrichBlock : IPipelineBlock
         if (!context.Inputs.TryGetValue("data", out var dataElement))
             return BlockResult.Failed("Enrich block requires a 'data' input.");
 
-        var (urlField, extractFields, maxItems) = ReadConfig(context);
+        var (urlField, extractFields, maxItems, maxConcurrency, delayBetweenRequests) = ReadConfig(context);
         if (string.IsNullOrWhiteSpace(urlField))
             return BlockResult.Failed("Enrich block requires 'urlField' in config.");
 
-        // Handle array input: enrich each item individually
-        if (dataElement.ValueKind == JsonValueKind.Array)
-        {
-            var arrayUrlValidator = context.Services.GetRequiredService<IUrlValidator>();
-            IContentFetcher arrayFetcher;
-            try
-            {
-                arrayFetcher = context.Services.GetRequiredService<IContentFetcher>();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                return BlockResult.Failed($"IContentFetcher not available: {ex.Message}");
-            }
+        if (dataElement.ValueKind is not JsonValueKind.Array and not JsonValueKind.Object)
+            return BlockResult.Failed("Enrich block expects a JSON object or array input.");
 
-            var results = new List<JsonElement>();
-            var count = 0;
-            foreach (var item in dataElement.EnumerateArray())
-            {
-                if (count >= maxItems) break;
-                count++;
-                var enriched = await EnrichItemAsync(
-                    item, urlField, extractFields, arrayUrlValidator, arrayFetcher, context.CancellationToken);
-                results.Add(enriched);
-            }
-
-            return BlockResult.Succeeded(JsonSerializer.SerializeToElement(results));
-        }
-
-        // Extract URL from data
-        string? url = null;
-        if (dataElement.ValueKind == JsonValueKind.Object &&
-            dataElement.TryGetProperty(urlField, out var urlElem) &&
-            urlElem.ValueKind == JsonValueKind.String)
-        {
-            url = urlElem.GetString();
-        }
-
-        if (string.IsNullOrWhiteSpace(url))
-            return BlockResult.Failed($"No URL found in field '{urlField}'.");
+        var stopwatch = Stopwatch.StartNew();
+        var sourceItems = dataElement.ValueKind == JsonValueKind.Array
+            ? dataElement.EnumerateArray().Take(maxItems).Select(x => x.Clone()).ToList()
+            : [dataElement.Clone()];
 
         var urlValidator = context.Services.GetRequiredService<IUrlValidator>();
-        var validationError = urlValidator.Validate(url);
-        if (validationError is not null)
-            return BlockResult.Failed($"URL blocked: {validationError}");
-
-        var ct = context.CancellationToken;
-
-        // Clone data into mutable dictionary
-        var dict = new Dictionary<string, JsonElement>();
-        if (dataElement.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var prop in dataElement.EnumerateObject())
-                dict[prop.Name] = prop.Value.Clone();
-        }
-
         IContentFetcher fetcher;
         try
         {
@@ -91,46 +46,26 @@ public class EnrichBlock : IPipelineBlock
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            dict["_enrichError"] = JsonSerializer.SerializeToElement($"IContentFetcher not available: {ex.Message}");
-            return BlockResult.Succeeded(JsonSerializer.SerializeToElement(dict));
+            return BlockResult.Failed($"IContentFetcher not available: {ex.Message}");
         }
 
-        FetchResult fetchResult;
-        try
-        {
-            fetchResult = await fetcher.FetchAsync(url, new FetchOptions(), ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            dict["_enrichError"] = JsonSerializer.SerializeToElement($"Fetch failed: {ex.Message}");
-            return BlockResult.Succeeded(JsonSerializer.SerializeToElement(dict));
-        }
+        var results = await EnrichItemsAsync(
+            sourceItems,
+            urlField,
+            extractFields,
+            urlValidator,
+            fetcher,
+            maxConcurrency,
+            delayBetweenRequests,
+            context.CancellationToken);
 
-        if (!fetchResult.IsSuccess || string.IsNullOrWhiteSpace(fetchResult.Html))
-        {
-            dict["_enrichError"] = JsonSerializer.SerializeToElement(
-                $"Fetch failed for '{url}': HTTP {fetchResult.HttpStatusCode}");
-            return BlockResult.Succeeded(JsonSerializer.SerializeToElement(dict));
-        }
+        stopwatch.Stop();
+        LogEnrichmentThroughput(context, results.Length, stopwatch.Elapsed, dataElement.ValueKind == JsonValueKind.Array ? maxConcurrency : 1);
 
-        // Extract fields from fetched HTML (basic text extraction)
-        if (extractFields is { Count: > 0 })
-        {
-            foreach (var field in extractFields)
-            {
-                // Basic extraction: search for text between tags matching the field name
-                var extracted = ExtractFieldFromHtml(fetchResult.Html, field);
-                if (extracted is not null)
-                    dict[field] = JsonSerializer.SerializeToElement(extracted);
-            }
-        }
-        else
-        {
-            // No specific fields — store the full HTML
-            dict["_enrichedHtml"] = JsonSerializer.SerializeToElement(fetchResult.Html);
-        }
+        var output = dataElement.ValueKind == JsonValueKind.Array
+            ? JsonSerializer.SerializeToElement(results)
+            : results[0];
 
-        var output = JsonSerializer.SerializeToElement(dict);
         return BlockResult.Succeeded(output);
     }
 
@@ -246,16 +181,105 @@ public class EnrichBlock : IPipelineBlock
         return JsonSerializer.SerializeToElement(dict);
     }
 
-    private static (string? urlField, List<string>? extractFields, int maxItems) ReadConfig(BlockContext context)
+    private static async Task<JsonElement[]> EnrichItemsAsync(
+        IReadOnlyList<JsonElement> sourceItems,
+        string urlField,
+        List<string>? extractFields,
+        IUrlValidator urlValidator,
+        IContentFetcher fetcher,
+        int maxConcurrency,
+        TimeSpan delayBetweenRequests,
+        CancellationToken cancellationToken)
+    {
+        var results = new JsonElement[sourceItems.Count];
+        using var concurrencyGate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        using var requestStartGate = new SemaphoreSlim(1, 1);
+        var lastRequestStartedAt = DateTimeOffset.MinValue;
+
+        var tasks = sourceItems.Select(async (item, index) =>
+        {
+            await concurrencyGate.WaitAsync(cancellationToken);
+            try
+            {
+                await WaitForNextRequestSlotAsync(
+                    requestStartGate,
+                    delayBetweenRequests,
+                    () => lastRequestStartedAt,
+                    startedAt => lastRequestStartedAt = startedAt,
+                    cancellationToken);
+
+                results[index] = await EnrichItemAsync(
+                    item,
+                    urlField,
+                    extractFields,
+                    urlValidator,
+                    fetcher,
+                    cancellationToken);
+            }
+            finally
+            {
+                concurrencyGate.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results;
+    }
+
+    private static async Task WaitForNextRequestSlotAsync(
+        SemaphoreSlim requestStartGate,
+        TimeSpan delayBetweenRequests,
+        Func<DateTimeOffset> getLastRequestStartedAt,
+        Action<DateTimeOffset> setLastRequestStartedAt,
+        CancellationToken cancellationToken)
+    {
+        if (delayBetweenRequests <= TimeSpan.Zero)
+            return;
+
+        await requestStartGate.WaitAsync(cancellationToken);
+        try
+        {
+            var nextAllowedStart = getLastRequestStartedAt() + delayBetweenRequests;
+            var wait = nextAllowedStart - DateTimeOffset.UtcNow;
+            if (wait > TimeSpan.Zero)
+                await Task.Delay(wait, cancellationToken);
+
+            setLastRequestStartedAt(DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            requestStartGate.Release();
+        }
+    }
+
+    private static void LogEnrichmentThroughput(
+        BlockContext context,
+        int itemsProcessed,
+        TimeSpan elapsed,
+        int maxConcurrency)
+    {
+        var itemsPerSecond = elapsed.TotalSeconds <= 0
+            ? itemsProcessed
+            : itemsProcessed / elapsed.TotalSeconds;
+
+        context.Logger.LogInformation(
+            "EnrichBlock: enriched {ItemsProcessed} item(s) in {ElapsedMilliseconds} ms ({ItemsPerSecond:F2} items/sec) with concurrency {MaxConcurrency}",
+            itemsProcessed,
+            elapsed.TotalMilliseconds,
+            itemsPerSecond,
+            maxConcurrency);
+    }
+
+    private static (string? urlField, List<string>? extractFields, int maxItems, int maxConcurrency, TimeSpan delayBetweenRequests) ReadConfig(BlockContext context)
     {
         if (context.PipelineDefinition is not PipelineDefinition pipeline)
-            return (null, null, 10);
+            return (null, null, 10, 5, TimeSpan.FromMilliseconds(200));
 
         var blockDef = pipeline.Blocks.FirstOrDefault(
             b => string.Equals(b.Id, context.BlockInstanceId, StringComparison.OrdinalIgnoreCase));
 
         if (blockDef?.Config is not { ValueKind: JsonValueKind.Object } config)
-            return (null, null, 10);
+            return (null, null, 10, 5, TimeSpan.FromMilliseconds(200));
 
         string? urlField = null;
         List<string>? extractFields = null;
@@ -275,8 +299,16 @@ public class EnrichBlock : IPipelineBlock
 
         var maxItems = 10;
         if (config.TryGetProperty("maxItems", out var maxElem) && maxElem.TryGetInt32(out var mi))
-            maxItems = Math.Clamp(mi, 1, 50);
+            maxItems = Math.Clamp(mi, 1, 1000);
 
-        return (urlField, extractFields, maxItems);
+        var maxConcurrency = 5;
+        if (config.TryGetProperty("maxConcurrency", out var concurrencyElem) && concurrencyElem.TryGetInt32(out var configuredConcurrency))
+            maxConcurrency = Math.Clamp(configuredConcurrency, 1, 50);
+
+        var delayBetweenRequests = TimeSpan.FromMilliseconds(200);
+        if (config.TryGetProperty("delayBetweenRequests", out var delayElem) && delayElem.TryGetInt32(out var configuredDelay))
+            delayBetweenRequests = TimeSpan.FromMilliseconds(Math.Max(0, configuredDelay));
+
+        return (urlField, extractFields, maxItems, maxConcurrency, delayBetweenRequests);
     }
 }

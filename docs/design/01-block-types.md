@@ -37,6 +37,7 @@ Every pipeline starts with an **Input** node and ends with an **Output** node.
 | **TextDiff** | `{}` | Line-by-line diff (DiffPlex). Shows added/removed/modified lines. |
 | **StructDiff** | `{ identityFields }` | Object-level diff on extracted schemas. Per-field granularity. |
 | **ListDiff** | `{ identityKey, mode }` | Detects new/removed/reordered items in collections. |
+| **RelevanceScore** | `{ targetFields, positiveKeywords, negativeKeywords, minScore }` | Zero-LLM weighted keyword scoring. Filters noisy feeds instantly. Use before LlmEvaluate to reduce token cost. |
 | **NumericDelta** | `{ field }` | Absolute change, % change, trend direction, new min/max. |
 | **LlmEvaluate** | `{ prompt, outputSchema }` | LLM judges diff or content. Always outputs structured schema. |
 | **LlmCraftPrompt** | `{ instructions }` | Meta-prompting: generates prompt for downstream LLM block. |
