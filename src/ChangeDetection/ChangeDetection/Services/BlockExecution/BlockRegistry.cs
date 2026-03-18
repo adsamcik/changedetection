@@ -121,6 +121,12 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "filtered", Type = PortType.ExtractedObjects }],
             factory: _ => new DataFilterBlock());
 
+        // VolatilityFilter: data → data (volatile fields stripped)
+        registry.Register("VolatilityFilter",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new VolatilityFilterBlock());
+
         // HashCompare: data → result
         registry.Register("HashCompare",
             inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],

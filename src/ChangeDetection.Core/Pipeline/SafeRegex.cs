@@ -47,4 +47,19 @@ public static class SafeRegex
             return false;
         }
     }
+
+    /// <summary>
+    /// Attempts Regex.Replace using a precompiled regex. Returns null on timeout.
+    /// </summary>
+    public static string? TryReplace(string input, Regex compiledRegex, string replacement)
+    {
+        try
+        {
+            return compiledRegex.Replace(input, replacement);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return null;
+        }
+    }
 }
