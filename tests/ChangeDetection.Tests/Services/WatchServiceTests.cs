@@ -343,6 +343,57 @@ public class ServerWatchServiceTests
     }
 
     [Test]
+    public async Task CheckForChangesAsync_FirstSuccessfulFetch_BackfillsSetupTimeAndLatestHtml()
+    {
+        var watchId = Guid.NewGuid();
+        var watch = new WatchedSite { Id = watchId, Url = "https://example.com", SetupTimeHtml = null };
+        _watchRepo.GetByIdAsync(watchId, Arg.Any<CancellationToken>()).Returns(watch);
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html><body>first</body></html>" });
+        _contentExtractor.ExtractText(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns("extracted");
+        _contentExtractor.ComputeHash("extracted").Returns("hash123");
+        _deduplicationService.CheckForDuplicateAsync(Arg.Any<DeduplicationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(DeduplicationResult.NotDuplicate());
+
+        await _sut.CheckForChangesAsync(watchId);
+
+        watch.SetupTimeHtml.ShouldBe("<html><body>first</body></html>");
+        watch.LatestSuccessfulHtml.ShouldBe("<html><body>first</body></html>");
+        await _watchRepo.Received().UpdateAsync(Arg.Is<WatchedSite>(w =>
+            w.Id == watchId &&
+            w.SetupTimeHtml == "<html><body>first</body></html>" &&
+            w.LatestSuccessfulHtml == "<html><body>first</body></html>"), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task CheckForChangesAsync_SubsequentSuccessfulFetch_UpdatesLatestHtmlOnly()
+    {
+        var watchId = Guid.NewGuid();
+        var watch = new WatchedSite
+        {
+            Id = watchId,
+            Url = "https://example.com",
+            SetupTimeHtml = "<html><body>setup</body></html>"
+        };
+        _watchRepo.GetByIdAsync(watchId, Arg.Any<CancellationToken>()).Returns(watch);
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult { IsSuccess = true, Html = "<html><body>latest</body></html>" });
+        _contentExtractor.ExtractText(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns("extracted");
+        _contentExtractor.ComputeHash("extracted").Returns("hash123");
+        _deduplicationService.CheckForDuplicateAsync(Arg.Any<DeduplicationRequest>(), Arg.Any<CancellationToken>())
+            .Returns(DeduplicationResult.NotDuplicate());
+
+        await _sut.CheckForChangesAsync(watchId);
+
+        watch.SetupTimeHtml.ShouldBe("<html><body>setup</body></html>");
+        watch.LatestSuccessfulHtml.ShouldBe("<html><body>latest</body></html>");
+        await _watchRepo.Received().UpdateAsync(Arg.Is<WatchedSite>(w =>
+            w.Id == watchId &&
+            w.SetupTimeHtml == "<html><body>setup</body></html>" &&
+            w.LatestSuccessfulHtml == "<html><body>latest</body></html>"), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
     public async Task CheckForChangesAsync_ContentChanged_CreatesChangeEvent()
     {
         // Arrange

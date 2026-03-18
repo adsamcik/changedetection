@@ -42,6 +42,9 @@ public record HealingContext
     /// <summary>HTML snapshot from when the watch was first set up.</summary>
     public string? SetupTimeHtml { get; init; }
 
+    /// <summary>Latest successful HTML snapshot from a prior run, if available.</summary>
+    public string? LatestSuccessfulHtml { get; init; }
+
     /// <summary>Service provider for resolving services during healing (e.g., IRepository, INotificationService).</summary>
     public IServiceProvider? Services { get; init; }
 }

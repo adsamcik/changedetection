@@ -185,4 +185,25 @@ public class PipelineDefinitionTests : TestBase
 
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task FindBlockInstanceId_MatchingType_ReturnsBlockId()
+    {
+        var pipeline = CreateSimplePipeline();
+
+        pipeline.FindBlockInstanceId("navigate").ShouldBe("navigate-1");
+        pipeline.FindBlockInstanceId("ExtractSchema").ShouldBe("extract-1");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task FindBlockInstanceId_MissingType_ReturnsNull()
+    {
+        var pipeline = CreateSimplePipeline();
+
+        pipeline.FindBlockInstanceId("Filter").ShouldBeNull();
+
+        await Task.CompletedTask;
+    }
 }

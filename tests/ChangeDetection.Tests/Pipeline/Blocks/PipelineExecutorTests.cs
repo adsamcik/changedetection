@@ -1,6 +1,10 @@
 using System.Text.Json;
+using ChangeDetection.Core.Entities;
+using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
+using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.BlockExecution;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -205,19 +209,25 @@ public class PipelineExecutorTests : TestBase
 
     #region Helpers
 
-    private PipelineExecutor CreateExecutor(BlockRegistry registry)
+    private PipelineExecutor CreateExecutor(BlockRegistry registry, IServiceProvider? serviceProvider = null)
     {
         var validatorLogger = CreateLogger<PipelineValidator>();
         var validator = new PipelineValidator(validatorLogger);
-        var serviceProvider = BuildServiceProvider();
+        serviceProvider ??= BuildServiceProvider();
         var executorLogger = CreateLogger<PipelineExecutor>();
         return new PipelineExecutor(registry, validator, serviceProvider, executorLogger);
     }
 
-    private static IServiceProvider BuildServiceProvider()
+    private static IServiceProvider BuildServiceProvider(
+        IFailureTracker? failureTracker = null,
+        IAutoHealingService? healingService = null,
+        IRepository<WatchedSite>? watchRepo = null)
     {
         var sp = Substitute.For<IServiceProvider>();
         sp.GetService(typeof(ILoggerFactory)).Returns(NullLoggerFactory.Instance);
+        sp.GetService(typeof(IFailureTracker)).Returns(failureTracker);
+        sp.GetService(typeof(IAutoHealingService)).Returns(healingService);
+        sp.GetService(typeof(IRepository<WatchedSite>)).Returns(watchRepo);
         return sp;
     }
 
@@ -763,5 +773,64 @@ public class PipelineExecutorTests : TestBase
         // Output block should still execute
         result.BlockResults.ShouldContainKey("output-1");
         result.BlockResults["output-1"].Success.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_AutoHealingContext_UsesCurrentAndLatestNavigateHtml()
+    {
+        var (registry, pipeline) = BuildSimpleValidPipeline();
+        registry.Register("Filter",
+            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            outputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            factory: _ => new FailingBlock("Filter", BlockCriticalityTier.Extraction));
+
+        var failureTracker = Substitute.For<IFailureTracker>();
+        failureTracker.RecordFailureAsync(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(3);
+
+        HealingContext? capturedContext = null;
+        var healingService = Substitute.For<IAutoHealingService>();
+        healingService.AttemptHealAsync(Arg.Any<HealingContext>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                capturedContext = callInfo.Arg<HealingContext>();
+                return new HealingResult
+                {
+                    Outcome = HealingOutcome.NoActionNeeded,
+                    Message = "captured"
+                };
+            });
+
+        var watchId = Guid.NewGuid();
+        var watchRepo = Substitute.For<IRepository<WatchedSite>>();
+        watchRepo.GetByIdAsync(watchId, Arg.Any<CancellationToken>())
+            .Returns(new WatchedSite
+            {
+                Id = watchId,
+                Url = "https://example.com",
+                SetupTimeHtml = "<html>setup</html>",
+                LatestSuccessfulHtml = "<html>legacy-should-not-be-used</html>"
+            });
+
+        var serviceProvider = BuildServiceProvider(failureTracker, healingService, watchRepo);
+        var executor = CreateExecutor(registry, serviceProvider);
+
+        var previousNavigateOutput = JsonSerializer.SerializeToElement(new { html = "<html>previous</html>" });
+        var stateStore = Substitute.For<IBlockStateStore>();
+        stateStore.GetPreviousOutputAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var blockId = callInfo.ArgAt<string>(1);
+                return blockId == "navigate-1" ? previousNavigateOutput : (JsonElement?)null;
+            });
+
+        var result = await executor.ExecuteAsync(pipeline, watchId, stateStore, page: null);
+
+        result.Success.ShouldBeFalse();
+        capturedContext.ShouldNotBeNull();
+        capturedContext!.CurrentHtml.ShouldBe("<html>test</html>");
+        capturedContext.LatestSuccessfulHtml.ShouldBe("<html>previous</html>");
+        capturedContext.SetupTimeHtml.ShouldBe("<html>setup</html>");
+        await stateStore.Received().GetPreviousOutputAsync(watchId.ToString(), "navigate-1", Arg.Any<CancellationToken>());
     }
 }

@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Text.Json.Serialization;
 
 namespace ChangeDetection.Core.Pipeline;
@@ -23,4 +25,8 @@ public record PipelineDefinition
     /// <summary>Optional display and creation metadata.</summary>
     [JsonPropertyName("metadata")]
     public PipelineMetadata? Metadata { get; init; }
+
+    /// <summary>Finds the first block instance ID matching the given block type.</summary>
+    public string? FindBlockInstanceId(string blockType)
+        => Blocks.FirstOrDefault(b => string.Equals(b.Type, blockType, StringComparison.OrdinalIgnoreCase))?.Id;
 }

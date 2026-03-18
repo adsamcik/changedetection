@@ -292,6 +292,10 @@ public class ServerWatchService : IWatchService
                 return null;
             }
 
+            watch.LatestSuccessfulHtml = fetchResult.Html;
+            if (watch.SetupTimeHtml == null)
+                watch.SetupTimeHtml = fetchResult.Html;
+
             // Extract content
             var extractedContent = _extractor.ExtractText(
                 fetchResult.Html!,

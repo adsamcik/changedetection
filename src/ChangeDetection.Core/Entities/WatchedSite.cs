@@ -259,6 +259,12 @@ public class WatchedSite : IOwnedEntity
     /// to compare against current page structure.
     /// </summary>
     public string? SetupTimeHtml { get; set; }
+
+    /// <summary>
+    /// Most recent successfully fetched HTML snapshot for legacy watches.
+    /// Pipeline watches keep their latest Navigate HTML in the block state store.
+    /// </summary>
+    public string? LatestSuccessfulHtml { get; set; }
 }
 
 /// <summary>

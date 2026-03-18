@@ -66,6 +66,7 @@ public class PipelineExecutor(
         var downstreamMap = BuildDownstreamMap(definition);
         var skippedSet = new HashSet<string>(StringComparer.Ordinal);
         var blockOutputs = new Dictionary<string, JsonElement?>(StringComparer.Ordinal);
+        string? currentHtml = null;
         var isDegraded = false;
         var runTimestamp = DateTime.UtcNow;
         var loggerFactory = services.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
@@ -177,6 +178,15 @@ public class PipelineExecutor(
             if (result.Output.HasValue)
             {
                 blockOutputs[blockId] = result.Output;
+
+                if (string.Equals(blockDef.Type, "Navigate", StringComparison.OrdinalIgnoreCase) &&
+                    result.Output.Value.ValueKind == JsonValueKind.Object &&
+                    result.Output.Value.TryGetProperty("html", out var htmlProp) &&
+                    htmlProp.ValueKind == JsonValueKind.String)
+                {
+                    currentHtml = htmlProp.GetString();
+                }
+
                 await stateStore.SaveOutputAsync(watchId.ToString(), blockId, result.Output.Value, linkedCt);
             }
             else
@@ -195,7 +205,7 @@ public class PipelineExecutor(
             {
                 // Attempt auto-healing for failed blocks
                 await TryAutoHealAsync(watchId, blockId, blockDef.Type,
-                    result.Error ?? "Unknown error", definition, linkedCt);
+                    result.Error ?? "Unknown error", definition, currentHtml, stateStore, linkedCt);
 
                 switch (block.CriticalityTier)
                 {
@@ -533,7 +543,8 @@ public class PipelineExecutor(
     /// takes effect on the next execution.
     /// </summary>
     private async Task TryAutoHealAsync(Guid watchId, string blockInstanceId, string blockType,
-        string errorMessage, PipelineDefinition pipeline, CancellationToken ct)
+        string errorMessage, PipelineDefinition pipeline, string? currentHtml,
+        IBlockStateStore stateStore, CancellationToken ct)
     {
         try
         {
@@ -547,6 +558,19 @@ public class PipelineExecutor(
 
             // Look up setup-time HTML for Layer 2 diagnosis
             string? setupTimeHtml = null;
+            string? latestHtml = null;
+            var navigateBlockId = pipeline.FindBlockInstanceId("Navigate");
+            if (navigateBlockId is not null)
+            {
+                var prevOutput = await stateStore.GetPreviousOutputAsync(watchId.ToString(), navigateBlockId, ct);
+                if (prevOutput.HasValue &&
+                    prevOutput.Value.ValueKind == JsonValueKind.Object &&
+                    prevOutput.Value.TryGetProperty("html", out var htmlProp))
+                {
+                    latestHtml = htmlProp.GetString();
+                }
+            }
+
             var watchRepo = services.GetService(typeof(IRepository<WatchedSite>)) as IRepository<WatchedSite>;
             if (watchRepo is not null)
             {
@@ -562,7 +586,9 @@ public class PipelineExecutor(
                 ErrorMessage = errorMessage,
                 ConsecutiveFailures = failureCount,
                 Pipeline = pipeline,
+                CurrentHtml = currentHtml,
                 SetupTimeHtml = setupTimeHtml,
+                LatestSuccessfulHtml = latestHtml,
                 Services = services
             };
 

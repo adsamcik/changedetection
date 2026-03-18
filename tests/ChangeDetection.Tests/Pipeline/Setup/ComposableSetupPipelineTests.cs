@@ -459,7 +459,8 @@ public class ComposableSetupPipelineTests : TestBase
         await _watchRepo.Received(1).InsertAsync(
             Arg.Is<WatchedSite>(w =>
                 w.Url == "https://example.com/page" &&
-                w.PipelineDefinitionJson != null),
+                w.PipelineDefinitionJson != null &&
+                w.SetupTimeHtml == "<html><body><p>Content</p></body></html>"),
             Arg.Any<CancellationToken>());
     }
 
