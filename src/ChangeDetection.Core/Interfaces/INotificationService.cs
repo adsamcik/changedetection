@@ -10,7 +10,12 @@ public interface INotificationService
     /// <summary>
     /// Sends a notification about a detected change.
     /// </summary>
-    Task SendNotificationAsync(WatchedSite watch, ChangeEvent change, string? summary = null, CancellationToken ct = default);
+    Task SendNotificationAsync(
+        WatchedSite watch,
+        ChangeEvent change,
+        string? summary = null,
+        string? channelName = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Sends a notification about a triggered alert threshold.

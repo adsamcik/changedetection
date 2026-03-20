@@ -29,6 +29,9 @@ public class NotificationServiceTests
     public async Task SendNotificationAsync_NoNotificationsEnabled_DoesNotCallAnyChannel()
     {
         // Arrange
+        _settingsRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<AppSettings>());
+
         var watch = new WatchedSite 
         { 
             Url = "https://example.com",
@@ -46,7 +49,7 @@ public class NotificationServiceTests
 
         // Assert - no notification channels were invoked
         _httpClientFactory.DidNotReceive().CreateClient(Arg.Any<string>());
-        await _settingsRepo.DidNotReceive().GetAllAsync(Arg.Any<CancellationToken>());
+        await _settingsRepo.Received(1).GetAllAsync(Arg.Any<CancellationToken>());
     }
 
     [Test]
@@ -137,6 +140,81 @@ public class NotificationServiceTests
         var body = handler.Requests[0].Body.ShouldNotBeNull();
         using var doc = JsonDocument.Parse(body);
         doc.RootElement.GetProperty("summary").GetString().ShouldBe("Custom summary");
+    }
+
+    [Test]
+    public async Task SendNotificationAsync_UsesGlobalDefaults_WhenWatchHasNoDestinations()
+    {
+        using var handler = new MockHttpMessageHandler();
+        var httpClient = new HttpClient(handler);
+        _httpClientFactory.CreateClient(Arg.Any<string>()).Returns(httpClient);
+
+        _settingsRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(new[]
+            {
+                new AppSettings
+                {
+                    DefaultNotifications = new NotificationSettings
+                    {
+                        Channels =
+                        [
+                            new NotificationChannel
+                            {
+                                Name = "webhook",
+                                Type = NotificationChannelType.Webhook,
+                                IsEnabled = true,
+                                Config = new Dictionary<string, string> { ["url"] = "https://global.example/webhook" }
+                            }
+                        ]
+                    }
+                }
+            });
+
+        var watch = new WatchedSite { Url = "https://example.com", Notifications = new NotificationSettings() };
+        var change = new ChangeEvent { DiffSummary = "Global fallback" };
+
+        await _sut.SendNotificationAsync(watch, change);
+
+        handler.Requests.Count.ShouldBe(1);
+        handler.Requests[0].RequestUri!.ToString().ShouldBe("https://global.example/webhook");
+    }
+
+    [Test]
+    public async Task SendNotificationAsync_ChannelName_SendsOnlyMatchingNamedChannel()
+    {
+        using var handler = new MockHttpMessageHandler();
+        var httpClient = new HttpClient(handler);
+        _httpClientFactory.CreateClient(Arg.Any<string>()).Returns(httpClient);
+
+        var watch = new WatchedSite
+        {
+            Url = "https://example.com",
+            Notifications = new NotificationSettings
+            {
+                Channels =
+                [
+                    new NotificationChannel
+                    {
+                        Name = "discord",
+                        Type = NotificationChannelType.Discord,
+                        IsEnabled = true,
+                        Config = new Dictionary<string, string> { ["webhookUrl"] = "https://discord.example/hook" }
+                    },
+                    new NotificationChannel
+                    {
+                        Name = "webhook",
+                        Type = NotificationChannelType.Webhook,
+                        IsEnabled = true,
+                        Config = new Dictionary<string, string> { ["url"] = "https://webhook.example/notify" }
+                    }
+                ]
+            }
+        };
+
+        await _sut.SendNotificationAsync(watch, new ChangeEvent { DiffSummary = "Named route" }, channelName: "discord");
+
+        handler.Requests.Count.ShouldBe(1);
+        handler.Requests[0].RequestUri!.ToString().ShouldBe("https://discord.example/hook");
     }
 
     [Test]

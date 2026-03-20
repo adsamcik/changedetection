@@ -10,6 +10,8 @@ namespace ChangeDetection.Services.Notifications;
 /// </summary>
 public class NotificationService : INotificationService
 {
+    private sealed record ResolvedChannel(NotificationChannelType Type, string? Destination, string Name);
+
     private readonly IRepository<AppSettings> _settingsRepo;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<NotificationService> _logger;
@@ -24,29 +26,17 @@ public class NotificationService : INotificationService
         _logger = logger;
     }
 
-    public async Task SendNotificationAsync(WatchedSite watch, ChangeEvent change, string? summary = null, CancellationToken ct = default)
+    public async Task SendNotificationAsync(
+        WatchedSite watch,
+        ChangeEvent change,
+        string? summary = null,
+        string? channelName = null,
+        CancellationToken ct = default)
     {
-        var settings = watch.Notifications;
+        var settings = await ResolveSettingsAsync(watch, ct);
         var message = summary ?? change.DiffSummary ?? "A change was detected";
-
-        var tasks = new List<Task>();
-
-        if (settings.EmailEnabled && !string.IsNullOrEmpty(settings.EmailAddress))
-        {
-            tasks.Add(SendEmailAsync(watch, change, message, settings.EmailAddress, ct));
-        }
-
-        if (settings.WebhookEnabled && !string.IsNullOrEmpty(settings.WebhookUrl))
-        {
-            tasks.Add(SendWebhookAsync(watch, change, message, settings.WebhookUrl, ct));
-        }
-
-        if (settings.DiscordEnabled && !string.IsNullOrEmpty(settings.DiscordWebhookUrl))
-        {
-            tasks.Add(SendDiscordAsync(watch, change, message, settings.DiscordWebhookUrl, ct));
-        }
-
-        await Task.WhenAll(tasks);
+        var channels = ResolveChannels(settings, channelName);
+        await Task.WhenAll(channels.Select(channel => SendChangeViaChannelAsync(channel, watch, change, message, ct)));
     }
 
     public async Task SendTestNotificationAsync(NotificationSettings settings, CancellationToken ct = default)
@@ -63,20 +53,156 @@ public class NotificationService : INotificationService
             Importance = ChangeImportance.Medium
         };
 
-        if (settings.EmailEnabled && !string.IsNullOrEmpty(settings.EmailAddress))
+        var channels = ResolveChannels(settings, requestedChannelName: null);
+        await Task.WhenAll(channels.Select(channel => SendChangeViaChannelAsync(channel, testWatch, testChange, "Test notification", ct)));
+    }
+
+    private async Task<NotificationSettings> ResolveSettingsAsync(WatchedSite watch, CancellationToken ct)
+    {
+        if (HasConfiguredDestinations(watch.Notifications))
         {
-            await SendEmailAsync(testWatch, testChange, "Test notification", settings.EmailAddress, ct);
+            return watch.Notifications;
         }
 
-        if (settings.WebhookEnabled && !string.IsNullOrEmpty(settings.WebhookUrl))
+        var appSettings = (await _settingsRepo.GetAllAsync(ct)).FirstOrDefault();
+        return appSettings?.DefaultNotifications ?? watch.Notifications;
+    }
+
+    private static bool HasConfiguredDestinations(NotificationSettings settings)
+    {
+        if (settings.Channels.Any(c => c.IsEnabled))
         {
-            await SendWebhookAsync(testWatch, testChange, "Test notification", settings.WebhookUrl, ct);
+            return true;
         }
 
-        if (settings.DiscordEnabled && !string.IsNullOrEmpty(settings.DiscordWebhookUrl))
+        return (settings.EmailEnabled && !string.IsNullOrWhiteSpace(settings.EmailAddress))
+               || (settings.WebhookEnabled && !string.IsNullOrWhiteSpace(settings.WebhookUrl))
+               || (settings.DiscordEnabled && !string.IsNullOrWhiteSpace(settings.DiscordWebhookUrl));
+    }
+
+    private IEnumerable<ResolvedChannel> ResolveChannels(NotificationSettings settings, string? requestedChannelName)
+    {
+        var namedChannels = settings.Channels.Count > 0
+            ? settings.Channels
+            : BuildLegacyChannels(settings);
+
+        IEnumerable<NotificationChannel> candidates = namedChannels
+            .Where(c => c.IsEnabled)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(requestedChannelName))
         {
-            await SendDiscordAsync(testWatch, testChange, "Test notification", settings.DiscordWebhookUrl, ct);
+            candidates = candidates.Where(c =>
+                string.Equals(c.Name, requestedChannelName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Type.ToString(), requestedChannelName, StringComparison.OrdinalIgnoreCase));
         }
+        else if (!string.IsNullOrWhiteSpace(settings.DefaultChannelName))
+        {
+            candidates = candidates.Where(c => string.Equals(c.Name, settings.DefaultChannelName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return candidates
+            .Select(channel => new ResolvedChannel(channel.Type, GetDestination(channel, settings), channel.Name))
+            .Where(channel => channel.Type == NotificationChannelType.Browser || !string.IsNullOrWhiteSpace(channel.Destination))
+            .ToList();
+    }
+
+    private static List<NotificationChannel> BuildLegacyChannels(NotificationSettings settings)
+    {
+        var channels = new List<NotificationChannel>();
+
+        if (!string.IsNullOrWhiteSpace(settings.EmailAddress))
+        {
+            channels.Add(new NotificationChannel
+            {
+                Name = "email",
+                Type = NotificationChannelType.Email,
+                IsEnabled = settings.EmailEnabled,
+                Config = new Dictionary<string, string> { ["address"] = settings.EmailAddress }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.WebhookUrl))
+        {
+            channels.Add(new NotificationChannel
+            {
+                Name = "webhook",
+                Type = NotificationChannelType.Webhook,
+                IsEnabled = settings.WebhookEnabled,
+                Config = new Dictionary<string, string> { ["url"] = settings.WebhookUrl }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.DiscordWebhookUrl))
+        {
+            channels.Add(new NotificationChannel
+            {
+                Name = "discord",
+                Type = NotificationChannelType.Discord,
+                IsEnabled = settings.DiscordEnabled,
+                Config = new Dictionary<string, string> { ["webhookUrl"] = settings.DiscordWebhookUrl }
+            });
+        }
+
+        return channels;
+    }
+
+    private static string? GetDestination(NotificationChannel channel, NotificationSettings settings)
+    {
+        return channel.Type switch
+        {
+            NotificationChannelType.Email => channel.Config.GetValueOrDefault("address") ?? settings.EmailAddress,
+            NotificationChannelType.Webhook => channel.Config.GetValueOrDefault("url") ?? settings.WebhookUrl,
+            NotificationChannelType.Discord => channel.Config.GetValueOrDefault("webhookUrl")
+                                              ?? channel.Config.GetValueOrDefault("url")
+                                              ?? settings.DiscordWebhookUrl,
+            NotificationChannelType.Browser => null,
+            _ => null
+        };
+    }
+
+    private Task SendChangeViaChannelAsync(
+        ResolvedChannel channel,
+        WatchedSite watch,
+        ChangeEvent change,
+        string message,
+        CancellationToken ct)
+    {
+        return channel.Type switch
+        {
+            NotificationChannelType.Email => SendEmailAsync(watch, change, message, channel.Destination!, ct),
+            NotificationChannelType.Webhook => SendWebhookAsync(watch, change, message, channel.Destination!, ct),
+            NotificationChannelType.Discord => SendDiscordAsync(watch, change, message, channel.Destination!, ct),
+            NotificationChannelType.Browser => LogBrowserNotificationAsync(watch, message),
+            _ => Task.CompletedTask
+        };
+    }
+
+    private Task SendAlertViaChannelAsync(
+        ResolvedChannel channel,
+        WatchedSite watch,
+        AlertEvaluationResult alertResult,
+        string message,
+        CancellationToken ct)
+    {
+        return channel.Type switch
+        {
+            NotificationChannelType.Email => SendAlertEmailAsync(watch, alertResult, message, channel.Destination!, ct),
+            NotificationChannelType.Webhook => SendAlertWebhookAsync(watch, alertResult, message, channel.Destination!, ct),
+            NotificationChannelType.Discord => SendAlertDiscordAsync(watch, alertResult, message, channel.Destination!, ct),
+            NotificationChannelType.Browser => LogBrowserNotificationAsync(watch, message),
+            _ => Task.CompletedTask
+        };
+    }
+
+    private Task LogBrowserNotificationAsync(WatchedSite watch, string message)
+    {
+        _logger.LogInformation(
+            "Browser notification requested for watch {WatchId} ({WatchName}), but browser push delivery is not yet available. Message: {Message}",
+            watch.Id,
+            watch.Name ?? watch.Url,
+            message);
+        return Task.CompletedTask;
     }
 
     private async Task SendEmailAsync(WatchedSite watch, ChangeEvent change, string message, string toAddress, CancellationToken ct)
@@ -186,7 +312,7 @@ public class NotificationService : INotificationService
             return;
         }
 
-        var settings = watch.Notifications;
+        var settings = await ResolveSettingsAsync(watch, ct);
         var message = alertResult.CombinedMessage ?? "Alert threshold triggered";
 
         // Build a rich message with all triggered thresholds
@@ -195,24 +321,8 @@ public class NotificationService : INotificationService
 
         var fullMessage = $"{message}\n\n{alertDetails}";
 
-        var tasks = new List<Task>();
-
-        if (settings.EmailEnabled && !string.IsNullOrEmpty(settings.EmailAddress))
-        {
-            tasks.Add(SendAlertEmailAsync(watch, alertResult, fullMessage, settings.EmailAddress, ct));
-        }
-
-        if (settings.WebhookEnabled && !string.IsNullOrEmpty(settings.WebhookUrl))
-        {
-            tasks.Add(SendAlertWebhookAsync(watch, alertResult, fullMessage, settings.WebhookUrl, ct));
-        }
-
-        if (settings.DiscordEnabled && !string.IsNullOrEmpty(settings.DiscordWebhookUrl))
-        {
-            tasks.Add(SendAlertDiscordAsync(watch, alertResult, fullMessage, settings.DiscordWebhookUrl, ct));
-        }
-
-        await Task.WhenAll(tasks);
+        var channels = ResolveChannels(settings, requestedChannelName: null);
+        await Task.WhenAll(channels.Select(channel => SendAlertViaChannelAsync(channel, watch, alertResult, fullMessage, ct)));
     }
 
     private async Task SendAlertEmailAsync(WatchedSite watch, AlertEvaluationResult alertResult, string message, string emailAddress, CancellationToken ct)

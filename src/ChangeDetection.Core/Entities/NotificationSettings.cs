@@ -94,7 +94,8 @@ public enum NotificationChannelType
 {
     Email,
     Webhook,
-    Discord
+    Discord,
+    Browser
 }
 
 public enum ChangeImportance

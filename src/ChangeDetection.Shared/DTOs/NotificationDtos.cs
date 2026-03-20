@@ -159,3 +159,18 @@ public class TestNotificationResultDto
     public string? ErrorMessage { get; set; }
     public string? Details { get; set; }
 }
+
+/// <summary>
+/// Global notification channel settings configured from the Settings page.
+/// </summary>
+public class NotificationChannelSettingsDto
+{
+    public bool EmailEnabled { get; set; }
+    public string? EmailAddress { get; set; }
+    public bool DiscordEnabled { get; set; }
+    public string? DiscordWebhookUrl { get; set; }
+    public bool WebhookEnabled { get; set; }
+    public string? WebhookUrl { get; set; }
+    public bool BrowserEnabled { get; set; }
+    public string? DefaultChannelName { get; set; }
+}
