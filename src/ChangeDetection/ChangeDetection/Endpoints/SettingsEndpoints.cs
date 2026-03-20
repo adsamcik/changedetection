@@ -20,6 +20,14 @@ public static class SettingsEndpoints
             .WithName("UpdateGeneralSettings")
             .Produces<GeneralSettingsDto>();
 
+        group.MapGet("/notifications", GetNotificationSettings)
+            .WithName("GetNotificationSettings")
+            .Produces<NotificationChannelSettingsDto>();
+
+        group.MapPut("/notifications", UpdateNotificationSettings)
+            .WithName("UpdateNotificationSettings")
+            .Produces<NotificationChannelSettingsDto>();
+
         group.MapPost("/backup", CreateBackup)
             .WithName("CreateBackup")
             .Produces<BackupInfoDto>();
@@ -139,6 +147,34 @@ public static class SettingsEndpoints
         return Results.Ok(dto);
     }
 
+    private static async Task<IResult> GetNotificationSettings(
+        IRepository<AppSettings> settingsRepo,
+        CancellationToken ct)
+    {
+        var settings = await GetOrCreateSettingsAsync(settingsRepo, ct);
+        return Results.Ok(MapNotificationSettings(settings.DefaultNotifications));
+    }
+
+    private static async Task<IResult> UpdateNotificationSettings(
+        NotificationChannelSettingsDto update,
+        IRepository<AppSettings> settingsRepo,
+        CancellationToken ct)
+    {
+        var allSettings = await settingsRepo.GetAllAsync(ct);
+        var settings = allSettings.FirstOrDefault();
+        var isNew = settings is null;
+        settings ??= new AppSettings();
+
+        settings.DefaultNotifications = MapNotificationSettings(update);
+
+        if (isNew)
+            await settingsRepo.InsertAsync(settings, ct);
+        else
+            await settingsRepo.UpdateAsync(settings, ct);
+
+        return Results.Ok(MapNotificationSettings(settings.DefaultNotifications));
+    }
+
     private static async Task<IResult> CreateBackup(
         IDatabaseBackupService backupService,
         CancellationToken ct)
@@ -218,6 +254,112 @@ public static class SettingsEndpoints
         // Store search settings in the general settings JSON
         // (The actual IOptions<SearchSettings> is reloaded from config on restart)
         return Results.Ok(dto);
+    }
+
+    private static async Task<AppSettings> GetOrCreateSettingsAsync(
+        IRepository<AppSettings> settingsRepo,
+        CancellationToken ct)
+    {
+        var allSettings = await settingsRepo.GetAllAsync(ct);
+        return allSettings.FirstOrDefault() ?? new AppSettings();
+    }
+
+    private static NotificationChannelSettingsDto MapNotificationSettings(NotificationSettings settings)
+    {
+        var emailChannel = settings.Channels.FirstOrDefault(c => c.Type == NotificationChannelType.Email);
+        var discordChannel = settings.Channels.FirstOrDefault(c => c.Type == NotificationChannelType.Discord);
+        var webhookChannel = settings.Channels.FirstOrDefault(c => c.Type == NotificationChannelType.Webhook);
+        var browserChannel = settings.Channels.FirstOrDefault(c => c.Type == NotificationChannelType.Browser);
+
+        return new NotificationChannelSettingsDto
+        {
+            EmailEnabled = emailChannel?.IsEnabled ?? settings.EmailEnabled,
+            EmailAddress = settings.EmailAddress
+                ?? emailChannel?.Config.GetValueOrDefault("address"),
+            DiscordEnabled = discordChannel?.IsEnabled ?? settings.DiscordEnabled,
+            DiscordWebhookUrl = settings.DiscordWebhookUrl
+                ?? discordChannel?.Config.GetValueOrDefault("webhookUrl")
+                ?? discordChannel?.Config.GetValueOrDefault("url"),
+            WebhookEnabled = webhookChannel?.IsEnabled ?? settings.WebhookEnabled,
+            WebhookUrl = settings.WebhookUrl
+                ?? webhookChannel?.Config.GetValueOrDefault("url"),
+            BrowserEnabled = browserChannel?.IsEnabled ?? false,
+            DefaultChannelName = settings.DefaultChannelName
+        };
+    }
+
+    private static NotificationSettings MapNotificationSettings(NotificationChannelSettingsDto dto)
+    {
+        var settings = new NotificationSettings
+        {
+            EmailEnabled = dto.EmailEnabled && !string.IsNullOrWhiteSpace(dto.EmailAddress),
+            EmailAddress = dto.EmailAddress?.Trim(),
+            DiscordEnabled = dto.DiscordEnabled && !string.IsNullOrWhiteSpace(dto.DiscordWebhookUrl),
+            DiscordWebhookUrl = dto.DiscordWebhookUrl?.Trim(),
+            WebhookEnabled = dto.WebhookEnabled && !string.IsNullOrWhiteSpace(dto.WebhookUrl),
+            WebhookUrl = dto.WebhookUrl?.Trim(),
+            DefaultChannelName = dto.DefaultChannelName
+        };
+
+        if (!string.IsNullOrWhiteSpace(dto.EmailAddress) || dto.EmailEnabled)
+        {
+            settings.Channels.Add(new NotificationChannel
+            {
+                Name = "email",
+                Type = NotificationChannelType.Email,
+                IsEnabled = dto.EmailEnabled && !string.IsNullOrWhiteSpace(dto.EmailAddress),
+                Config = new Dictionary<string, string>
+                {
+                    ["address"] = dto.EmailAddress?.Trim() ?? ""
+                }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.DiscordWebhookUrl) || dto.DiscordEnabled)
+        {
+            settings.Channels.Add(new NotificationChannel
+            {
+                Name = "discord",
+                Type = NotificationChannelType.Discord,
+                IsEnabled = dto.DiscordEnabled && !string.IsNullOrWhiteSpace(dto.DiscordWebhookUrl),
+                Config = new Dictionary<string, string>
+                {
+                    ["webhookUrl"] = dto.DiscordWebhookUrl?.Trim() ?? ""
+                }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.WebhookUrl) || dto.WebhookEnabled)
+        {
+            settings.Channels.Add(new NotificationChannel
+            {
+                Name = "webhook",
+                Type = NotificationChannelType.Webhook,
+                IsEnabled = dto.WebhookEnabled && !string.IsNullOrWhiteSpace(dto.WebhookUrl),
+                Config = new Dictionary<string, string>
+                {
+                    ["url"] = dto.WebhookUrl?.Trim() ?? ""
+                }
+            });
+        }
+
+        if (dto.BrowserEnabled)
+        {
+            settings.Channels.Add(new NotificationChannel
+            {
+                Name = "browser",
+                Type = NotificationChannelType.Browser,
+                IsEnabled = true
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.DefaultChannelName) &&
+            settings.Channels.All(c => !string.Equals(c.Name, settings.DefaultChannelName, StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.DefaultChannelName = null;
+        }
+
+        return settings;
     }
 }
 

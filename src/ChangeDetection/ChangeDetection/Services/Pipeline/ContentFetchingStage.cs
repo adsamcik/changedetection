@@ -1,15 +1,46 @@
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Services.BlockExecution;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ChangeDetection.Services.Pipeline;
 
 /// <summary>
 /// Stage 2: Fetches content from the URL and prepares it for analysis.
 /// </summary>
-public class ContentFetchingStage(
-    IContentFetcher contentFetcher,
-    IContentExtractor contentExtractor,
-    ILogger<ContentFetchingStage> logger)
+public class ContentFetchingStage
 {
+    private readonly IContentFetcher contentFetcher;
+    private readonly IContentExtractor contentExtractor;
+    private readonly ContentSanitizer contentSanitizer;
+    private readonly ILogger<ContentFetchingStage> logger;
+
+    public ContentFetchingStage(
+        IContentFetcher contentFetcher,
+        IContentExtractor contentExtractor,
+        ContentSanitizer contentSanitizer,
+        ILogger<ContentFetchingStage> logger)
+    {
+        this.contentFetcher = contentFetcher;
+        this.contentExtractor = contentExtractor;
+        this.contentSanitizer = contentSanitizer;
+        this.logger = logger;
+    }
+
+    public ContentFetchingStage(
+        IContentFetcher contentFetcher,
+        IContentExtractor contentExtractor,
+        ILogger<ContentFetchingStage> logger)
+        : this(contentFetcher, contentExtractor, new ContentSanitizer(), logger)
+    {
+    }
+
+    public ContentFetchingStage(
+        IContentFetcher contentFetcher,
+        IContentExtractor contentExtractor)
+        : this(contentFetcher, contentExtractor, new ContentSanitizer(), NullLogger<ContentFetchingStage>.Instance)
+    {
+    }
+
     /// <summary>
     /// Fetches content from the URL.
     /// </summary>
@@ -44,13 +75,29 @@ public class ContentFetchingStage(
                 };
             }
 
-            // Process the HTML
-            var cleanedHtml = contentExtractor.CleanHtml(result.Html);
-            var textContent = contentExtractor.ExtractText(result.Html);
-            var title = contentExtractor.ExtractTitle(result.Html);
+            var contentType = ResolveContentType(result);
+            var sanitizedPayload = contentSanitizer.Sanitize(result.Html, contentType);
+            LogSanitization(contentType, sanitizedPayload, url);
+
+            string cleanedContent;
+            string? title;
+            string textContent;
+
+            if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+            {
+                cleanedContent = sanitizedPayload.Content;
+                textContent = sanitizedPayload.Content;
+                title = null;
+            }
+            else
+            {
+                cleanedContent = sanitizedPayload.Content;
+                textContent = contentExtractor.ExtractText(cleanedContent);
+                title = contentSanitizer.Sanitize(contentExtractor.ExtractTitle(result.Html) ?? string.Empty, "text/plain").Content;
+            }
 
             // Truncate for LLM processing (keep it manageable)
-            var truncatedHtml = TruncateForLlm(cleanedHtml, maxChars: 50000);
+            var truncatedHtml = TruncateForLlm(cleanedContent, maxChars: 50000);
             var truncatedText = TruncateForLlm(textContent, maxChars: 20000);
 
             return new FetchedContent
@@ -151,5 +198,39 @@ public class ContentFetchingStage(
         }
 
         return truncated + "\n\n[Content truncated...]";
+    }
+
+    private static string ResolveContentType(FetchResult result)
+    {
+        if (result.ResponseHeaders.TryGetValue("content-type", out var headerValue) ||
+            result.ResponseHeaders.TryGetValue("Content-Type", out headerValue))
+        {
+            return headerValue;
+        }
+
+        var trimmed = result.Html?.TrimStart();
+        return !string.IsNullOrEmpty(trimmed) && (trimmed.StartsWith('{') || trimmed.StartsWith('['))
+            ? "application/json"
+            : "text/html";
+    }
+
+    private void LogSanitization(string contentType, SanitizedContent sanitized, string url)
+    {
+        logger.LogInformation(
+            "Sanitized fetched {ContentType} for {Url}: {OriginalLength} -> {CleanedLength} chars, score {Score}, redactions {RedactionCount}",
+            contentType,
+            url,
+            sanitized.OriginalLength,
+            sanitized.CleanedLength,
+            sanitized.SuspicionScore,
+            sanitized.Redactions.Count);
+
+        if (sanitized.FlaggedForReview)
+        {
+            logger.LogWarning(
+                "Sanitized content for {Url} flagged for review with suspicion score {Score}",
+                url,
+                sanitized.SuspicionScore);
+        }
     }
 }

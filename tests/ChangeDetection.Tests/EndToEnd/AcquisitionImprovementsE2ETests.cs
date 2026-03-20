@@ -11,6 +11,7 @@ using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services;
 using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Content;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.SetupPipeline;
 using ChangeDetection.Services.Scraping;
 using Microsoft.Extensions.DependencyInjection;
@@ -508,6 +509,7 @@ public class AcquisitionImprovementsE2ETests : TestBase
             platformDetector,
             templateRegistry,
             watchRepo,
+            new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
             CreateLogger<ComposableSetupPipeline>());
 
         return new SetupPipelineHarness(

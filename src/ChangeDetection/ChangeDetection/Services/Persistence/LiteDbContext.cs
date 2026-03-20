@@ -149,6 +149,16 @@ public class LiteDbContext : IDisposable
                 .Field(x => x.PayloadJson, "PayloadJson")
                 .Field(x => x.Status, "Status");
 
+            // PortalSuggestionEntity
+            mapper.Entity<Core.Entities.PortalSuggestionEntity>()
+                .Id(x => x.Id)
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.Url, "Url")
+                .Field(x => x.Domain, "Domain")
+                .Field(x => x.SourceWatchId, "SourceWatchId")
+                .Field(x => x.GroupId, "GroupId")
+                .Field(x => x.Status, "Status");
+
             // NotificationTemplate
             mapper.Entity<Core.Entities.NotificationTemplate>()
                 .Id(x => x.Id)
@@ -237,6 +247,15 @@ public class LiteDbContext : IDisposable
         var fieldHistory = _database.GetCollection<Core.Entities.FieldValueHistory>("fieldvaluehistorys");
         fieldHistory.EnsureIndex(x => x.WatchedSiteId);
         fieldHistory.EnsureIndex(x => x.FieldName);
+
+        // Configure indexes for PortalSuggestionEntity
+        var portalSuggestions = _database.GetCollection<Core.Entities.PortalSuggestionEntity>("portal_suggestions");
+        portalSuggestions.EnsureIndex(x => x.OwnerId);
+        portalSuggestions.EnsureIndex(x => x.GroupId);
+        portalSuggestions.EnsureIndex(x => x.Domain);
+        portalSuggestions.EnsureIndex(x => x.Status);
+        portalSuggestions.EnsureIndex(x => x.SourceWatchId);
+        portalSuggestions.EnsureIndex(x => x.CreatedAt);
     }
 
     public void Dispose()

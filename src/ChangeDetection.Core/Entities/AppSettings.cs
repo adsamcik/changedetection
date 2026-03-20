@@ -27,6 +27,11 @@ public class AppSettings
     /// Email settings for notifications.
     /// </summary>
     public EmailSettings? Email { get; set; }
+
+    /// <summary>
+    /// Global notification channel defaults used when a watch does not define its own destinations.
+    /// </summary>
+    public NotificationSettings DefaultNotifications { get; set; } = new();
     
     /// <summary>
     /// How long to keep snapshots (in days).

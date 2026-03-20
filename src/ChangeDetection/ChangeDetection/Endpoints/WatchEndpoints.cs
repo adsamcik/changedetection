@@ -2,8 +2,10 @@ using ChangeDetection.Core;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
+using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.OutputCaching;
+using System.Text.Json;
 
 namespace ChangeDetection.Endpoints;
 
@@ -32,6 +34,11 @@ public static class WatchEndpoints
         group.MapPut("/{id}", UpdateWatch)
             .WithName("UpdateWatch")
             .Produces<WatchDetailDto>()
+            .Produces(404);
+
+        group.MapGet("/{id}/pipeline", GetPipelineDefinition)
+            .WithName("GetPipelineDefinition")
+            .Produces<WatchPipelineDto>()
             .Produces(404);
 
         group.MapDelete("/{id}", DeleteWatch)
@@ -108,6 +115,11 @@ public static class WatchEndpoints
 
         group.MapPost("/{id}/pipeline/execute", ExecutePipeline)
             .WithName("ExecutePipeline")
+            .Produces<object>()
+            .Produces(404);
+
+        group.MapGet("/{id}/pipeline/status", GetPipelineStatus)
+            .WithName("GetPipelineStatus")
             .Produces<object>()
             .Produces(404);
 
@@ -267,6 +279,9 @@ public static class WatchEndpoints
                 WebhookUrl = dto.NotificationSettings.WebhookUrl,
                 DiscordEnabled = dto.NotificationSettings.DiscordEnabled,
                 DiscordWebhookUrl = dto.NotificationSettings.DiscordWebhookUrl,
+                UseLlmSummary = dto.NotificationSettings.UseLlmSummary,
+                DefaultChannelName = dto.NotificationSettings.DefaultChannelName,
+                Channels = dto.NotificationSettings.Channels.Select(MapNotificationChannelFromDto).ToList(),
                 MinimumImportance = Enum.TryParse<ChangeImportance>(dto.NotificationSettings.MinimumImportanceToNotify, out var imp) 
                     ? imp : ChangeImportance.Medium
             };
@@ -346,6 +361,9 @@ public static class WatchEndpoints
                 WebhookUrl = dto.NotificationSettings.WebhookUrl,
                 DiscordEnabled = dto.NotificationSettings.DiscordEnabled,
                 DiscordWebhookUrl = dto.NotificationSettings.DiscordWebhookUrl,
+                UseLlmSummary = dto.NotificationSettings.UseLlmSummary,
+                DefaultChannelName = dto.NotificationSettings.DefaultChannelName,
+                Channels = dto.NotificationSettings.Channels.Select(MapNotificationChannelFromDto).ToList(),
                 MinimumImportance = Enum.TryParse<ChangeImportance>(dto.NotificationSettings.MinimumImportanceToNotify, out var imp) 
                     ? imp : ChangeImportance.Medium
             };
@@ -382,6 +400,9 @@ public static class WatchEndpoints
     private static async Task<IResult> TriggerCheck(
         string id,
         IWatchService watchService,
+        IPipelineExecutor pipelineExecutor,
+        IBlockStateStore stateStore,
+        ILogger<Program> logger,
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guidId))
@@ -391,6 +412,59 @@ public static class WatchEndpoints
         if (watch == null)
             return Results.NotFound();
 
+        // Pipeline-aware check: use pipeline executor if pipeline is defined
+        if (!string.IsNullOrEmpty(watch.PipelineDefinitionJson))
+        {
+            var definition = PipelineSerializer.Deserialize(watch.PipelineDefinitionJson, logger);
+            if (definition is null)
+                return Results.BadRequest("Invalid pipeline definition");
+
+            var result = await pipelineExecutor.ExecuteAsync(definition, guidId, stateStore, null, ct);
+
+            logger.LogInformation(
+                "Pipeline check for watch {WatchId}: Success={Success}, Blocks={BlockCount}",
+                guidId, result.Success, result.BlockResults.Count);
+
+            if (!result.Success)
+                return Results.Ok<ChangeListItemDto?>(null);
+
+            // Return a summary of the pipeline execution
+            var listDiffBlock = result.BlockResults
+                .FirstOrDefault(kvp => kvp.Key.StartsWith("listdiff", StringComparison.OrdinalIgnoreCase));
+
+            bool hasChanges = false;
+            int objectsAdded = 0, objectsRemoved = 0;
+
+            if (listDiffBlock.Value?.Output is { } diffOutput &&
+                diffOutput.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (diffOutput.TryGetProperty("changed", out var changedProp))
+                    hasChanges = changedProp.GetBoolean();
+                if (diffOutput.TryGetProperty("added", out var addedProp) && addedProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    objectsAdded = addedProp.GetArrayLength();
+                if (diffOutput.TryGetProperty("removed", out var removedProp) && removedProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    objectsRemoved = removedProp.GetArrayLength();
+            }
+
+            if (result.WasBaseline || !hasChanges)
+                return Results.Ok<ChangeListItemDto?>(null);
+
+            return Results.Ok(new ChangeListItemDto
+            {
+                Id = Guid.NewGuid().ToString(),
+                WatchId = watch.Id.ToString(),
+                WatchTitle = watch.Name,
+                DetectedAt = DateTime.UtcNow,
+                Summary = $"{objectsAdded} items added, {objectsRemoved} items removed.",
+                Importance = (objectsAdded + objectsRemoved) > 0 ? "High" : "Medium",
+                LinesAdded = objectsAdded,
+                LinesRemoved = objectsRemoved,
+                IsViewed = false,
+                IsNotified = false
+            });
+        }
+
+        // Legacy path for non-pipeline watches
         var changeEvent = await watchService.CheckForChangesAsync(guidId, ct);
         
         if (changeEvent == null)
@@ -899,6 +973,21 @@ public static class WatchEndpoints
             Confidence = entry.Confidence
         };
     }
+
+    private static NotificationChannel MapNotificationChannelFromDto(NotificationChannelDto dto)
+    {
+        var channelType = Enum.TryParse<NotificationChannelType>(dto.Type, true, out var parsedType)
+            ? parsedType
+            : NotificationChannelType.Webhook;
+
+        return new NotificationChannel
+        {
+            Name = dto.Name,
+            Type = channelType,
+            Config = dto.Config,
+            IsEnabled = dto.IsEnabled
+        };
+    }
     
     private static CheckScheduleSettingsDto MapScheduleSettingsToDto(CheckScheduleSettings settings)
     {
@@ -1277,6 +1366,8 @@ public static class WatchEndpoints
         string id,
         HttpRequest request,
         IWatchService watchService,
+        IPipelineValidator pipelineValidator,
+        IBlockRegistry blockRegistry,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -1295,6 +1386,16 @@ public static class WatchEndpoints
         if (definition is null)
             return Results.BadRequest("Invalid pipeline definition JSON");
 
+        var validation = pipelineValidator.Validate(definition, blockRegistry);
+        if (!validation.IsValid)
+        {
+            var details = string.Join("; ", validation.Errors.Select(e =>
+                string.IsNullOrWhiteSpace(e.BlockId)
+                    ? e.Message
+                    : $"{e.BlockId}: {e.Message}"));
+            return Results.BadRequest($"Invalid pipeline definition: {details}");
+        }
+
         watch.PipelineDefinitionJson = json;
         watch.UpdatedAt = DateTime.UtcNow;
         await watchService.UpdateWatchAsync(watch, ct);
@@ -1303,6 +1404,117 @@ public static class WatchEndpoints
             guidId, definition.Blocks.Count);
 
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> GetPipelineDefinition(
+        string id,
+        IWatchService watchService,
+        IPipelineValidator pipelineValidator,
+        IBlockRegistry blockRegistry,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out var guidId))
+            return Results.BadRequest("Invalid ID");
+
+        var watch = await watchService.GetByIdAsync(guidId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        var pipelineJson = watch.PipelineDefinitionJson ?? "";
+        var hasPipeline = !string.IsNullOrWhiteSpace(pipelineJson);
+        var definition = hasPipeline ? PipelineSerializer.Deserialize(pipelineJson, logger) : null;
+        var validation = definition is not null
+            ? pipelineValidator.Validate(definition, blockRegistry)
+            : ChangeDetection.Core.Pipeline.Validation.ValidationResult.Valid();
+
+        var orderedBlocks = definition is not null ? OrderBlocks(definition) : [];
+        var blockOrder = orderedBlocks
+            .Select((block, index) => new { block.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index, StringComparer.OrdinalIgnoreCase);
+
+        var dto = new WatchPipelineDto
+        {
+            WatchId = watch.Id.ToString(),
+            WatchName = string.IsNullOrWhiteSpace(watch.Name) ? watch.Url : watch.Name,
+            WatchUrl = watch.Url,
+            HasPipeline = hasPipeline,
+            PipelineJson = pipelineJson,
+            BlockCount = definition?.Blocks.Count ?? 0,
+            EstimatedExecutionTimeMs = definition is null ? 0d : EstimateExecutionTimeMs(definition),
+            LastRunStatus = watch.Status.ToString(),
+            LastChecked = watch.LastChecked,
+            LastError = watch.LastError,
+            IsPipelineValid = definition is not null && validation.IsValid,
+            ValidationErrors = definition is null && hasPipeline
+                ? ["Stored pipeline JSON could not be parsed."]
+                : validation.Errors.Select(e => string.IsNullOrWhiteSpace(e.BlockId) ? e.Message : $"{e.BlockId}: {e.Message}").ToList(),
+            ValidationWarnings = validation.Warnings.Select(w => string.IsNullOrWhiteSpace(w.BlockId) ? w.Message : $"{w.BlockId}: {w.Message}").ToList(),
+            Blocks = definition is null
+                ? []
+                : orderedBlocks.Select(block => new WatchPipelineBlockDto
+                {
+                    Id = block.Id,
+                    Type = block.Type,
+                    Category = GetBlockCategory(block.Type),
+                    Icon = GetBlockIcon(block.Type),
+                    ExecutionOrder = blockOrder[block.Id],
+                    ConfigJson = block.Config?.GetRawText() ?? "{}",
+                    KeyConfigValues = GetKeyConfigValues(block.Config)
+                }).ToList(),
+            Connections = definition?.Connections.Select(connection => new WatchPipelineConnectionDto
+            {
+                FromBlockId = connection.FromBlockId,
+                FromPort = connection.FromPort,
+                ToBlockId = connection.ToBlockId,
+                ToPort = connection.ToPort
+            }).ToList() ?? []
+        };
+
+        return Results.Ok(dto);
+    }
+
+    /// <summary>Get pipeline health and execution context for a watch.</summary>
+    private static async Task<IResult> GetPipelineStatus(
+        string id,
+        IWatchService watchService,
+        IBlockStateStore stateStore,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out var guidId))
+            return Results.BadRequest("Invalid ID");
+
+        var watch = await watchService.GetByIdAsync(guidId, ct);
+        if (watch is null)
+            return Results.NotFound();
+
+        var hasPipeline = !string.IsNullOrEmpty(watch.PipelineDefinitionJson);
+
+        PipelineDefinition? definition = null;
+        if (hasPipeline)
+            definition = PipelineSerializer.Deserialize(watch.PipelineDefinitionJson!, logger);
+
+        return Results.Ok(new
+        {
+            HasPipeline = hasPipeline,
+            BlockCount = definition?.Blocks.Count ?? 0,
+            Blocks = definition?.Blocks.Select(b => new
+            {
+                b.Id,
+                b.Type,
+                b.Position
+            }) ?? Enumerable.Empty<object>(),
+            Connections = definition?.Connections.Select(c => new
+            {
+                From = $"{c.FromBlockId}.{c.FromPort}",
+                To = $"{c.ToBlockId}.{c.ToPort}"
+            }) ?? Enumerable.Empty<object>(),
+            WatchStatus = watch.Status.ToString(),
+            LastChecked = watch.LastChecked,
+            LastError = watch.LastError,
+            PipelineMetadata = definition?.Metadata
+        });
     }
 
     /// <summary>Execute pipeline for a watch immediately (dev/testing endpoint).</summary>
@@ -1344,16 +1556,155 @@ public static class WatchEndpoints
             result.Error,
             result.ExecutionDurationMs,
             SkippedBlocks = result.SkippedBlockIds,
-            BlockResults = result.BlockResults.Select(kv => new
+            OutputData = result.OutputData.HasValue ? TruncateJson(result.OutputData.Value, 5000) : null,
+            OutputItemCount = result.OutputData.HasValue && result.OutputData.Value.ValueKind == JsonValueKind.Array
+                ? result.OutputData.Value.GetArrayLength()
+                : (int?)null,
+            BlockResults = result.BlockResults?.Select(kv => new
             {
                 BlockId = kv.Key,
                 kv.Value.Success,
-                kv.Value.Status,
+                Status = kv.Value.Status.ToString(),
                 HasOutput = kv.Value.Output is not null,
-                kv.Value.Error
+                kv.Value.Error,
+                kv.Value.CacheHit,
+                OutputPreview = kv.Value.Output.HasValue
+                    ? TruncateJson(kv.Value.Output.Value, 2000)
+                    : null,
+                OutputItemCount = kv.Value.Output.HasValue && kv.Value.Output.Value.ValueKind == JsonValueKind.Array
+                    ? kv.Value.Output.Value.GetArrayLength()
+                    : kv.Value.Output.HasValue && kv.Value.Output.Value.ValueKind == JsonValueKind.Object
+                        && kv.Value.Output.Value.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array
+                        ? items.GetArrayLength()
+                        : (int?)null
             })
         });
     }
+
+    private static string? TruncateJson(JsonElement element, int maxChars)
+    {
+        var json = element.GetRawText();
+        return json.Length <= maxChars ? json : json[..maxChars] + "...";
+    }
+
+    private static IReadOnlyList<BlockDefinition> OrderBlocks(PipelineDefinition definition)
+    {
+        var blocks = definition.Blocks.ToList();
+        var inDegree = blocks.ToDictionary(block => block.Id, _ => 0, StringComparer.OrdinalIgnoreCase);
+        var adjacency = blocks.ToDictionary(block => block.Id, _ => new List<string>(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var connection in definition.Connections)
+        {
+            if (inDegree.ContainsKey(connection.ToBlockId))
+                inDegree[connection.ToBlockId]++;
+
+            if (adjacency.TryGetValue(connection.FromBlockId, out var downstream))
+                downstream.Add(connection.ToBlockId);
+        }
+
+        var queue = new Queue<string>(inDegree
+            .Where(entry => entry.Value == 0)
+            .OrderBy(entry => entry.Key)
+            .Select(entry => entry.Key));
+
+        var ordered = new List<BlockDefinition>();
+        var blockMap = blocks.ToDictionary(block => block.Id, StringComparer.OrdinalIgnoreCase);
+
+        while (queue.Count > 0)
+        {
+            var blockId = queue.Dequeue();
+            if (blockMap.TryGetValue(blockId, out var block))
+                ordered.Add(block);
+
+            if (!adjacency.TryGetValue(blockId, out var nextBlocks))
+                continue;
+
+            foreach (var next in nextBlocks)
+            {
+                if (!inDegree.ContainsKey(next))
+                    continue;
+
+                inDegree[next]--;
+                if (inDegree[next] == 0)
+                    queue.Enqueue(next);
+            }
+        }
+
+        foreach (var block in blocks.OrderBy(block => block.Position ?? int.MaxValue))
+        {
+            if (!ordered.Any(existing => existing.Id.Equals(block.Id, StringComparison.OrdinalIgnoreCase)))
+                ordered.Add(block);
+        }
+
+        return ordered;
+    }
+
+    private static Dictionary<string, string> GetKeyConfigValues(JsonElement? config)
+    {
+        if (!config.HasValue || config.Value.ValueKind != JsonValueKind.Object)
+            return [];
+
+        var configValue = config.Value;
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var property in configValue.EnumerateObject())
+        {
+            if (result.Count >= 4)
+                break;
+
+            var preview = property.Value.ValueKind switch
+            {
+                JsonValueKind.String => property.Value.GetString(),
+                JsonValueKind.Number => property.Value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Array => $"[{property.Value.GetArrayLength()}]",
+                JsonValueKind.Object => "{…}",
+                _ => null
+            };
+
+            if (!string.IsNullOrWhiteSpace(preview))
+                result[property.Name] = preview!;
+        }
+
+        return result;
+    }
+
+    private static double EstimateExecutionTimeMs(PipelineDefinition definition) =>
+        definition.Blocks.Sum(block => block.Type.ToLowerInvariant() switch
+        {
+            "input" => 50d,
+            "navigate" => 6000d,
+            "fetch" => 2500d,
+            "cssfilter" or "xpathfilter" or "filter" => 300d,
+            "extractschema" or "extract" or "llmextract" => 1200d,
+            "textdiff" or "hashcompare" or "numericdelta" or "listdiff" => 200d,
+            "condition" or "route" => 150d,
+            "notify" or "notification" => 300d,
+            _ => 500d
+        });
+
+    private static string GetBlockCategory(string blockType) => blockType.ToLowerInvariant() switch
+    {
+        "input" or "navigate" or "fetch" => "acquisition",
+        "cssfilter" or "xpathfilter" or "filter" or "extractschema" or "extract" or "llmextract" => "extraction",
+        "textdiff" or "hashcompare" or "numericdelta" or "listdiff" => "comparison",
+        "condition" or "route" or "notify" or "notification" => "decision",
+        _ => "other"
+    };
+
+    private static string GetBlockIcon(string blockType) => blockType.ToLowerInvariant() switch
+    {
+        "input" => "📦",
+        "navigate" => "🌐",
+        "fetch" => "📥",
+        "cssfilter" or "xpathfilter" or "filter" => "🔍",
+        "extractschema" or "extract" or "llmextract" => "📊",
+        "textdiff" or "hashcompare" or "numericdelta" or "listdiff" => "🔄",
+        "condition" or "route" => "⚡",
+        "notify" or "notification" => "📢",
+        _ => "⬜"
+    };
 
     private static async Task<IResult> PromoteSearchResult(
         Guid id,

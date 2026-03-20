@@ -79,4 +79,52 @@ public class SettingsEndpointTests : TestBase, IAsyncDisposable
         backups.ShouldNotBeNull();
         // Fresh DB may or may not have backups — just verify it returns OK
     }
+
+    [Test]
+    public async Task GetNotificationSettings_ReturnsDefaults()
+    {
+        var response = await _client.GetAsync("/api/settings/notifications");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var settings = await response.Content.ReadFromJsonAsync<NotificationChannelSettingsDto>();
+        settings.ShouldNotBeNull();
+        settings.EmailEnabled.ShouldBeFalse();
+        settings.WebhookEnabled.ShouldBeFalse();
+        settings.DiscordEnabled.ShouldBeFalse();
+        settings.BrowserEnabled.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task UpdateNotificationSettings_PersistsConfiguredChannels()
+    {
+        var update = new NotificationChannelSettingsDto
+        {
+            EmailEnabled = true,
+            EmailAddress = "alerts@example.com",
+            DiscordEnabled = true,
+            DiscordWebhookUrl = "https://discord.example/hook",
+            WebhookEnabled = true,
+            WebhookUrl = "https://webhook.example/notify",
+            BrowserEnabled = true,
+            DefaultChannelName = "discord"
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/settings/notifications", update);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var saved = await response.Content.ReadFromJsonAsync<NotificationChannelSettingsDto>();
+        saved.ShouldNotBeNull();
+        saved.EmailAddress.ShouldBe("alerts@example.com");
+        saved.DefaultChannelName.ShouldBe("discord");
+        saved.BrowserEnabled.ShouldBeTrue();
+
+        var getResponse = await _client.GetAsync("/api/settings/notifications");
+        getResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var reloaded = await getResponse.Content.ReadFromJsonAsync<NotificationChannelSettingsDto>();
+        reloaded.ShouldNotBeNull();
+        reloaded.EmailEnabled.ShouldBeTrue();
+        reloaded.DiscordEnabled.ShouldBeTrue();
+        reloaded.WebhookEnabled.ShouldBeTrue();
+        reloaded.DefaultChannelName.ShouldBe("discord");
+    }
 }

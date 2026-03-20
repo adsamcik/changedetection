@@ -14,6 +14,7 @@ namespace ChangeDetection.Services.Pipeline;
 /// Manages the flow, iterations, and feedback loops.
 /// Records all events to database for history and debugging.
 /// </summary>
+[Obsolete("Use ComposableSetupPipeline instead. This legacy pipeline is retained only for reference and will be removed in a future release.")]
 public class WatchSetupPipeline(
     UrlExtractionStage urlExtraction,
     ContentFetchingStage contentFetching,

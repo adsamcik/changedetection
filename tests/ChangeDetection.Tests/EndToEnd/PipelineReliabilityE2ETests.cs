@@ -10,6 +10,7 @@ using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services;
 using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Blocks.Acquisition;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.SetupPipeline;
 using ChangeDetection.Tests.Pipeline.Blocks;
 using Microsoft.Extensions.Logging;
@@ -419,6 +420,7 @@ public class PipelineReliabilityE2ETests : TestBase
             new PlatformDetector(),
             new PipelineTemplateRegistry(),
             watchRepo,
+            new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
             CreateLogger<ComposableSetupPipeline>());
 
         var request = new SetupRequest { UserInput = "Watch https://example.com/page for changes" };

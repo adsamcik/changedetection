@@ -118,6 +118,54 @@ public class WatchEndpointTests : TestBase, IAsyncDisposable
     }
 
     [Test]
+    public async Task UpdateWatch_PersistsNotificationChannels()
+    {
+        var createDto = new WatchCreateDto
+        {
+            Url = "https://example.com/notifications",
+            Title = "Notification Watch",
+            CheckInterval = TimeSpan.FromHours(1)
+        };
+
+        var createResponse = await _client.PostAsJsonAsync("/api/watches", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<WatchDetailDto>();
+        created.ShouldNotBeNull();
+
+        var updateDto = new WatchCreateDto
+        {
+            Url = "https://example.com/notifications",
+            Title = "Notification Watch",
+            CheckInterval = TimeSpan.FromHours(1),
+            NotificationSettings = new NotificationSettingsDto
+            {
+                EmailEnabled = true,
+                EmailRecipients = ["watch@example.com"],
+                DefaultChannelName = "discord",
+                UseLlmSummary = true,
+                Channels =
+                [
+                    new NotificationChannelDto
+                    {
+                        Name = "discord",
+                        Type = "Discord",
+                        IsEnabled = true,
+                        Config = new Dictionary<string, string> { ["webhookUrl"] = "https://discord.example/hook" }
+                    }
+                ]
+            }
+        };
+
+        var updateResponse = await _client.PutAsJsonAsync($"/api/watches/{created.Id}", updateDto);
+        updateResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<WatchDetailDto>();
+        updated.ShouldNotBeNull();
+        updated.NotificationSettings.DefaultChannelName.ShouldBe("discord");
+        updated.NotificationSettings.UseLlmSummary.ShouldBeTrue();
+        updated.NotificationSettings.Channels.ShouldContain(c => c.Name == "discord" && c.Type == "Discord");
+    }
+
+    [Test]
     public async Task DeleteWatch_Succeeds()
     {
         // Create

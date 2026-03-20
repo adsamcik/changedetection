@@ -97,7 +97,7 @@ public class AutoHealingService(
                     Importance = ChangeImportance.High,
                     DetectedAt = DateTime.UtcNow
                 };
-                await notificationService.SendNotificationAsync(pausedWatch, syntheticEvent, summary, ct);
+                await notificationService.SendNotificationAsync(pausedWatch, syntheticEvent, summary, ct: ct);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
