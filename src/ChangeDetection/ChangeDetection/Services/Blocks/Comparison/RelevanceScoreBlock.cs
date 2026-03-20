@@ -15,7 +15,10 @@ public class RelevanceScoreBlock : IPipelineBlock
         [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }];
 
     public IReadOnlyList<PortDescriptor> OutputPorts =>
-        [new PortDescriptor { Name = "result", Type = PortType.DiffResult }];
+    [
+        new PortDescriptor { Name = "result", Type = PortType.DiffResult },
+        new PortDescriptor { Name = "items", Type = PortType.ExtractedObjects }
+    ];
 
     public BlockCriticalityTier CriticalityTier => BlockCriticalityTier.Analysis;
 
@@ -183,13 +186,37 @@ public class RelevanceScoreBlock : IPipelineBlock
     private static Dictionary<string, int> ReadKeywordWeights(JsonElement config, string propertyName)
     {
         var values = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (!config.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Object)
+        if (!config.TryGetProperty(propertyName, out var property))
             return values;
 
-        foreach (var keyword in property.EnumerateObject())
+        if (property.ValueKind == JsonValueKind.Object)
         {
-            if (keyword.Value.TryGetInt32(out var weight) && !string.IsNullOrWhiteSpace(keyword.Name))
-                values[keyword.Name.ToLowerInvariant()] = weight;
+            foreach (var keyword in property.EnumerateObject())
+            {
+                if (keyword.Value.TryGetInt32(out var weight) && !string.IsNullOrWhiteSpace(keyword.Name))
+                    values[keyword.Name.ToLowerInvariant()] = weight;
+            }
+
+            return values;
+        }
+
+        if (property.ValueKind != JsonValueKind.Array)
+            return values;
+
+        foreach (var keyword in property.EnumerateArray())
+        {
+            if (keyword.ValueKind != JsonValueKind.Object)
+                continue;
+
+            if (!keyword.TryGetProperty("keyword", out var keywordName) || keywordName.ValueKind != JsonValueKind.String)
+                continue;
+
+            if (!keyword.TryGetProperty("weight", out var keywordWeight) || !keywordWeight.TryGetInt32(out var weight))
+                continue;
+
+            var normalizedKeyword = keywordName.GetString();
+            if (!string.IsNullOrWhiteSpace(normalizedKeyword))
+                values[normalizedKeyword.ToLowerInvariant()] = weight;
         }
 
         return values;

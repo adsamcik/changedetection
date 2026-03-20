@@ -129,6 +129,44 @@ public class RelevanceScoreBlockTests : TestBase
     }
 
     [Test]
+    public async Task ExecuteAsync_ArrayKeywordConfig_ScoresItems()
+    {
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("relevance-1", "RelevanceScore", new
+        {
+            targetFields = new[] { "title", "locationsText" },
+            positiveKeywords = new[]
+            {
+                new { keyword = "scientist", weight = 10 },
+                new { keyword = "research", weight = 8 }
+            },
+            negativeKeywords = new[]
+            {
+                new { keyword = "director", weight = -15 }
+            },
+            minScore = 0
+        });
+
+        var input = JsonSerializer.SerializeToElement(new[]
+        {
+            new { title = "Research Scientist", locationsText = "Copenhagen, Denmark" },
+            new { title = "Director", locationsText = "Remote" }
+        });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("relevance-1")
+            .WithInput("data", input)
+            .WithPipelineDefinition(pipeline)
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Status.ShouldBe(BlockExecutionStatus.Completed);
+        result.Output!.Value.GetProperty("passedFilter").GetInt32().ShouldBe(1);
+        result.Output!.Value.GetProperty("items").GetArrayLength().ShouldBe(1);
+        result.Output!.Value.GetProperty("items")[0].GetProperty("relevanceScore").GetInt32().ShouldBe(18);
+    }
+
+    [Test]
     public async Task Registry_RegistersRelevanceScoreBlock()
     {
         var registry = new BlockRegistry();
@@ -137,7 +175,8 @@ public class RelevanceScoreBlockTests : TestBase
 
         registry.IsRegistered("RelevanceScore").ShouldBeTrue();
         registry.GetInputPorts("RelevanceScore").Single().Name.ShouldBe("data");
-        registry.GetOutputPorts("RelevanceScore").Single().Name.ShouldBe("result");
+        registry.GetOutputPorts("RelevanceScore").Select(port => port.Name)
+            .ShouldBe(["result", "items"], ignoreOrder: true);
         registry.CreateBlock("RelevanceScore", Substitute.For<IServiceProvider>()).ShouldBeOfType<RelevanceScoreBlock>();
         await Task.CompletedTask;
     }

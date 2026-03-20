@@ -24,6 +24,15 @@ public class ListDiffBlock : IPipelineBlock
         if (!context.Inputs.TryGetValue("data", out var dataElement))
             return BlockResult.Failed("ListDiff block requires a 'data' input.");
 
+        // Accept both plain arrays and objects with an "items" property (e.g., RelevanceScore output)
+        if (dataElement.ValueKind == JsonValueKind.Object)
+        {
+            if (dataElement.TryGetProperty("items", out var itemsArray) && itemsArray.ValueKind == JsonValueKind.Array)
+                dataElement = itemsArray;
+            else if (dataElement.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
+                dataElement = dataArray;
+        }
+
         if (dataElement.ValueKind != JsonValueKind.Array)
             return BlockResult.Failed("ListDiff block expects a JSON array input.");
 

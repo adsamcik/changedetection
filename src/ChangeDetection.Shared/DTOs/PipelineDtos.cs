@@ -170,6 +170,54 @@ public class ContentSectionDto
     public double Relevance { get; set; }
 }
 
+/// <summary>
+/// Detailed pipeline information for the advanced pipeline editor.
+/// </summary>
+public class WatchPipelineDto
+{
+    public string WatchId { get; set; } = "";
+    public string WatchName { get; set; } = "";
+    public string WatchUrl { get; set; } = "";
+    public bool HasPipeline { get; set; }
+    public string PipelineJson { get; set; } = "";
+    public int BlockCount { get; set; }
+    public double EstimatedExecutionTimeMs { get; set; }
+    public string LastRunStatus { get; set; } = "";
+    public DateTime? LastChecked { get; set; }
+    public string? LastError { get; set; }
+    public bool IsPipelineValid { get; set; }
+    public List<string> ValidationErrors { get; set; } = [];
+    public List<string> ValidationWarnings { get; set; } = [];
+    public List<WatchPipelineBlockDto> Blocks { get; set; } = [];
+    public List<WatchPipelineConnectionDto> Connections { get; set; } = [];
+    public string RebuildWithAiUrl { get; set; } = "/setup";
+}
+
+/// <summary>
+/// Pipeline block summary used by the editor UI.
+/// </summary>
+public class WatchPipelineBlockDto
+{
+    public string Id { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string Category { get; set; } = "";
+    public string Icon { get; set; } = "";
+    public int ExecutionOrder { get; set; }
+    public string ConfigJson { get; set; } = "{}";
+    public Dictionary<string, string> KeyConfigValues { get; set; } = [];
+}
+
+/// <summary>
+/// Connection summary used by the editor UI.
+/// </summary>
+public class WatchPipelineConnectionDto
+{
+    public string FromBlockId { get; set; } = "";
+    public string FromPort { get; set; } = "";
+    public string ToBlockId { get; set; } = "";
+    public string ToPort { get; set; } = "";
+}
+
 // ============================================================================
 // Streaming DTOs for Multi-Agent Watch Setup Pipeline
 // ============================================================================
@@ -754,6 +802,7 @@ public class IdentityResolutionDto
 /// <summary>
 /// Status of a flow state entry.
 /// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum FlowStateStatus
 {
     /// <summary>
@@ -872,6 +921,7 @@ public class FlowStateEntryDto
 /// <summary>
 /// Status enum for DTOs (mirrors FlowStateStatus).
 /// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum FlowStateStatusDto
 {
     Pending,
@@ -965,4 +1015,98 @@ public class StartSetupResponse
     /// When the session was created.
     /// </summary>
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+// ── Composable Setup Pipeline DTOs (client-side mirrors of Core types) ──────
+
+/// <summary>
+/// Client-side DTO for SetupProgress streamed from ComposableSetupHub.
+/// Mirrors ChangeDetection.Core.Pipeline.Setup.SetupProgress for JSON deserialization.
+/// </summary>
+public class SetupProgressDto
+{
+    public SetupPhaseDto Phase { get; set; }
+    public SetupProgressTypeDto2 Type { get; set; }
+    public required string Message { get; set; }
+    public string? Detail { get; set; }
+    public string? SessionId { get; set; }
+    public ParsedIntentDto? Intent { get; set; }
+    public PipelineProposalDto? Proposal { get; set; }
+    public Guid? WatchId { get; set; }
+    public string? Error { get; set; }
+}
+
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+public enum SetupPhaseDto
+{
+    IntentParsing,
+    ContentFetching,
+    ContentAnalysis,
+    Checkpoint1,
+    PipelineBuilding,
+    DryRun,
+    AdversarialTest,
+    QcValidation,
+    Checkpoint2,
+    Saving
+}
+
+/// <summary>
+/// Progress type for the composable setup flow.
+/// Named with suffix to avoid collision with FlowStateStatusDto.
+/// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+public enum SetupProgressTypeDto2
+{
+    Started,
+    Thinking,
+    Progress,
+    CheckpointReached,
+    Completed,
+    Failed
+}
+
+/// <summary>
+/// Client-side DTO for parsed intent shown at Checkpoint 1.
+/// </summary>
+public class ParsedIntentDto
+{
+    public required string Url { get; set; }
+    public required string Intent { get; set; }
+    public required string ChangeType { get; set; }
+    public string? Summary { get; set; }
+    public Dictionary<string, string>? Thresholds { get; set; }
+    public string? Frequency { get; set; }
+    public string? NotificationPreference { get; set; }
+}
+
+/// <summary>
+/// Client-side DTO for the pipeline proposal shown at Checkpoint 2.
+/// </summary>
+public class PipelineProposalDto
+{
+    public required string HumanSummary { get; set; }
+    public DryRunResultDto? DryRun { get; set; }
+    public QcResultDto? QcValidation { get; set; }
+}
+
+/// <summary>
+/// Client-side DTO for dry run results.
+/// </summary>
+public class DryRunResultDto
+{
+    public bool Success { get; set; }
+    public long ExecutionDurationMs { get; set; }
+    public string? Error { get; set; }
+    public string? SampleOutput { get; set; }
+}
+
+/// <summary>
+/// Client-side DTO for QC validation results.
+/// </summary>
+public class QcResultDto
+{
+    public bool Valid { get; set; }
+    public List<string> Issues { get; set; } = [];
+    public List<string> Suggestions { get; set; } = [];
 }

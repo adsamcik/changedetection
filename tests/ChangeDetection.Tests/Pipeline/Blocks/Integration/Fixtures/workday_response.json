@@ -1,0 +1,8 @@
+{
+  "jobPostings": [
+    {"title": "Research Scientist", "locationsText": "Copenhagen, Denmark", "externalPath": "/job/R-001", "bulletFields": ["Full time"]},
+    {"title": "QC Analyst", "locationsText": "Ballerup, Denmark", "externalPath": "/job/R-002", "bulletFields": ["Full time"]},
+    {"title": "Lab Technician", "locationsText": "Hillerød, Denmark", "externalPath": "/job/R-003", "bulletFields": ["Part time"]}
+  ],
+  "total": 3
+}

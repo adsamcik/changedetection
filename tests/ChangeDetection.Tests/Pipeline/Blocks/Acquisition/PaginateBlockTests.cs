@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Http;
 using System.Text.Json;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Blocks.Acquisition;
+using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using Shouldly;
 using TUnit.Core;
@@ -336,6 +339,120 @@ public class PaginateBlockTests : TestBase
     }
 
     [Test]
+    public async Task ExecuteAsync_OffsetQueryMode_FetchesRemainingPagesAndStopsOnShortPage()
+    {
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("paginate-1", "Paginate", new
+        {
+            mode = "offset",
+            parameterLocation = "query",
+            offsetField = "offset",
+            limitField = "limit",
+            limitValue = 20,
+            totalFrom = "$.total",
+            startOffset = 0,
+            maxPages = 5,
+            delay = 0
+        });
+
+        var requestedUrls = new List<string>();
+        var httpClientFactory = CreateClientFactory(request =>
+        {
+            requestedUrls.Add(request.RequestUri!.ToString());
+
+            var body = request.RequestUri!.Query switch
+            {
+                "?offset=20&limit=20" => """{"total":45,"items":[21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40]}""",
+                "?offset=40&limit=20" => """{"total":45,"items":[41,42,43,44,45]}""",
+                _ => throw new InvalidOperationException($"Unexpected URL {request.RequestUri}")
+            };
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            };
+        });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("paginate-1")
+            .WithInput("json", JsonSerializer.SerializeToElement(new
+            {
+                json = """{"total":45,"items":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]}""",
+                url = "https://example.com/api/jobs"
+            }))
+            .WithPipelineDefinition(pipeline)
+            .WithServices(CreateServices(fetcher: null, httpClientFactory: httpClientFactory))
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Status.ShouldBe(BlockExecutionStatus.Completed);
+        requestedUrls.ShouldBe(new[]
+        {
+            "https://example.com/api/jobs?offset=20&limit=20",
+            "https://example.com/api/jobs?offset=40&limit=20"
+        });
+
+        var pages = result.Output!.Value.GetProperty("pages");
+        pages.GetArrayLength().ShouldBe(3);
+        pages[0].GetString().ShouldContain("\"items\":[1,2,3");
+        pages[2].GetString().ShouldContain("\"items\":[41,42,43,44,45]");
+    }
+
+    [Test]
+    public async Task ExecuteAsync_OffsetBodyMode_UpdatesRequestBodyAndStopsOnDuplicateResponse()
+    {
+        var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("paginate-1", "Paginate", new
+        {
+            mode = "offset",
+            parameterLocation = "body",
+            offsetField = "offset",
+            limitField = "limit",
+            limitValue = 20,
+            totalFrom = "$.total",
+            startOffset = 0,
+            maxPages = 5,
+            delay = 0
+        });
+
+        var requestBodies = new List<string>();
+        var httpClientFactory = CreateClientFactory(request =>
+        {
+            var requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            requestBodies.Add(requestBody);
+
+            var responseBody = requestBody.Contains("\"offset\":20", StringComparison.Ordinal)
+                ? """{"total":60,"items":[21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40]}"""
+                : """{"total":60,"items":[21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40]}""";
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseBody)
+            };
+        });
+
+        var context = new BlockContextBuilder()
+            .WithBlockInstanceId("paginate-1")
+            .WithInput("json", JsonSerializer.SerializeToElement(new
+            {
+                json = """{"total":60,"items":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]}""",
+                url = "https://example.com/api/search",
+                requestBody = """{"offset":0,"limit":20,"query":"science"}"""
+            }))
+            .WithPipelineDefinition(pipeline)
+            .WithServices(CreateServices(fetcher: null, httpClientFactory: httpClientFactory))
+            .Build();
+
+        var result = await _sut.ExecuteAsync(context);
+
+        result.Status.ShouldBe(BlockExecutionStatus.Completed);
+        requestBodies.Count.ShouldBe(2);
+        requestBodies[0].ShouldContain("\"offset\":20");
+        requestBodies[0].ShouldContain("\"limit\":20");
+        requestBodies[1].ShouldContain("\"offset\":40");
+        result.Output!.Value.GetProperty("pageCount").GetInt32().ShouldBe(2);
+    }
+
+    [Test]
     public async Task ExecuteAsync_MissingHtmlInput_ReturnsFailed()
     {
         var context = new BlockContextBuilder()
@@ -373,24 +490,43 @@ public class PaginateBlockTests : TestBase
     [Test]
     public async Task Ports_MatchExpectedDefinition()
     {
-        _sut.InputPorts.Count.ShouldBe(1);
+        _sut.InputPorts.Count.ShouldBe(2);
         _sut.InputPorts[0].Name.ShouldBe("html");
         _sut.InputPorts[0].Type.ShouldBe(PortType.HtmlContent);
+        _sut.InputPorts[1].Name.ShouldBe("json");
+        _sut.InputPorts[1].Type.ShouldBe(PortType.PlainText);
         _sut.OutputPorts.Count.ShouldBe(1);
         _sut.OutputPorts[0].Name.ShouldBe("data");
         _sut.OutputPorts[0].Type.ShouldBe(PortType.ExtractedObjects);
         await Task.CompletedTask;
     }
 
-    private static IServiceProvider CreateServices(IContentFetcher fetcher, IUrlValidator? validator = null)
+    private static IServiceProvider CreateServices(
+        IContentFetcher? fetcher,
+        IUrlValidator? validator = null,
+        IHttpClientFactory? httpClientFactory = null)
     {
         validator ??= Substitute.For<IUrlValidator>();
         validator.Validate(Arg.Any<string>()).Returns((string?)null);
 
-        var services = Substitute.For<IServiceProvider>();
-        services.GetService(typeof(IContentFetcher)).Returns(fetcher);
-        services.GetService(typeof(IUrlValidator)).Returns(validator);
-        return services;
+        var services = new ServiceCollection();
+        services.AddSingleton(validator);
+
+        if (fetcher is not null)
+            services.AddSingleton(fetcher);
+
+        if (httpClientFactory is not null)
+            services.AddSingleton(httpClientFactory);
+
+        return services.BuildServiceProvider();
+    }
+
+    private static IHttpClientFactory CreateClientFactory(Func<HttpRequestMessage, HttpResponseMessage> responder)
+    {
+        var factory = Substitute.For<IHttpClientFactory>();
+        var client = new HttpClient(new StubHttpMessageHandler(responder));
+        factory.CreateClient(Arg.Any<string>()).Returns(client);
+        return factory;
     }
 
     private static void UpdateMaxConcurrency(ref int maxObservedConcurrency, int currentConcurrency)
@@ -403,6 +539,16 @@ public class PaginateBlockTests : TestBase
 
             if (Interlocked.CompareExchange(ref maxObservedConcurrency, currentConcurrency, snapshot) == snapshot)
                 return;
+        }
+    }
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = responder(request);
+            response.RequestMessage ??= request;
+            return Task.FromResult(response);
         }
     }
 }

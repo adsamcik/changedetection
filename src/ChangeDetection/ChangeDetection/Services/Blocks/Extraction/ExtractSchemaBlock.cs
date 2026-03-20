@@ -3,6 +3,8 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Services;
+using Fizzler.Systems.HtmlAgilityPack;
+using HtmlAgilityPack;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChangeDetection.Services.Blocks.Extraction;
@@ -35,12 +37,16 @@ public class ExtractSchemaBlock : IPipelineBlock
         if (string.IsNullOrWhiteSpace(html))
             return BlockResult.Failed("ExtractSchema block received empty or invalid HTML.");
 
-        var (scope, schema, preferStructuredData, enableLlmFallback) = ReadConfig(context);
+        var (scope, schema, preferStructuredData, enableLlmFallback, listMode) = ReadConfig(context);
 
         if (schema is null || schema.Count == 0)
             return BlockResult.Failed("No extraction schema configured.");
 
-        context.Logger.LogInformation("ExtractSchemaBlock: Extracting {FieldCount} fields", schema.Count);
+        // List mode: scope selects repeating items, schema fields extracted per item → array output
+        if (listMode && scope is not null)
+            return await ExecuteListModeAsync(context, html, scope, schema, preferStructuredData, enableLlmFallback);
+
+        context.Logger.LogInformation("ExtractSchemaBlock: Extracting {FieldCount} fields (single mode)", schema.Count);
 
         var extractor = context.Services.GetRequiredService<IContentExtractor>();
         var structuredDataExtractor = context.Services.GetRequiredService<IStructuredDataExtractor>();
@@ -112,16 +118,155 @@ public class ExtractSchemaBlock : IPipelineBlock
         return await Task.FromResult(BlockResult.Succeeded(output));
     }
 
-    private static (string? scope, IReadOnlyList<SchemaField>? schema, bool preferStructuredData, bool enableLlmFallback) ReadConfig(BlockContext context)
+    /// <summary>
+    /// List mode: scope selects repeating container elements, schema fields are extracted per element.
+    /// Output is a JSON array of objects, one per matched scope element.
+    /// </summary>
+    private async Task<BlockResult> ExecuteListModeAsync(
+        BlockContext context,
+        string html,
+        string scope,
+        IReadOnlyList<SchemaField> schema,
+        bool preferStructuredData,
+        bool enableLlmFallback)
+    {
+        var doc = new HtmlAgilityPack.HtmlDocument();
+        doc.LoadHtml(html);
+
+        List<HtmlNode>? scopeNodes;
+        try
+        {
+            scopeNodes = doc.DocumentNode.QuerySelectorAll(scope)?.ToList();
+        }
+        catch (Exception ex)
+        {
+            context.Logger.LogWarning(ex, "ExtractSchemaBlock (list mode): CSS selector '{Scope}' failed, trying fallback", scope);
+            // Fallback: try splitting comma-separated selectors and use the simplest one
+            try
+            {
+                var fallbackSelector = scope.Split(',').Last().Trim();
+                scopeNodes = doc.DocumentNode.QuerySelectorAll(fallbackSelector)?.ToList();
+            }
+            catch
+            {
+                return BlockResult.Failed($"ExtractSchema list mode: CSS selector '{scope}' is not supported.");
+            }
+        }
+
+        if (scopeNodes is null || scopeNodes.Count == 0)
+        {
+            context.Logger.LogWarning("ExtractSchemaBlock (list mode): No elements matched scope '{Scope}'", scope);
+            // Return empty array so downstream ListDiff still works
+            return BlockResult.Succeeded(JsonSerializer.SerializeToElement(Array.Empty<object>()));
+        }
+
+        context.Logger.LogInformation(
+            "ExtractSchemaBlock (list mode): Found {Count} elements matching scope '{Scope}', extracting {Fields} fields each",
+            scopeNodes.Count, schema.Count);
+
+        var extractor = context.Services.GetRequiredService<IContentExtractor>();
+        var items = new List<Dictionary<string, string?>>();
+
+        foreach (var scopeNode in scopeNodes)
+        {
+            var itemHtml = scopeNode.OuterHtml;
+            var item = new Dictionary<string, string?>();
+
+            foreach (var field in schema)
+            {
+                string? value = null;
+
+                // Try CSS selector within this scope element
+                try
+                {
+                    var fieldNode = scopeNode.QuerySelector(field.Selector);
+                    if (fieldNode is not null)
+                    {
+                        // Check the matched node's element name (not the selector string)
+                        // to decide whether to extract href vs text content.
+                        value = fieldNode.Name.Equals("a", StringComparison.OrdinalIgnoreCase) || field.Selector.Contains("[href]")
+                            ? fieldNode.GetAttributeValue("href", null) ?? fieldNode.InnerText?.Trim()
+                            : fieldNode.InnerText?.Trim();
+                    }
+                }
+                catch
+                {
+                    // Fall back to IContentExtractor
+                    var cssValue = extractor.ExtractText(itemHtml, cssSelector: field.Selector);
+                    if (!string.IsNullOrWhiteSpace(cssValue))
+                        value = cssValue;
+                }
+
+                // If field selector didn't match, try common patterns for link-based extraction
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    if (field.Field.Equals("url", StringComparison.OrdinalIgnoreCase) ||
+                        field.Field.Equals("href", StringComparison.OrdinalIgnoreCase) ||
+                        field.Field.Equals("link", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Extract href from first <a> in scope
+                        var linkNode = scopeNode.QuerySelector("a[href]");
+                        value = linkNode?.GetAttributeValue("href", null);
+                    }
+                    else if (field.Field.Equals("title", StringComparison.OrdinalIgnoreCase) ||
+                             field.Field.Equals("name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Extract text from first heading or link
+                        var textNode = scopeNode.QuerySelector("h1, h2, h3, h4, a");
+                        value = textNode?.InnerText?.Trim();
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(value) && enableLlmFallback && items.Count < 3)
+                {
+                    // Only use LLM fallback on first 3 items to avoid excessive API calls
+                    value = await TryExtractWithLlmAsync(context, itemHtml, field.Field);
+                }
+
+                item[field.Field] = string.IsNullOrWhiteSpace(value) ? null : HtmlEntity.DeEntitize(value);
+            }
+
+            // Auto-extract url from any link in the scope element if not already found
+            if (string.IsNullOrWhiteSpace(item.GetValueOrDefault("url")))
+            {
+                var autoLink = scopeNode.QuerySelector("a[href]");
+                if (autoLink is not null)
+                    item["url"] = autoLink.GetAttributeValue("href", null);
+            }
+
+            // Auto-extract text as title if not already found
+            if (string.IsNullOrWhiteSpace(item.GetValueOrDefault("title")))
+            {
+                var autoTitle = scopeNode.QuerySelector("h1, h2, h3, h4, a")?.InnerText?.Trim();
+                if (!string.IsNullOrWhiteSpace(autoTitle))
+                    item["title"] = HtmlEntity.DeEntitize(autoTitle);
+            }
+
+            // Skip items with no useful data
+            if (item.Values.All(v => string.IsNullOrWhiteSpace(v)))
+                continue;
+
+            items.Add(item);
+        }
+
+        context.Logger.LogInformation(
+            "ExtractSchemaBlock (list mode): Extracted {ItemCount} items with data out of {TotalNodes} scope matches",
+            items.Count, scopeNodes.Count);
+
+        var output = JsonSerializer.SerializeToElement(items);
+        return BlockResult.Succeeded(output);
+    }
+
+    private static (string? scope, IReadOnlyList<SchemaField>? schema, bool preferStructuredData, bool enableLlmFallback, bool listMode) ReadConfig(BlockContext context)
     {
         if (context.PipelineDefinition is not PipelineDefinition pipeline)
-            return (null, null, false, true);
+            return (null, null, false, true, false);
 
         var blockDef = pipeline.Blocks.FirstOrDefault(
             b => string.Equals(b.Id, context.BlockInstanceId, StringComparison.OrdinalIgnoreCase));
 
         if (blockDef?.Config is not { ValueKind: JsonValueKind.Object } config)
-            return (null, null, false, true);
+            return (null, null, false, true, false);
 
         string? scope = null;
         if (config.TryGetProperty("scope", out var scopeElem) && scopeElem.ValueKind == JsonValueKind.String)
@@ -141,6 +286,13 @@ public class ExtractSchemaBlock : IPipelineBlock
             enableLlmFallback = llmElem.GetBoolean();
         }
 
+        var listMode = false;
+        if (config.TryGetProperty("listMode", out var listModeElem) &&
+            (listModeElem.ValueKind is JsonValueKind.True or JsonValueKind.False))
+        {
+            listMode = listModeElem.GetBoolean();
+        }
+
         List<SchemaField>? fields = null;
         if (config.TryGetProperty("schema", out var schemaElem) && schemaElem.ValueKind == JsonValueKind.Array)
         {
@@ -157,7 +309,7 @@ public class ExtractSchemaBlock : IPipelineBlock
             }
         }
 
-        return (scope, fields, preferStructuredData, enableLlmFallback);
+        return (scope, fields, preferStructuredData, enableLlmFallback, listMode);
     }
 
     private record SchemaField(string Field, string Selector);

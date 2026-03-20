@@ -1,0 +1,7 @@
+{
+  "total": {"value": 2},
+  "hits": [
+    {"headline": "Scientist in Cell Biology", "workplace_address": {"municipality": "Lund"}, "application_details": {"url": "https://example.com/apply/1"}, "id": "abc123"},
+    {"headline": "Lab Manager", "workplace_address": {"municipality": "Malmö"}, "application_details": {"url": "https://example.com/apply/2"}, "id": "def456"}
+  ]
+}

@@ -7,7 +7,7 @@ namespace ChangeDetection.Services.Blocks.Decision;
 
 /// <summary>
 /// Sends a notification when the upstream condition signal is true.
-/// Currently logs the notification; real delivery via INotificationService comes in 1.10.
+/// Honors the configured channel when one is provided in the block configuration.
 /// </summary>
 public class NotifyBlock : IPipelineBlock
 {
@@ -69,7 +69,7 @@ public class NotifyBlock : IPipelineBlock
                     };
 
                     await notificationService.SendNotificationAsync(
-                        watch, changeEvent, summary, context.CancellationToken);
+                        watch, changeEvent, summary, channel, context.CancellationToken);
                 }
             }
         }
