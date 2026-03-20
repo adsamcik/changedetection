@@ -13,6 +13,11 @@ public class MultiProviderSearchService(
     ILogger<MultiProviderSearchService> logger)
 {
     /// <summary>
+    /// Returns true if at least one search provider is configured and available.
+    /// </summary>
+    public bool HasAvailableProviders() => providers.Any(p => p.IsAvailable);
+
+    /// <summary>
     /// Searches across all available providers (or specified subset) and merges results.
     /// </summary>
     /// <param name="query">The search query.</param>

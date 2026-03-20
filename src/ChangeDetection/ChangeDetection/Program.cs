@@ -8,7 +8,9 @@ using ChangeDetection.Hubs;
 using ChangeDetection.Services;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Background;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Content;
+using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Services.LLM;
 using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Services.Logging;
@@ -22,12 +24,10 @@ using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
-using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Search;
 using ChangeDetection.Services.Startup;
 using Microsoft.Extensions.Options;
 using ChangeDetection.Core.Pipeline.AutoHealing;
-using ChangeDetection.Services.Persistence;
 using ChangeDetection.Services.Persistence.Migrations;
 using Microsoft.AspNetCore.ResponseCompression;
 using OpenTelemetry.Logs;
@@ -148,12 +148,30 @@ builder.Services.AddHttpClient("GoogleCSE");
 // Named HttpClient for Brave Search API
 builder.Services.AddHttpClient("BraveSearch");
 builder.Services.AddHttpClient("NewsData");
+builder.Services.AddHttpClient("LlmSearchValidation")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = true,
+        MaxAutomaticRedirections = 3
+    });
 builder.Services.AddHttpClient("LightweightFetch")
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
     {
         AutomaticDecompression = System.Net.DecompressionMethods.GZip
             | System.Net.DecompressionMethods.Deflate
             | System.Net.DecompressionMethods.Brotli
+    });
+builder.Services.AddHttpClient("RuntimeSandbox")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = System.Net.DecompressionMethods.None
+    });
+builder.Services.AddHttpClient("HttpRequestBlock")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = System.Net.DecompressionMethods.None
     });
 
 // Add named HttpClient for Blazor prerendering with dynamic base address
@@ -212,6 +230,8 @@ builder.Services.AddScoped(sp =>
     new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<LiteDbContext>(), "notification_outbox"));
 builder.Services.AddScoped(sp =>
     new LiteDbRepository<TrackedItem>(sp.GetRequiredService<LiteDbContext>(), "tracked_listings"));
+builder.Services.AddScoped(sp =>
+    new LiteDbRepository<PortalSuggestionEntity>(sp.GetRequiredService<LiteDbContext>(), "portal_suggestions"));
 
 // Register tenant-scoped repository wrappers for owned entities
 builder.Services.AddScoped<IRepository<WatchedSite>>(sp => 
@@ -242,6 +262,10 @@ builder.Services.AddScoped<IRepository<TrackedItem>>(sp =>
     new TenantRepository<TrackedItem>(
         sp.GetRequiredService<LiteDbRepository<TrackedItem>>(),
         sp.GetRequiredService<IUserContext>()));
+builder.Services.AddScoped<IRepository<PortalSuggestionEntity>>(sp =>
+    new TenantRepository<PortalSuggestionEntity>(
+        sp.GetRequiredService<LiteDbRepository<PortalSuggestionEntity>>(),
+        sp.GetRequiredService<IUserContext>()));
 builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp => 
     new TenantRepository<NotificationOutboxEntry>(
         sp.GetRequiredService<LiteDbRepository<NotificationOutboxEntry>>(),
@@ -268,6 +292,8 @@ builder.Services.AddSingleton<PlaywrightFetcher>();
 builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<PlaywrightFetcher>());
 builder.Services.AddSingleton<ILlmLogService, LlmLogService>();
 builder.Services.AddSingleton<IRobotsTxtChecker, RobotsTxtChecker>();
+builder.Services.AddSingleton<ContentSanitizer>();
+builder.Services.AddScoped<PinnedHttpClient>();
 
 // LLM Kernel Factories for provider-specific kernel creation
 builder.Services.AddSingleton<ILlmKernelFactory, OllamaKernelFactory>();
@@ -286,6 +312,8 @@ builder.Services.AddScoped<IDiffService, DiffService>();
 builder.Services.AddScoped<IWatchService, ServerWatchService>();
 builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
 builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
+builder.Services.AddScoped<IPortalDiscoveryAnalyzer, PortalDiscoveryAnalyzer>();
+builder.Services.AddScoped<IPortalSuggestionService, PortalSuggestionService>();
 builder.Services.AddScoped<IAggregateSetupPipeline, AggregateSetupPipeline>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
@@ -303,15 +331,9 @@ builder.Services.AddScoped<IChangeAnalyzer, ChangeAnalyzer>();
 builder.Services.AddScoped<IProfileRelevanceScorer, JobMatchRelevanceScorer>();
 builder.Services.AddScoped<IContentEnricher, ContentEnricher>();
 builder.Services.AddScoped<IDeduplicationService, DeduplicationService>();
+builder.Services.AddScoped<IJobDeduplicationService, JobDeduplicationService>();
 
-// Watch setup pipeline stages and orchestrator
-builder.Services.AddScoped<UrlExtractionStage>();
-builder.Services.AddScoped<ContentFetchingStage>();
-builder.Services.AddScoped<ContentAnalysisStage>();
-builder.Services.AddScoped<SelectorGenerationStage>();
-builder.Services.AddScoped<SelectorValidationStage>();
-builder.Services.AddScoped<SchemaDiscoveryStage>();
-builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
+builder.Services.AddSingleton<SetupFlowEnhancements>();
 
 // Pipeline queue for persistent, concurrent pipeline execution
 builder.Services.AddSingleton<IPipelineQueueRepository, PipelineQueueRepository>();
@@ -331,6 +353,9 @@ builder.Services.AddHostedService<SetupSessionCleanupService>();
 
 // URL validation for SSRF protection
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
+builder.Services.AddSingleton<DomainPinValidator>();
+builder.Services.AddSingleton<PipelineSecurityValidator>();
+builder.Services.AddSingleton<PipelineAuditService>();
 
 // Search provider configuration
 builder.Services.Configure<SearchSettings>(builder.Configuration.GetSection("SearchSettings"));
@@ -367,11 +392,24 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var logger = sp.GetRequiredService<ILogger<NewsDataSearchProvider>>();
     return new NewsDataSearchProvider(httpClient, settings, logger);
 });
+// LLM-backed search — always available, validates every suggestion via HTTP HEAD
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var logger = sp.GetRequiredService<ILogger<LlmSearchProvider>>();
+    return new LlmSearchProvider(scopeFactory, httpClientFactory, logger);
+});
 builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
 builder.Services.AddSingleton<MultiProviderSearchService>();
 builder.Services.AddScoped<IQueryEvolutionService, QueryEvolutionService>();
 builder.Services.AddScoped<IRssDiscoveryService, RssDiscoveryService>();
 builder.Services.AddSingleton<AdversarialSearchAnalyzer>();
+
+// Group Watch discovery service
+builder.Services.Configure<GroupWatchDiscoveryOptions>(
+    builder.Configuration.GetSection("GroupWatchDiscovery"));
+builder.Services.AddScoped<IGroupWatchDiscoveryService, GroupWatchDiscoveryService>();
 
 // Composable pipeline block system
 builder.Services.AddSingleton<IBlockRegistry>(sp =>
@@ -385,10 +423,22 @@ builder.Services.AddSingleton<IPipelineTemplateRegistry, PipelineTemplateRegistr
 builder.Services.AddScoped<IPipelineValidator, PipelineValidator>();
 builder.Services.AddScoped<IPipelineExecutor, PipelineExecutor>();
 builder.Services.AddScoped<IBlockStateStore, LiteDbBlockStateStore>();
+builder.Services.AddSingleton<PipelineReliabilityService>();
 builder.Services.AddScoped<ILlmCostTracker, LlmCostTracker>();
+builder.Services.AddSingleton<PipelineDegradationService>();
 
 // Composable setup pipeline (LLM-driven pipeline assembly from natural language)
 builder.Services.AddScoped<IComposableSetupPipeline, ComposableSetupPipeline>();
+
+// Legacy setup pipeline + stages — kept for AggregateSetupPipeline, PipelineWorkerService, LlmEndpoints
+// Marked [Obsolete] in WatchSetupPipeline.cs. Will be fully removed when dependents are migrated.
+builder.Services.AddScoped<UrlExtractionStage>();
+builder.Services.AddScoped<ContentFetchingStage>();
+builder.Services.AddScoped<ContentAnalysisStage>();
+builder.Services.AddScoped<SelectorGenerationStage>();
+builder.Services.AddScoped<SelectorValidationStage>();
+builder.Services.AddScoped<SchemaDiscoveryStage>();
+builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
 
 // Object extraction and filtering services
 builder.Services.AddScoped<IObjectExtractionService, ObjectExtractionService>();
@@ -420,6 +470,7 @@ builder.Services.AddScoped<ThemeService>();
 
 // Database migrations (must run before any other hosted services)
 builder.Services.AddSingleton<IDatabaseMigration, V001_InitialSchema>();
+builder.Services.AddSingleton<IDatabaseMigration, V002_PortalSuggestions>();
 builder.Services.AddHostedService<DatabaseMigrationRunner>();
 
 // Startup/shutdown services (registered first so they stop last during shutdown)
@@ -535,15 +586,20 @@ app.MapGroup("/api/jobwatch")
     .RequireAuthenticationInSsoMode(builder.Configuration)
     .MapJobWatchEndpoints();
 
+// Catalog export/import for sharing verified portal configurations
+app.MapGroup("/api/catalog")
+    .RequireAuthenticationInSsoMode(builder.Configuration)
+    .MapCatalogEndpoints();
+
 // Map SignalR hub
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
     .RequireAuthenticationInSsoMode(builder.Configuration);
-app.MapHub<SetupConversationHub>("/hubs/setup")
-    .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<ComposableSetupHub>("/hubs/composable-setup")
-    .RequireAuthenticationInSsoMode(builder.Configuration);
+    .RequireAuthenticationInSsoMode(builder.Configuration);  // MODERN
 app.MapHub<AggregateSetupHub>("/hubs/aggregate-setup")
-    .RequireAuthenticationInSsoMode(builder.Configuration);
+    .RequireAuthenticationInSsoMode(builder.Configuration);  // MODERN
+app.MapHub<GroupWatchHub>("/hubs/group-watch")
+    .RequireAuthenticationInSsoMode(builder.Configuration);  // Group watch discovery
 
 // Configure static files with aggressive caching (assets are fingerprinted for cache-busting)
 app.UseStaticFiles(new StaticFileOptions

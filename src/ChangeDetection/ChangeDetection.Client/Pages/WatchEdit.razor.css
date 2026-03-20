@@ -30,6 +30,14 @@
     margin: 0;
 }
 
+.edit-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
 .loading-state {
     text-align: center;
     padding: 4rem 2rem;

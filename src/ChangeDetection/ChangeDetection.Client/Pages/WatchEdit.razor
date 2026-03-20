@@ -22,7 +22,13 @@
                 <span>Add Watch</span>
             }
         </div>
-        <h1>@(IsEditMode ? "Edit Watch" : "Add New Watch")</h1>
+        <div class="edit-header-row">
+            <h1>@(IsEditMode ? "Edit Watch" : "Add New Watch")</h1>
+            @if (IsEditMode)
+            {
+                <a href="/watches/@Id/pipeline" class="btn btn-outline btn-sm">View Pipeline</a>
+            }
+        </div>
     </header>
 
     @if (isLoading)
@@ -389,6 +395,11 @@
         if (IsEditMode)
         {
             await LoadWatch();
+        }
+        else
+        {
+            // /watches/new is deprecated — SmartInput on dashboard is the unified entry point
+            Navigation.NavigateTo("/", replace: true);
         }
     }
 

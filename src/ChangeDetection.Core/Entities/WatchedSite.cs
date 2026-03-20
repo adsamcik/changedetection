@@ -265,6 +265,40 @@ public class WatchedSite : IOwnedEntity
     /// Pipeline watches keep their latest Navigate HTML in the block state store.
     /// </summary>
     public string? LatestSuccessfulHtml { get; set; }
+
+    // ========== Catalog Verification Tracking ==========
+
+    /// <summary>
+    /// Number of consecutive successful pipeline checks (reset to 0 on failure).
+    /// Used to promote watches to <see cref="CatalogVerificationStatus.Verified"/>.
+    /// </summary>
+    public int ConsecutiveSuccessfulChecks { get; set; }
+
+    /// <summary>
+    /// Lifetime count of successful pipeline checks.
+    /// </summary>
+    public int TotalSuccessfulChecks { get; set; }
+
+    /// <summary>
+    /// Lifetime count of failed pipeline checks.
+    /// </summary>
+    public int TotalFailedChecks { get; set; }
+
+    /// <summary>
+    /// Cumulative count of items extracted across all successful checks.
+    /// </summary>
+    public int TotalItemsExtracted { get; set; }
+
+    /// <summary>
+    /// Catalog verification status used by GroupWatchDiscoveryService to rank entries.
+    /// Verified watches appear before unverified ones; failed watches are excluded.
+    /// </summary>
+    public CatalogVerificationStatus CatalogStatus { get; set; } = CatalogVerificationStatus.Unverified;
+
+    /// <summary>
+    /// When the last successful pipeline check completed.
+    /// </summary>
+    public DateTime? LastSuccessfulCheckAt { get; set; }
 }
 
 /// <summary>
@@ -387,4 +421,23 @@ public enum WatchStatus
     Paused,
     Checking,
     Error
+}
+
+/// <summary>
+/// Tracks how reliable a watch is for use as a catalog entry in GroupWatchDiscoveryService.
+/// Watches progress: Unverified → Verified → Degraded/Failed based on check outcomes.
+/// </summary>
+public enum CatalogVerificationStatus
+{
+    /// <summary>New watch, not enough data to determine reliability.</summary>
+    Unverified,
+
+    /// <summary>3+ consecutive successes with items extracted — trusted catalog entry.</summary>
+    Verified,
+
+    /// <summary>Was previously verified but has started failing — still included but lower confidence.</summary>
+    Degraded,
+
+    /// <summary>5+ total failures without achieving verified status — excluded from catalog.</summary>
+    Failed
 }

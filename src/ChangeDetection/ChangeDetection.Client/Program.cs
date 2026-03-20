@@ -1,7 +1,17 @@
 using ChangeDetection.Client;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
+
+// Configure shared JSON serializer options with string enum support
+var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+{
+    PropertyNameCaseInsensitive = true,
+};
+jsonOptions.Converters.Add(new JsonStringEnumConverter());
+builder.Services.AddSingleton(jsonOptions);
 
 // Configure HttpClient to use the server base address
 builder.Services.AddScoped(sp => new HttpClient 

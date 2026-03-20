@@ -49,6 +49,7 @@
                     <button class="btn btn-outline" @onclick="ToggleEnabled">
                         @(watch.IsEnabled ? "Pause" : "Resume")
                     </button>
+                    <a href="/watches/@Id/pipeline" class="btn btn-outline">View Pipeline</a>
                     <a href="/watches/@Id/edit" class="btn btn-outline">Edit</a>
                     <button class="btn btn-danger" @onclick="ShowDeleteConfirm">Delete</button>
                 </div>

@@ -138,7 +138,10 @@
                 </div>
                 @foreach (var group in watchGroups)
                 {
-                    <WatchGroupCard Group="group" Detail="@expandedGroupDetails.GetValueOrDefault(group.Id)" OnExpandToggled="OnGroupExpanded" />
+                    <WatchGroupCard Group="group"
+                                    Detail="@expandedGroupDetails.GetValueOrDefault(group.Id)"
+                                    Health="@expandedGroupHealth.GetValueOrDefault(group.Id)"
+                                    OnExpandToggled="OnGroupExpanded" />
                 }
             </div>
         }
@@ -623,6 +626,7 @@
     private List<PendingSetupDto> pendingSetups = [];
     private List<WatchGroupListItemDto> watchGroups = [];
     private Dictionary<string, WatchGroupDetailDto> expandedGroupDetails = [];
+    private Dictionary<string, WatchGroupHealthDto> expandedGroupHealth = [];
     private Dictionary<string, ProcessingActivity> activeProcessing = [];
     private bool isLoading = true;
     private string? error;
@@ -1136,15 +1140,25 @@
 
     private async Task OnGroupExpanded(string groupId)
     {
-        if (expandedGroupDetails.ContainsKey(groupId)) return;
+        if (expandedGroupDetails.ContainsKey(groupId) && expandedGroupHealth.ContainsKey(groupId)) return;
         try
         {
-            var detail = await Http.GetFromJsonAsync<WatchGroupDetailDto>($"/api/groups/{groupId}");
+            var detailTask = Http.GetFromJsonAsync<WatchGroupDetailDto>($"/api/groups/{groupId}");
+            var healthTask = Http.GetFromJsonAsync<WatchGroupHealthDto>($"/api/groups/{groupId}/health");
+            await Task.WhenAll(detailTask!, healthTask!);
+            var detail = await detailTask!;
+            var health = await healthTask!;
             if (detail != null)
             {
                 expandedGroupDetails[groupId] = detail;
-                StateHasChanged();
             }
+
+            if (health != null)
+            {
+                expandedGroupHealth[groupId] = health;
+            }
+
+            StateHasChanged();
         }
         catch
         {

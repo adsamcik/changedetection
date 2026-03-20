@@ -1080,6 +1080,7 @@ public class BulkOperationResultDto
 /// <summary>
 /// How a watch acquires its content.
 /// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum SourceTypeDto
 {
     Url = 0,

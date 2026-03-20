@@ -1,0 +1,391 @@
+@page "/watches/{WatchId:guid}/pipeline"
+@rendermode InteractiveAuto
+@inject HttpClient Http
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using ChangeDetection.Shared.Dtos
+
+<PageTitle>@(pipeline?.WatchName ?? "Pipeline Editor") - Change Detection</PageTitle>
+
+<div class="pipeline-editor">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading pipeline...</span>
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="alert alert-error">@errorMessage</div>
+    }
+    else if (pipeline is null)
+    {
+        <div class="empty-state">
+            <h2>Pipeline not found</h2>
+            <a href="/watches/@WatchId" class="btn btn-outline">Back to watch</a>
+        </div>
+    }
+    else
+    {
+        <header class="page-header">
+            <div>
+                <div class="breadcrumb">
+                    <a href="/">Dashboard</a>
+                    <span>/</span>
+                    <a href="/watches/@WatchId">@pipeline.WatchName</a>
+                    <span>/</span>
+                    <span>Pipeline</span>
+                </div>
+                <h1>⚙️ Pipeline Editor</h1>
+                <p class="subtitle">@pipeline.WatchName · @pipeline.WatchUrl</p>
+            </div>
+            <div class="header-actions">
+                <a href="/watches/@WatchId" class="btn btn-outline">Back to watch</a>
+                <button type="button" class="btn btn-outline" @onclick="ToggleEditMode">
+                    @(isEditMode ? "Exit Edit Mode" : "Edit Mode")
+                </button>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-label">Blocks</span>
+                <strong>@pipeline.BlockCount</strong>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Estimated execution</span>
+                <strong>@FormatDuration(pipeline.EstimatedExecutionTimeMs)</strong>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Last run status</span>
+                <strong>@pipeline.LastRunStatus</strong>
+                @if (pipeline.LastChecked.HasValue)
+                {
+                    <span class="stat-meta">@pipeline.LastChecked.Value.ToString("g")</span>
+                }
+            </div>
+            <div class="stat-card stat-link-card">
+                <span class="stat-label">Automation</span>
+                <a href="@pipeline.RebuildWithAiUrl" class="text-link">Rebuild with AI →</a>
+            </div>
+        </div>
+
+        @if (!pipeline.HasPipeline)
+        {
+            <div class="empty-state">
+                <h2>No pipeline saved yet</h2>
+                <p>This watch does not have a stored pipeline definition.</p>
+                <a href="@pipeline.RebuildWithAiUrl" class="btn btn-primary">Rebuild with AI</a>
+            </div>
+        }
+        else
+        {
+            @if (!pipeline.IsPipelineValid || pipeline.ValidationWarnings.Count > 0)
+            {
+                <div class="validation-panel">
+                    @if (!pipeline.IsPipelineValid)
+                    {
+                        <div class="validation-block validation-error">
+                            <strong>Validation errors</strong>
+                            <ul>
+                                @foreach (var validationError in pipeline.ValidationErrors)
+                                {
+                                    <li>@validationError</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    @if (pipeline.ValidationWarnings.Count > 0)
+                    {
+                        <div class="validation-block validation-warning">
+                            <strong>Warnings</strong>
+                            <ul>
+                                @foreach (var warning in pipeline.ValidationWarnings)
+                                {
+                                    <li>@warning</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (isEditMode)
+            {
+                <div class="alert alert-warning">
+                    ⚠️ Advanced — incorrect changes may break monitoring
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(successMessage))
+            {
+                <div class="alert alert-success">@successMessage</div>
+            }
+
+            <div class="editor-layout">
+                <section class="pipeline-visualization">
+                    <h2>Pipeline flow</h2>
+                    <div class="pipeline-stack">
+                        @for (var index = 0; index < orderedBlocks.Count; index++)
+                        {
+                            var block = orderedBlocks[index];
+                            <article class="pipeline-card category-@block.Category @(selectedBlockId == block.Id ? "selected" : null)"
+                                     @onclick="() => SelectBlock(block.Id)">
+                                <div class="pipeline-card-header">
+                                    <span class="pipeline-icon">@block.Icon</span>
+                                    <div>
+                                        <div class="pipeline-type">@block.Type</div>
+                                        <div class="pipeline-id">@block.Id</div>
+                                    </div>
+                                </div>
+                                <dl class="config-preview">
+                                    @if (block.KeyConfigValues.Count == 0)
+                                    {
+                                        <div class="config-empty">No key config values</div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var pair in block.KeyConfigValues)
+                                        {
+                                            <div class="config-row">
+                                                <dt>@pair.Key</dt>
+                                                <dd>@pair.Value</dd>
+                                            </div>
+                                        }
+                                    }
+                                </dl>
+                            </article>
+
+                            @if (index < orderedBlocks.Count - 1)
+                            {
+                                <div class="pipeline-arrow">
+                                    <span>↓</span>
+                                    @foreach (var connection in GetConnectionsFrom(block.Id))
+                                    {
+                                        <small>@connection.FromPort → @connection.ToPort</small>
+                                    }
+                                </div>
+                            }
+                        }
+                    </div>
+                </section>
+
+                <section class="config-panel">
+                    <h2>Block config</h2>
+                    @if (!isEditMode)
+                    {
+                        <p class="panel-hint">Enable edit mode and click a block to inspect its config JSON.</p>
+                    }
+                    else if (selectedBlock is null)
+                    {
+                        <p class="panel-hint">Select a block card to edit its config JSON.</p>
+                    }
+                    else
+                    {
+                        <div class="selected-block-header">
+                            <div>
+                                <strong>@selectedBlock.Type</strong>
+                                <span>@selectedBlock.Id</span>
+                            </div>
+                            <span class="category-tag category-@selectedBlock.Category">@selectedBlock.Category</span>
+                        </div>
+
+                        <textarea class="code-editor"
+                                  @bind="editorJson"
+                                  @bind:event="oninput"
+                                  spellcheck="false"></textarea>
+
+                        <div class="editor-actions">
+                            <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@isSaving">
+                                @(isSaving ? "Saving..." : "Save")
+                            </button>
+                            <button type="button" class="btn btn-outline" @onclick="ResetEditor" disabled="@isSaving">Reset</button>
+                        </div>
+                    }
+                </section>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid WatchId { get; set; }
+
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool isEditMode;
+    private string? errorMessage;
+    private string? successMessage;
+    private WatchPipelineDto? pipeline;
+    private List<WatchPipelineBlockDto> orderedBlocks = [];
+    private string savedPipelineJson = "";
+    private string workingPipelineJson = "";
+    private string editorJson = "{}";
+    private string? selectedBlockId;
+
+    private WatchPipelineBlockDto? selectedBlock =>
+        orderedBlocks.FirstOrDefault(block => string.Equals(block.Id, selectedBlockId, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() => await LoadPipelineAsync();
+
+    private async Task LoadPipelineAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            pipeline = await Http.GetFromJsonAsync<WatchPipelineDto>($"/api/watches/{WatchId}/pipeline");
+            orderedBlocks = pipeline?.Blocks.OrderBy(block => block.ExecutionOrder).ToList() ?? [];
+            savedPipelineJson = pipeline?.PipelineJson ?? "";
+            workingPipelineJson = savedPipelineJson;
+            selectedBlockId = orderedBlocks.FirstOrDefault()?.Id;
+            editorJson = GetBlockConfigJson(selectedBlockId, workingPipelineJson);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load pipeline: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleEditMode()
+    {
+        errorMessage = null;
+        successMessage = null;
+        isEditMode = !isEditMode;
+
+        if (!isEditMode)
+            ResetEditor();
+    }
+
+    private void SelectBlock(string blockId)
+    {
+        if (!isEditMode)
+            return;
+
+        if (!TryPersistSelectedBlockConfig())
+            return;
+
+        selectedBlockId = blockId;
+        editorJson = GetBlockConfigJson(selectedBlockId, workingPipelineJson);
+        successMessage = null;
+    }
+
+    private bool TryPersistSelectedBlockConfig()
+    {
+        if (string.IsNullOrWhiteSpace(selectedBlockId))
+            return true;
+
+        try
+        {
+            workingPipelineJson = UpdateBlockConfig(workingPipelineJson, selectedBlockId, editorJson);
+            errorMessage = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Config JSON is invalid: {ex.Message}";
+            return false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!TryPersistSelectedBlockConfig())
+            return;
+
+        isSaving = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            using var content = new StringContent(workingPipelineJson);
+            content.Headers.ContentType = new("application/json");
+
+            var response = await Http.PutAsync($"/api/watches/{WatchId}/pipeline", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                errorMessage = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            successMessage = "Pipeline saved.";
+            await LoadPipelineAsync();
+            isEditMode = false;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to save pipeline: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void ResetEditor()
+    {
+        workingPipelineJson = savedPipelineJson;
+        selectedBlockId = orderedBlocks.FirstOrDefault()?.Id;
+        editorJson = GetBlockConfigJson(selectedBlockId, workingPipelineJson);
+        errorMessage = null;
+        successMessage = null;
+    }
+
+    private IEnumerable<WatchPipelineConnectionDto> GetConnectionsFrom(string blockId) =>
+        pipeline?.Connections.Where(connection => string.Equals(connection.FromBlockId, blockId, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<WatchPipelineConnectionDto>();
+
+    private static string GetBlockConfigJson(string? blockId, string pipelineJson)
+    {
+        if (string.IsNullOrWhiteSpace(blockId) || string.IsNullOrWhiteSpace(pipelineJson))
+            return "{}";
+
+        var root = JsonNode.Parse(pipelineJson)?.AsObject();
+        var blocks = root?["blocks"]?.AsArray();
+        var block = blocks?
+            .Select(node => node?.AsObject())
+            .FirstOrDefault(node => string.Equals(node?["id"]?.GetValue<string>(), blockId, StringComparison.OrdinalIgnoreCase));
+
+        return block?["config"]?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? "{}";
+    }
+
+    private static string UpdateBlockConfig(string pipelineJson, string blockId, string configJson)
+    {
+        var root = JsonNode.Parse(pipelineJson)?.AsObject()
+            ?? throw new InvalidOperationException("Pipeline JSON is invalid.");
+        var blocks = root["blocks"]?.AsArray()
+            ?? throw new InvalidOperationException("Pipeline JSON does not contain a blocks array.");
+
+        var block = blocks
+            .Select(node => node?.AsObject())
+            .FirstOrDefault(node => string.Equals(node?["id"]?.GetValue<string>(), blockId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("Selected block was not found.");
+
+        block["config"] = JsonNode.Parse(configJson)
+            ?? throw new InvalidOperationException("Config JSON is invalid.");
+
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string FormatDuration(double milliseconds)
+    {
+        var duration = TimeSpan.FromMilliseconds(milliseconds);
+
+        if (duration.TotalSeconds < 1)
+            return $"{milliseconds:F0} ms";
+
+        if (duration.TotalMinutes < 1)
+            return $"{duration.TotalSeconds:F1} s";
+
+        return $"{duration.TotalMinutes:F1} min";
+    }
+}

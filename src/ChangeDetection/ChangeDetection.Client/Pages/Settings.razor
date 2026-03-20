@@ -447,50 +447,157 @@
                  role="tabpanel"
                  aria-labelledby="tab-notifications"
                  class="settings-section @GetSectionDimmedClass("notifications")"
-                 @oninput="MarkNotificationsDirty">
+                  @oninput="MarkNotificationsDirty">
             <h2>Notification Settings</h2>
             <p class="section-description">Configure how you want to be notified when changes are detected.</p>
 
-            <div class="form-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" @bind="emailEnabled" @bind:after="MarkNotificationsDirty" />
-                    <span>Enable email notifications</span>
-                </label>
-            </div>
-
-            @if (emailEnabled)
+            @if (isLoadingNotifications)
             {
-                <div class="form-group">
-                    <label for="smtpHost">SMTP Host</label>
-                    <input type="text" id="smtpHost" @bind="smtpHost" class="form-control" placeholder="smtp.example.com" />
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="smtpPort">SMTP Port</label>
-                        <input type="number" id="smtpPort" @bind="smtpPort" class="form-control" />
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" @bind="smtpUseSsl" @bind:after="MarkNotificationsDirty" />
-                            <span>Use SSL/TLS</span>
-                        </label>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="smtpUsername">SMTP Username</label>
-                    <input type="text" id="smtpUsername" @bind="smtpUsername" class="form-control" />
-                </div>
-                <div class="form-group">
-                    <label for="smtpPassword">SMTP Password</label>
-                    <input type="password" id="smtpPassword" @bind="smtpPassword" class="form-control" />
-                </div>
-                <div class="form-group">
-                    <label for="fromEmail">From Email Address</label>
-                    <input type="email" id="fromEmail" @bind="fromEmail" class="form-control" placeholder="noreply@example.com" />
+                <div class="loading-state">
+                    <div class="spinner"></div>
                 </div>
             }
+            else
+            {
+                @if (!string.IsNullOrEmpty(notificationMessage))
+                {
+                    <div class="@(notificationSuccess ? "success-message" : "error-message")">@notificationMessage</div>
+                }
 
-            <button class="btn btn-primary" @onclick="SaveNotificationSettings">Save Notification Settings</button>
+                <div class="settings-card">
+                    <h3>Notification Channels</h3>
+                    <p class="card-description">Set the default destinations used by pipeline Notify blocks and watches without custom notification targets.</p>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" @bind="notificationChannels.EmailEnabled" @bind:after="MarkNotificationsDirty" />
+                                <span>Email</span>
+                            </label>
+                            <input type="email" @bind="notificationChannels.EmailAddress" class="form-control" placeholder="alerts@example.com" />
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-outline"
+                                    type="button"
+                                    disabled="@(!notificationChannels.EmailEnabled || string.IsNullOrWhiteSpace(notificationChannels.EmailAddress))"
+                                    @onclick='() => TestNotificationChannel("Email", notificationChannels.EmailAddress)'>
+                                Test Email
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" @bind="notificationChannels.DiscordEnabled" @bind:after="MarkNotificationsDirty" />
+                                <span>Discord webhook</span>
+                            </label>
+                            <input type="url" @bind="notificationChannels.DiscordWebhookUrl" class="form-control" placeholder="https://discord.com/api/webhooks/..." />
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-outline"
+                                    type="button"
+                                    disabled="@(!notificationChannels.DiscordEnabled || string.IsNullOrWhiteSpace(notificationChannels.DiscordWebhookUrl))"
+                                    @onclick='() => TestNotificationChannel("Discord", notificationChannels.DiscordWebhookUrl)'>
+                                Test Discord
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" @bind="notificationChannels.WebhookEnabled" @bind:after="MarkNotificationsDirty" />
+                                <span>Generic webhook</span>
+                            </label>
+                            <input type="url" @bind="notificationChannels.WebhookUrl" class="form-control" placeholder="https://hooks.example.com/notify" />
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-outline"
+                                    type="button"
+                                    disabled="@(!notificationChannels.WebhookEnabled || string.IsNullOrWhiteSpace(notificationChannels.WebhookUrl))"
+                                    @onclick='() => TestNotificationChannel("Webhook", notificationChannels.WebhookUrl)'>
+                                Test Webhook
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="notificationChannels.BrowserEnabled" @bind:after="MarkNotificationsDirty" />
+                            <span>Browser (stored as preferred channel; server delivery is currently preview-only)</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="defaultChannel">Default pipeline channel</label>
+                        <select id="defaultChannel" class="form-control" @bind="notificationChannels.DefaultChannelName">
+                            <option value="">Send to all enabled channels</option>
+                            @foreach (var channel in AvailableNotificationChannels)
+                            {
+                                <option value="@channel.Value">@channel.Label</option>
+                            }
+                        </select>
+                        <p class="form-hint">NotifyBlock instances without an explicit channel use this selection.</p>
+                    </div>
+
+                    <button class="btn btn-primary" @onclick="SaveNotificationChannels" disabled="@isSavingNotifications">
+                        @if (isSavingNotifications)
+                        {
+                            <span class="spinner-small"></span>
+                        }
+                        Save Channel Settings
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <h3>SMTP Delivery</h3>
+                    <p class="card-description">Configure the SMTP server used for email notifications.</p>
+
+                    <div class="form-group">
+                        <label for="smtpHost">SMTP Host</label>
+                        <input type="text" id="smtpHost" @bind="smtpHost" class="form-control" placeholder="smtp.example.com" />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtpPort">SMTP Port</label>
+                            <input type="number" id="smtpPort" @bind="smtpPort" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" @bind="smtpUseSsl" @bind:after="MarkNotificationsDirty" />
+                                <span>Use SSL/TLS</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="smtpUsername">SMTP Username</label>
+                        <input type="text" id="smtpUsername" @bind="smtpUsername" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label for="smtpPassword">SMTP Password</label>
+                        <input type="password" id="smtpPassword" @bind="smtpPassword" class="form-control" />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="fromEmail">From Email Address</label>
+                            <input type="email" id="fromEmail" @bind="fromEmail" class="form-control" placeholder="noreply@example.com" />
+                        </div>
+                        <div class="form-group">
+                            <label for="fromName">From Name</label>
+                            <input type="text" id="fromName" @bind="fromName" class="form-control" placeholder="Change Detection" />
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" @onclick="SaveSmtpSettings" disabled="@isSavingNotifications">
+                        @if (isSavingNotifications)
+                        {
+                            <span class="spinner-small"></span>
+                        }
+                        Save SMTP Settings
+                    </button>
+                </div>
+            }
         </section>
     }
     else if (activeTab == "general")
@@ -757,6 +864,7 @@
     private bool isSavingNotifications = false;
     private string? notificationMessage;
     private bool notificationSuccess = false;
+    private NotificationChannelSettingsDto notificationChannels = new();
     private List<PlaceholderInfoDto> placeholders = new();
     private string notificationSubTab = "smtp";
     private bool isNotificationsDirty = false;
@@ -864,6 +972,21 @@
 
     // Valid tab values for localStorage validation
     private static readonly HashSet<string> ValidTabs = ["providers", "logs", "notifications", "general"];
+
+    private IEnumerable<(string Value, string Label)> AvailableNotificationChannels
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(notificationChannels.EmailAddress))
+                yield return ("email", "Email");
+            if (!string.IsNullOrWhiteSpace(notificationChannels.DiscordWebhookUrl))
+                yield return ("discord", "Discord");
+            if (!string.IsNullOrWhiteSpace(notificationChannels.WebhookUrl))
+                yield return ("webhook", "Webhook");
+            if (notificationChannels.BrowserEnabled)
+                yield return ("browser", "Browser");
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -1121,8 +1244,7 @@
 
     private async Task SaveNotificationSettings()
     {
-        // Legacy method - now uses SaveSmtpSettings
-        await SaveSmtpSettings();
+        await SaveNotificationChannels();
     }
 
     // ========== Notification Methods ==========
@@ -1149,6 +1271,17 @@
         
         try
         {
+            var notificationResponse = await Http.GetAsync("/api/settings/notifications");
+            if (notificationResponse.IsSuccessStatusCode)
+            {
+                var settings = await notificationResponse.Content.ReadFromJsonAsync<NotificationChannelSettingsDto>();
+                if (settings != null)
+                {
+                    notificationChannels = settings;
+                    emailEnabled = settings.EmailEnabled;
+                }
+            }
+
             var response = await Http.GetAsync("/api/notifications/smtp");
             if (response.IsSuccessStatusCode)
             {
@@ -1172,6 +1305,53 @@
         finally
         {
             isLoadingNotifications = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveNotificationChannels()
+    {
+        isSavingNotifications = true;
+        notificationMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(notificationChannels.DefaultChannelName)
+                && AvailableNotificationChannels.All(c => c.Value != notificationChannels.DefaultChannelName))
+            {
+                notificationChannels.DefaultChannelName = null;
+            }
+
+            var response = await Http.PutAsJsonAsync("/api/settings/notifications", notificationChannels);
+            if (response.IsSuccessStatusCode)
+            {
+                var saved = await response.Content.ReadFromJsonAsync<NotificationChannelSettingsDto>();
+                if (saved != null)
+                {
+                    notificationChannels = saved;
+                    emailEnabled = saved.EmailEnabled;
+                }
+
+                notificationMessage = "Notification channel settings saved successfully!";
+                notificationSuccess = true;
+                isNotificationsDirty = false;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                notificationMessage = $"Failed to save notification channels: {error}";
+                notificationSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Failed to save notification channels: {ex.Message}";
+            notificationSuccess = false;
+        }
+        finally
+        {
+            isSavingNotifications = false;
             StateHasChanged();
         }
     }
@@ -1224,9 +1404,14 @@
 
     private async Task TestEmailNotification()
     {
-        if (string.IsNullOrWhiteSpace(fromEmail))
+        await TestNotificationChannel("Email", fromEmail);
+    }
+
+    private async Task TestNotificationChannel(string channelType, string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
         {
-            notificationMessage = "Please enter a 'From Email Address' to send a test email.";
+            notificationMessage = $"Please enter a target value for {channelType} notifications.";
             notificationSuccess = false;
             return;
         }
@@ -1234,18 +1419,18 @@
         isSavingNotifications = true;
         notificationMessage = null;
         StateHasChanged();
-        
+
         try
         {
             var testDto = new TestNotificationDto
             {
-                ChannelType = "Email",
-                Target = fromEmail
+                ChannelType = channelType,
+                Target = target
             };
-            
+
             var response = await Http.PostAsJsonAsync("/api/notifications/test", testDto);
             var result = await response.Content.ReadFromJsonAsync<TestNotificationResultDto>();
-            
+
             if (result?.Success == true)
             {
                 notificationMessage = result.Details ?? "Test notification validated successfully!";
