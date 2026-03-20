@@ -148,7 +148,14 @@ public class GroupWatchDiscoveryService(
             try
             {
                 var searchQueries = BuildSearchQueries(parsedIntent, userInput);
-                additionalPortals = await SearchForAdditionalPortalsAsync(searchQueries, ct);
+                // Timeout web search augmentation — LLM catalog results are sufficient if search is slow
+                using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                searchCts.CancelAfter(TimeSpan.FromSeconds(20));
+                additionalPortals = await SearchForAdditionalPortalsAsync(searchQueries, searchCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                logger.LogInformation("Web search augmentation timed out after 20s, continuing with catalog results");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -307,7 +314,16 @@ public class GroupWatchDiscoveryService(
         for (var i = 0; i < portals.Count; i++)
         {
             var portal = portals[i];
-            
+
+            // Signal that we're starting this portal so the UI updates immediately
+            yield return CreateProgress(
+                GroupWatchPhase.CreatingWatches,
+                $"Setting up {portal.Domain}...",
+                completedCount: i,
+                totalCount: portals.Count,
+                groupId: group.Id,
+                watchIds: [.. watchIds]);
+
             // Validate URL before attempting watch creation
             UrlValidationResult? validation = null;
             try
@@ -330,7 +346,7 @@ public class GroupWatchDiscoveryService(
 
                 yield return CreateProgress(
                     GroupWatchPhase.CreatingWatches,
-                    $"Skipped {portal.Domain}: {validation.Reason ?? "URL validation failed"}",
+                    $"⚠️ Skipped {portal.Domain}: {validation.Reason ?? "URL validation failed"}",
                     completedCount: i + 1,
                     totalCount: portals.Count,
                     groupId: group.Id,
@@ -338,17 +354,32 @@ public class GroupWatchDiscoveryService(
                 continue;
             }
 
-            // Build pipeline and create watch
+            // Build pipeline (with per-portal timeout) and create watch
             GroupWatchProgress? watchProgress = null;
             try
             {
-                var pipeline = await BuildPipelineForPortalAsync(
-                    portal,
-                    userInput,
-                    parsedIntent,
-                    positiveKeywords,
-                    negativeKeywords,
-                    ct);
+                PipelineDefinition? pipeline = null;
+
+                using var portalTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                portalTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+
+                try
+                {
+                    pipeline = await BuildPipelineForPortalAsync(
+                        portal,
+                        userInput,
+                        parsedIntent,
+                        positiveKeywords,
+                        negativeKeywords,
+                        portalTimeout.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    logger.LogWarning(
+                        "Pipeline building timed out for {PortalUrl} — creating watch without pipeline for lazy generation",
+                        portal.Url);
+                    pipeline = null;
+                }
 
                 var watchId = await CreateWatchForPortalAsync(
                     portal,
@@ -360,15 +391,17 @@ public class GroupWatchDiscoveryService(
 
                 watchIds.Add(watchId);
 
+                var pipelineNote = pipeline is not null ? "" : " (pipeline will build on first check)";
                 logger.LogInformation(
-                    "Created watch {WatchId} for portal {PortalUrl} in group {GroupId}",
+                    "Created watch {WatchId} for portal {PortalUrl} in group {GroupId}{Note}",
                     watchId,
                     portal.Url,
-                    group.Id);
+                    group.Id,
+                    pipelineNote);
 
                 watchProgress = CreateProgress(
                     GroupWatchPhase.CreatingWatches,
-                    $"Created watch {i + 1}/{portals.Count}: {portal.Domain}",
+                    $"✅ Created watch {i + 1}/{portals.Count}: {portal.Domain}{pipelineNote}",
                     completedCount: i + 1,
                     totalCount: portals.Count,
                     groupId: group.Id,
@@ -379,7 +412,7 @@ public class GroupWatchDiscoveryService(
                 logger.LogError(ex, "Failed to create watch for portal {PortalUrl}", portal.Url);
                 watchProgress = CreateProgress(
                     GroupWatchPhase.CreatingWatches,
-                    $"Skipped {portal.Domain}: {ex.Message}",
+                    $"⚠️ Failed {portal.Domain}: {ex.Message}",
                     completedCount: i + 1,
                     totalCount: portals.Count,
                     groupId: group.Id,
@@ -428,20 +461,22 @@ public class GroupWatchDiscoveryService(
             VERIFIED PORTAL CATALOG (these URLs are confirmed real and working):
             {{catalogSummary}}
 
-            Your tasks:
-            1. Parse the user's intent into location, roleTypes, and field
-            2. Select the catalog entries (by index number) that match the user's intent
-            3. Explain WHY each selected portal is relevant
+             Your tasks:
+             1. Parse the user's intent into location, roleTypes, and field
+             2. Select the catalog entries (by index number) that match the user's intent
+             3. Explain WHY each selected portal is relevant
 
             CRITICAL RULES:
             - You may ONLY select portals from the catalog above using their [index] number
-            - Do NOT invent, modify, or guess any URLs
-            - Select portals where the location keywords overlap with the user's requested location
-            - Prefer portals tagged for the user's field/domain
-            - Include general job boards for the region (e.g. Jobindex for Denmark, Jobs.cz for Czech Republic)
+             - Do NOT invent, modify, or guess any URLs
+             - Select portals where the location keywords overlap with the user's requested location
+             - Prefer portals tagged for the user's field/domain
+             - Include general job boards for the region (e.g. Jobindex for Denmark, Jobs.cz for Czech Republic)
+             - Also include matching company ATS portals (especially Workday and Teamtailor) when their location keywords match; do not return only generic job boards
+             - For Denmark/Copenhagen requests, prefer a mix of Jobindex plus relevant Copenhagen/Denmark company portals from the catalog
 
-            Return JSON:
-            {
+             Return JSON:
+             {
               "location": "parsed location",
               "roleTypes": ["parsed role 1"],
               "field": "parsed field",
@@ -681,11 +716,14 @@ public class GroupWatchDiscoveryService(
     {
         var candidates = new[]
         {
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "tools", "job-scanner", "sites.json"),
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "job-scanner", "sites.json"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "Proton Drive", "adsamcik", "My files", "Sdílnice", "Marťa Práce", "tools", "job-scanner", "sites.json")
         };
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates
+            .Select(Path.GetFullPath)
+            .FirstOrDefault(File.Exists);
     }
 
     private async Task<List<DiscoveredPortal>> SearchForAdditionalPortalsAsync(List<string> searchQueries, CancellationToken ct)
@@ -860,7 +898,7 @@ public class GroupWatchDiscoveryService(
             .ToList();
     }
 
-    private async Task<PipelineDefinition> BuildPipelineForPortalAsync(
+    private async Task<PipelineDefinition?> BuildPipelineForPortalAsync(
         DiscoveredPortal portal,
         string userInput,
         StructuredDiscoveryIntent parsedIntent,
@@ -892,8 +930,101 @@ public class GroupWatchDiscoveryService(
             return CustomizeTemplatePipeline(template, portal, parsedIntent);
         }
 
-        logger.LogInformation("Using composable setup flow to build pipeline for unknown portal {Url}", portal.Url);
-        return await BuildPipelineWithComposableFlowAsync(portal, userInput, positiveKeywords, negativeKeywords, ct);
+        // Unknown platform — use a generic job listing pipeline that extracts
+        // clickable links from any career page via CSS (no LLM, no delay).
+        logger.LogInformation(
+            "Unknown platform for {Url} — using generic job listing pipeline",
+            portal.Url);
+        return CreateGenericJobListingPipeline(portal.Url);
+    }
+
+    /// <summary>
+    /// Creates a generic job listing pipeline for career pages without a known platform template.
+    /// Uses broad CSS selectors to extract clickable links with titles from any page — no LLM needed.
+    /// </summary>
+    private static PipelineDefinition CreateGenericJobListingPipeline(string url)
+    {
+        var blocks = new List<BlockDefinition>
+        {
+            new()
+            {
+                Id = "input-1",
+                Type = "Input",
+                Position = 0,
+                Config = JsonSerializer.SerializeToElement(new { url })
+            },
+            new()
+            {
+                Id = "navigate-1",
+                Type = "Navigate",
+                Position = 1,
+                Config = JsonSerializer.SerializeToElement(new
+                {
+                    useJavaScript = true,
+                    waitForSelector = "a[href]",
+                    timeout = 30000
+                })
+            },
+            new()
+            {
+                Id = "extractschema-1",
+                Type = "ExtractSchema",
+                Position = 2,
+                Config = JsonSerializer.SerializeToElement(new
+                {
+                    scope = "main a[href], article a[href], .jobs a[href], ul a[href], li a[href]",
+                    listMode = true,
+                    schema = new object[]
+                    {
+                        new { field = "title", selector = "*" },
+                        new { field = "url", selector = "a[href]" }
+                    },
+                    enableLlmFallback = false
+                })
+            },
+            new()
+            {
+                Id = "listdiff-1",
+                Type = "ListDiff",
+                Position = 3,
+                Config = JsonSerializer.SerializeToElement(new
+                {
+                    identityKey = "url",
+                    mode = "all_changes"
+                })
+            },
+            new()
+            {
+                Id = "output-1",
+                Type = "Output",
+                Position = 4
+            }
+        };
+
+        var connections = new List<ConnectionDefinition>
+        {
+            new() { FromBlockId = "input-1", FromPort = "url", ToBlockId = "navigate-1", ToPort = "url" },
+            new() { FromBlockId = "navigate-1", FromPort = "html", ToBlockId = "extractschema-1", ToPort = "html" },
+            new() { FromBlockId = "extractschema-1", FromPort = "data", ToBlockId = "listdiff-1", ToPort = "data" },
+            new() { FromBlockId = "listdiff-1", FromPort = "result", ToBlockId = "output-1", ToPort = "data" }
+        };
+
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
+
+        return new PipelineDefinition
+        {
+            SchemaVersion = 1,
+            Blocks = blocks,
+            Connections = connections,
+            Metadata = new PipelineMetadata
+            {
+                DisplayTitle = $"Monitor {host} job listings",
+                CreatedAt = DateTime.UtcNow,
+                UserIntent = "Generic job listing extraction (auto-generated for unknown platform)",
+                EstimatedLlmCallsPerRun = 0,
+                CardType = "list"
+            }
+        };
     }
 
     private async Task<UrlValidationResult> ValidatePortalUrlAsync(string url, CancellationToken ct)
@@ -1049,25 +1180,31 @@ public class GroupWatchDiscoveryService(
         string userInput,
         StructuredDiscoveryIntent parsedIntent,
         Guid groupId,
-        PipelineDefinition pipeline,
+        PipelineDefinition? pipeline,
         CancellationToken ct)
     {
-        var useJavaScript = DetectUseJavaScript(pipeline);
+        var useJavaScript = pipeline is not null && DetectUseJavaScript(pipeline);
         var request = new CreateWatchRequest
         {
             Url = portal.Url,
-            Name = pipeline.Metadata?.DisplayTitle ?? portal.Title ?? portal.Domain,
+            Name = portal.Title ?? portal.Domain,
             Description = portal.Reasoning,
             UserIntent = userInput,
             GroupId = groupId,
             CheckInterval = ParseFrequencyOrDefault(null, _options.DefaultCheckInterval),
             UseJavaScript = useJavaScript,
             Tags = BuildWatchTags(parsedIntent, portal),
-            SkipInitialCheck = true
+            // When no pipeline is provided, let the background service pick it up on first check
+            SkipInitialCheck = pipeline is not null
         };
 
         var createdWatch = await watchService.CreateWatchAsync(request, ct);
-        createdWatch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+
+        if (pipeline is not null)
+        {
+            createdWatch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+        }
+
         createdWatch.FetchSettings ??= new FetchSettings();
         createdWatch.FetchSettings.UseJavaScript = useJavaScript;
 

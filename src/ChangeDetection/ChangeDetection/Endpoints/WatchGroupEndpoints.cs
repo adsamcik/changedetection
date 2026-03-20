@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -347,6 +348,8 @@ public static class WatchGroupEndpoints
             { "company", "employer", "organization", "organisation" };
         var locationFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "location", "city", "region", "place" };
+        var relevanceScoreFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "_relevanceScore", "relevanceScore" };
 
         foreach (var member in members)
         {
@@ -359,19 +362,8 @@ public static class WatchGroupEndpoints
             if (latestSnapshot?.ExtractedObjectsJson is null or "")
                 continue;
 
-            List<ExtractedObject>? objects;
-            try
-            {
-                objects = JsonSerializer.Deserialize<List<ExtractedObject>>(
-                    latestSnapshot.ExtractedObjectsJson,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            }
-            catch
-            {
-                continue;
-            }
-
-            if (objects is null) continue;
+            var objects = ParseExtractedObjects(latestSnapshot.ExtractedObjectsJson);
+            if (objects is null or { Count: 0 }) continue;
 
             // Get relevance score from the most recent change event for this watch
             var latestEvent = await eventRepo.FirstOrDefaultOrderedDescAsync(
@@ -393,7 +385,7 @@ public static class WatchGroupEndpoints
 
                 var title = GetField(titleFields) ?? obj.IdentityKey ?? $"Item #{obj.Index}";
                 var url = GetField(urlFields);
-                var company = GetField(companyFields);
+                var company = GetField(companyFields) ?? DeriveCompanyFromWatchName(sourceName);
                 var location = GetField(locationFields);
 
                 // Collect remaining fields as extras
@@ -402,6 +394,7 @@ public static class WatchGroupEndpoints
                 wellKnown.UnionWith(urlFields);
                 wellKnown.UnionWith(companyFields);
                 wellKnown.UnionWith(locationFields);
+                wellKnown.UnionWith(relevanceScoreFields);
 
                 var extras = new Dictionary<string, string>();
                 foreach (var (key, val) in obj.Fields)
@@ -421,7 +414,7 @@ public static class WatchGroupEndpoints
                     Sources = string.IsNullOrWhiteSpace(url) ? new List<string>() : new List<string> { url },
                     SourceNames = new List<string> { sourceName },
                     SourceWatchIds = new List<string> { member.Id.ToString() },
-                    RelevanceScore = latestEvent?.RelevanceScore,
+                    RelevanceScore = TryGetPipelineRelevanceScore(obj) ?? latestEvent?.RelevanceScore,
                     FirstSeen = latestSnapshot.CapturedAt,
                     IsNew = latestSnapshot.CapturedAt >= newThreshold,
                     ExtraFields = extras
@@ -443,6 +436,109 @@ public static class WatchGroupEndpoints
             LastChecked = lastChecked != default ? lastChecked : null,
             Items = deduped
         });
+    }
+
+    /// <summary>
+    /// Derives a company name from the watch name by stripping platform suffixes.
+    /// E.g. "Again.bio (Teamtailor)" → "Again.bio", "Novo Nordisk careers" → "Novo Nordisk".
+    /// Returns null if no meaningful company name can be extracted.
+    /// </summary>
+    private static string? DeriveCompanyFromWatchName(string watchName)
+    {
+        if (string.IsNullOrWhiteSpace(watchName))
+            return null;
+
+        var name = watchName.Trim();
+
+        // Strip parenthesized platform suffix: "Company (Teamtailor)" → "Company"
+        var parenIdx = name.LastIndexOf('(');
+        if (parenIdx > 0)
+            name = name[..parenIdx].Trim();
+
+        // Strip common trailing keywords
+        string[] suffixes = ["careers", "jobs", "career", "job openings", "vacancies", "hiring"];
+        foreach (var suffix in suffixes)
+        {
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name[..^suffix.Length].TrimEnd(' ', '-', '–', '—', '|', ':');
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
+
+    /// <summary>
+    /// Parses extracted objects from snapshot JSON, handling both direct List&lt;ExtractedObject&gt;
+    /// format and ListDiff wrapper format ({"items":[...],...}).
+    /// </summary>
+    private static List<ExtractedObject>? ParseExtractedObjects(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // ListDiff wrapper format: {"items":[...],"added":[...],"changed":false}
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("items", out var items) &&
+                items.ValueKind == JsonValueKind.Array)
+            {
+                return ConvertJsonArrayToExtractedObjects(items);
+            }
+
+            // Direct array format
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                // Try proper ExtractedObject format with Fields dict
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var typed = JsonSerializer.Deserialize<List<ExtractedObject>>(json, opts);
+                if (typed is not null && typed.Any(o => o.Fields.Count > 0))
+                    return typed;
+
+                // Fallback: flat JSON objects
+                return ConvertJsonArrayToExtractedObjects(root);
+            }
+        }
+        catch
+        {
+            // Invalid JSON
+        }
+
+        return null;
+    }
+
+    private static List<ExtractedObject> ConvertJsonArrayToExtractedObjects(JsonElement array)
+    {
+        var objects = new List<ExtractedObject>();
+        var index = 0;
+        foreach (var item in array.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var eo = new ExtractedObject { Index = index++ };
+            foreach (var prop in item.EnumerateObject())
+            {
+                eo.Fields[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString()
+                    : prop.Value.ToString();
+            }
+            objects.Add(eo);
+        }
+        return objects;
+    }
+
+    private static float? TryGetPipelineRelevanceScore(ExtractedObject obj)
+    {
+        foreach (var key in new[] { "_relevanceScore", "relevanceScore" })
+        {
+            if (!obj.Fields.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            if (float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var score))
+                return score;
+        }
+
+        return null;
     }
 
     private static WatchGroupHealthDto MapHealthDto(WatchGroupHealth health) => new()
