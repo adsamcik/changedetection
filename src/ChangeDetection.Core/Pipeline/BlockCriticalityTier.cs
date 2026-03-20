@@ -9,6 +9,9 @@ public enum BlockCriticalityTier
     /// <summary>Navigate, Wait, Click — abort run on failure.</summary>
     Infrastructure,
 
+    /// <summary>Config-driven request fan-out blocks — abort run on failure.</summary>
+    Acquisition,
+
     /// <summary>Filter, ExtractSchema, LlmExtract — retry 2x then abort.</summary>
     Extraction,
 

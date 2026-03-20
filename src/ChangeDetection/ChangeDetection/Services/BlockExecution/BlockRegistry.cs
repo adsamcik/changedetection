@@ -115,6 +115,16 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             factory: _ => new ExtractSchemaBlock());
 
+        // JsonExtract: json → structured data + optional total
+        registry.Register("JsonExtract",
+            inputPorts: [new PortDescriptor { Name = "json", Type = PortType.PlainText }],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects },
+                new PortDescriptor { Name = "total", Type = PortType.NumericValue, Required = false }
+            ],
+            factory: _ => new JsonExtractBlock());
+
         // DataFilter: data → filtered data
         registry.Register("DataFilter",
             inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
@@ -231,9 +241,13 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             factory: _ => new ThrottleBlock());
 
-        // Paginate: html → data (paginated content)
+        // Paginate: html/json → data (paginated content)
         registry.Register("Paginate",
-            inputPorts: [new PortDescriptor { Name = "html", Type = PortType.HtmlContent }],
+            inputPorts:
+            [
+                new PortDescriptor { Name = "html", Type = PortType.HtmlContent, Required = false },
+                new PortDescriptor { Name = "json", Type = PortType.PlainText, Required = false }
+            ],
             outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
             factory: _ => new PaginateBlock());
 
@@ -274,5 +288,48 @@ public class BlockRegistry : IBlockRegistry
                 new PortDescriptor { Name = "rankingData", Type = PortType.SearchResults, Description = "Structured ranking data" }
             ],
             factory: _ => new RankingSnapshotBlock());
+
+        // HttpRequest: url → body + json + html + status + response (API-backed job boards)
+        registry.Register("HttpRequest",
+            inputPorts: [new PortDescriptor { Name = "url", Type = PortType.Url }],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "body", Type = PortType.PlainText },
+                new PortDescriptor { Name = "json", Type = PortType.ExtractedObjects, Required = false },
+                new PortDescriptor { Name = "html", Type = PortType.HtmlContent, Required = false },
+                new PortDescriptor { Name = "status", Type = PortType.NumericValue },
+                new PortDescriptor { Name = "response", Type = PortType.ExtractedObjects, Required = false }
+            ],
+            factory: _ => new HttpRequestBlock());
+
+        // ForEachRequest: items → data (list → detail enrichment)
+        registry.Register("ForEachRequest",
+            inputPorts: [new PortDescriptor { Name = "items", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new ForEachRequestBlock());
+
+        // Iterate: config values → data (config-driven HTTP fan-out)
+        registry.Register("Iterate",
+            inputPorts: [new PortDescriptor { Name = "url", Type = PortType.Url, Required = false }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new IterateBlock());
+
+        // Deduplicate: data → data (deduplicated)
+        registry.Register("Deduplicate",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new DeduplicateBlock());
+
+        // StripHtml: data → data (HTML tags removed from specified fields)
+        registry.Register("StripHtml",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new StripHtmlBlock());
+
+        // TemplateResolve: data → data (with computed fields from templates)
+        registry.Register("TemplateResolve",
+            inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            outputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
+            factory: _ => new TemplateResolveBlock());
     }
 }

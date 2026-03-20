@@ -33,6 +33,13 @@ public class BlockContext
     public PipelineDefinition? PipelineDefinition { get; init; }
 
     /// <summary>
+    /// Domain pin for security validation. All URLs in blocks must be validated
+    /// against this pin. Set from the user's original input URL, never from
+    /// page content or LLM output.
+    /// </summary>
+    public DomainPin? DomainPin { get; init; }
+
+    /// <summary>
     /// All block outputs from the current run, keyed by block instance ID.
     /// Allows Output and Route blocks to access any upstream block's output.
     /// </summary>

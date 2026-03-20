@@ -188,13 +188,39 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
                 continue;
             }
 
-            // Check port type compatibility (exact match for v1)
-            if (sourcePort.Type != targetPort.Type)
+            // Check port type compatibility
+            if (!ArePortTypesCompatible(sourcePort.Type, targetPort.Type))
             {
                 errors.Add(new ValidationError("PORT_TYPE_MISMATCH",
                     $"Port type mismatch: '{conn.FromBlockId}.{conn.FromPort}' ({sourcePort.Type}) → '{conn.ToBlockId}.{conn.ToPort}' ({targetPort.Type})."));
             }
         }
+    }
+
+    /// <summary>
+    /// Checks whether two port types are compatible for connection.
+    /// JSON-carrying types (PlainText, ExtractedObjects, DiffResult, SearchResults) are interchangeable.
+    /// HtmlContent can flow into PlainText (HTML is text).
+    /// </summary>
+    private static bool ArePortTypesCompatible(PortType source, PortType target)
+    {
+        if (source == target) return true;
+
+        // All JSON-carrying types are interchangeable
+        // (they all carry JsonElement data that downstream blocks can interpret)
+        if (source is PortType.PlainText or PortType.ExtractedObjects or PortType.DiffResult or PortType.SearchResults &&
+            target is PortType.PlainText or PortType.ExtractedObjects or PortType.DiffResult or PortType.SearchResults)
+            return true;
+
+        // HtmlContent → PlainText (HTML is text)
+        if (source == PortType.HtmlContent && target == PortType.PlainText)
+            return true;
+
+        // Configuration is flexible (can carry any JSON payload)
+        if (source == PortType.Configuration || target == PortType.Configuration)
+            return true;
+
+        return false;
     }
 
     /// <summary>

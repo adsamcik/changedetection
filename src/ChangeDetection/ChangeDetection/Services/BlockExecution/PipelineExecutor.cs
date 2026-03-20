@@ -245,9 +245,10 @@ public class PipelineExecutor(
                 switch (block.CriticalityTier)
                 {
                     case BlockCriticalityTier.Infrastructure:
-                        logger.LogError("Infrastructure block '{BlockId}' failed: {Error}. Aborting pipeline.",
-                            blockId, result.Error);
-                        pipelineError = $"Infrastructure block '{blockId}' failed: {result.Error}";
+                    case BlockCriticalityTier.Acquisition:
+                        logger.LogError("{Tier} block '{BlockId}' failed: {Error}. Aborting pipeline.",
+                            block.CriticalityTier, blockId, result.Error);
+                        pipelineError = $"{block.CriticalityTier} block '{blockId}' failed: {result.Error}";
                         MarkDownstreamSkipped(blockId, downstreamMap, skippedSet);
                         aborted = true;
                         break;
@@ -536,7 +537,18 @@ public class PipelineExecutor(
 
             if (blockOutputs.TryGetValue(conn.FromBlockId, out var output) && output.HasValue)
             {
-                inputs[conn.ToPort] = output.Value;
+                // Extract the specific port's value from the block output.
+                // Multi-output blocks return a JSON object keyed by port name;
+                // single-output blocks may return the value directly.
+                var resolved = output.Value;
+                if (!string.IsNullOrEmpty(conn.FromPort) &&
+                    resolved.ValueKind == JsonValueKind.Object &&
+                    resolved.TryGetProperty(conn.FromPort, out var portValue))
+                {
+                    resolved = portValue;
+                }
+
+                inputs[conn.ToPort] = resolved;
             }
         }
 
