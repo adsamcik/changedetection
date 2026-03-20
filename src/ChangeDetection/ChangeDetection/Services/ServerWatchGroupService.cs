@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -7,6 +8,7 @@ namespace ChangeDetection.Services;
 public class ServerWatchGroupService(
     IRepository<WatchGroup> groupRepo,
     IRepository<WatchedSite> watchRepo,
+    IRepository<ChangeSnapshot> snapshotRepo,
     IPriceHistoryRepository priceHistoryRepo,
     ILogger<ServerWatchGroupService> logger) : IWatchGroupService
 {
@@ -202,6 +204,54 @@ public class ServerWatchGroupService(
         return result;
     }
 
+    public async Task<WatchGroupHealth> GetGroupHealthAsync(Guid groupId, CancellationToken ct = default)
+    {
+        _ = await groupRepo.GetByIdAsync(groupId, ct)
+            ?? throw new InvalidOperationException($"Watch group {groupId} not found");
+
+        var members = await GetGroupMembersAsync(groupId, ct);
+        var result = new WatchGroupHealth
+        {
+            GroupId = groupId,
+            TotalWatches = members.Count
+        };
+
+        foreach (var member in members.OrderBy(m => m.Name ?? m.Url))
+        {
+            var snapshots = await snapshotRepo.FindAsync(s => s.WatchedSiteId == member.Id, ct);
+            var latestSnapshot = snapshots.OrderByDescending(s => s.CapturedAt).FirstOrDefault();
+            var healthStatus = ClassifyHealth(member);
+
+            switch (healthStatus)
+            {
+                case WatchHealthStatus.Healthy:
+                    result.Healthy++;
+                    break;
+                case WatchHealthStatus.Degraded:
+                    result.Degraded++;
+                    break;
+                case WatchHealthStatus.Errored:
+                    result.Errored++;
+                    break;
+            }
+
+            result.Watches.Add(new WatchHealthEntry
+            {
+                Id = member.Id,
+                Name = member.Name ?? member.Url,
+                Url = member.Url,
+                Status = healthStatus,
+                LastChecked = member.LastChecked,
+                ItemCount = CountItems(latestSnapshot),
+                PipelineBlocks = CountPipelineBlocks(member.PipelineDefinitionJson),
+                ConsecutiveErrors = member.ConsecutiveFailures,
+                LastError = member.LastError
+            });
+        }
+
+        return result;
+    }
+
     private async Task<AggregateFieldValue> ComputeFieldValueAsync(
         AggregateFieldConfig config, List<WatchedSite> members,
         AggregateSnapshot snapshot, CancellationToken ct)
@@ -341,6 +391,55 @@ public class ServerWatchGroupService(
         var unit = config.CurrencyCode ?? config.Unit ?? "";
         if (string.IsNullOrEmpty(unit)) return value.ToString("N2");
         return $"{value:N2} {unit}".Trim();
+    }
+
+    private static WatchHealthStatus ClassifyHealth(WatchedSite watch)
+    {
+        if (watch.Status == WatchStatus.Error)
+            return WatchHealthStatus.Errored;
+
+        if (watch.ConsecutiveFailures > 0 || !string.IsNullOrWhiteSpace(watch.LastError))
+            return WatchHealthStatus.Degraded;
+
+        return watch.Status == WatchStatus.Active
+            ? WatchHealthStatus.Healthy
+            : WatchHealthStatus.Degraded;
+    }
+
+    private static int CountPipelineBlocks(string? pipelineDefinitionJson)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineDefinitionJson))
+            return 0;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(pipelineDefinitionJson);
+            return doc.RootElement.TryGetProperty("blocks", out var blocks) && blocks.ValueKind == JsonValueKind.Array
+                ? blocks.GetArrayLength()
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    private static int CountItems(ChangeSnapshot? snapshot)
+    {
+        if (snapshot is null || string.IsNullOrWhiteSpace(snapshot.ExtractedObjectsJson))
+            return 0;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(snapshot.ExtractedObjectsJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement.GetArrayLength()
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
     }
 
     // --- Rank-switch detection ---

@@ -1,0 +1,611 @@
+@page "/groupwatch/results/{GroupId:guid}"
+@rendermode InteractiveAuto
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@using System.Text.Json
+@using ChangeDetection.Shared.Dtos
+
+<PageTitle>@(results?.GroupName ?? "Group Results") - Change Detection</PageTitle>
+
+<div class="group-results">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading group results...</span>
+        </div>
+    }
+    else if (results is null)
+    {
+        <div class="empty-state">
+            <div class="empty-icon">📊</div>
+            <h2>Group not found</h2>
+            <p>The requested watch group could not be loaded.</p>
+            <a href="/" class="btn btn-primary">Back to Dashboard</a>
+        </div>
+    }
+    else
+    {
+        @* Header *@
+        <header class="page-header">
+            <div class="header-content">
+                <h1>@(results.GroupIcon ?? "📊") @results.GroupName</h1>
+                <p class="subtitle">
+                    @results.TotalWatches portals ·
+                    @results.TotalItems items
+                    @if (results.NewItems > 0)
+                    {
+                        <span> · <strong>@results.NewItems new</strong></span>
+                    }
+                </p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" @onclick="RunAllChecks" disabled="@isRunningChecks">
+                    @if (isRunningChecks)
+                    {
+                        <span class="spinner-sm"></span>
+                        <span>Checking @checksCompleted/@(group?.Members.Count ?? 0)...</span>
+                    }
+                    else
+                    {
+                        <span>▶ Run All Checks</span>
+                    }
+                </button>
+                <a href="/" class="btn btn-outline btn-sm">🏠 Dashboard</a>
+            </div>
+        </header>
+
+        @* Health Status Bar *@
+        <div class="health-bar">
+            <span class="health-item health-ok" title="Healthy portals">
+                ✅ @results.HealthyWatches healthy
+            </span>
+            @{ var errorCount = results.TotalWatches - results.HealthyWatches; }
+            @if (errorCount > 0)
+            {
+                <span class="health-item health-error" title="Portals with errors">
+                    ⚠️ @errorCount errors
+                </span>
+            }
+            @if (results.LastChecked.HasValue)
+            {
+                <span class="health-item health-time">
+                    Last checked: @FormatRelativeDate(results.LastChecked.Value)
+                </span>
+            }
+        </div>
+
+        @* Profile-Based Relevance Scoring *@
+        <details class="profile-section" open="@profileSectionOpen">
+            <summary class="profile-toggle">🎯 Relevance Profile</summary>
+            <div class="profile-content">
+                @if (!string.IsNullOrWhiteSpace(profileStatusMessage))
+                {
+                    <div class="alert @(profileStatusIsError ? "alert-error" : "alert-success")" role="alert">
+                        @profileStatusMessage
+                    </div>
+                }
+
+                <div class="profile-form">
+                    <label for="profileText" class="profile-label">Describe your background and skills:</label>
+                    <textarea id="profileText" class="profile-textarea" rows="4"
+                              placeholder="e.g., I have a masters in molecular biology, experience with flow cytometry, PCR, cell culture, protein purification..."
+                              @bind="profileText"></textarea>
+                    <button class="btn btn-primary btn-sm" @onclick="UpdateProfile" disabled="@isUpdatingProfile">
+                        @if (isUpdatingProfile)
+                        {
+                            <span class="spinner-sm"></span>
+                            <span>Extracting keywords...</span>
+                        }
+                        else
+                        {
+                            <span>🔄 Update Profile</span>
+                        }
+                    </button>
+                </div>
+
+                @if (currentProfileKeywords is not null)
+                {
+                    <div class="profile-keywords">
+                        @if (!string.IsNullOrWhiteSpace(currentProfileKeywords.Summary))
+                        {
+                            <p class="profile-summary">@currentProfileKeywords.Summary</p>
+                        }
+                        <div class="keyword-groups">
+                            @if (currentProfileKeywords.PositiveKeywords.Count > 0)
+                            {
+                                <div class="keyword-group keyword-positive">
+                                    <h4>✅ Positive Keywords</h4>
+                                    <div class="keyword-chips">
+                                        @foreach (var kw in currentProfileKeywords.PositiveKeywords.OrderByDescending(k => k.Weight))
+                                        {
+                                            <span class="keyword-chip chip-positive" title="Weight: @kw.Weight">
+                                                @kw.Keyword <small>(@kw.Weight)</small>
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            @if (currentProfileKeywords.NegativeKeywords.Count > 0)
+                            {
+                                <div class="keyword-group keyword-negative">
+                                    <h4>❌ Negative Keywords</h4>
+                                    <div class="keyword-chips">
+                                        @foreach (var kw in currentProfileKeywords.NegativeKeywords.OrderBy(k => k.Weight))
+                                        {
+                                            <span class="keyword-chip chip-negative" title="Weight: @kw.Weight">
+                                                @kw.Keyword <small>(@kw.Weight)</small>
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </details>
+
+        @* Portal details (expandable) *@
+        @if (group is not null)
+        {
+            <details class="portal-details">
+                <summary class="portal-details-toggle">📡 Portal Status Details</summary>
+                        <div class="portal-list">
+                            @foreach (var m in group.Members.OrderBy(m => m.HasErrors ? 0 : 1).ThenBy(m => m.Name))
+                            {
+                                <div class="portal-row @(m.HasErrors ? "portal-error" : "")">
+                            <span class="portal-status-icon">@(m.HasErrors ? "⚠️" : "✅")</span>
+                            <span class="portal-name-cell">@m.Name</span>
+                            <span class="portal-item-count">
+                                @(sourceCounts.GetValueOrDefault(m.WatchId, 0)) items
+                            </span>
+                            <span class="portal-last-check">
+                                @if (m.LastChecked.HasValue)
+                                {
+                                    @FormatRelativeDate(m.LastChecked.Value)
+                                }
+                                    else
+                                    {
+                                        <span class="pending-text">Not checked</span>
+                                    }
+                                </span>
+                            <a href="/watches/@m.WatchId/pipeline" class="portal-link portal-gear" title="View pipeline">⚙️</a>
+                            <a href="/watches/@m.WatchId" class="portal-link" title="View watch details">→</a>
+                        </div>
+                    }
+                </div>
+            </details>
+        }
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-error" role="alert">@errorMessage</div>
+        }
+
+        @* Filter bar *@
+        <div class="filter-bar">
+            <div class="search-box">
+                <input type="text" class="search-input" placeholder="Search items..."
+                       @bind="searchText" @bind:event="oninput" @bind:after="ApplyFilters" />
+            </div>
+            <select class="filter-select" @bind="selectedSource" @bind:after="ApplyFilters">
+                <option value="">All sources</option>
+                @foreach (var source in availableSources)
+                {
+                    <option value="@source">@source</option>
+                }
+            </select>
+            <div class="filter-chips">
+                <button class="filter-btn @(showNewOnly ? "active" : "")" @onclick="ToggleNewOnly">
+                    🆕 New only
+                    @if (results.NewItems > 0)
+                    {
+                        <span class="filter-count">@results.NewItems</span>
+                    }
+                </button>
+            </div>
+        </div>
+
+        @* Results table *@
+        @if (filteredItems.Count == 0)
+        {
+            <div class="no-results">
+                <p>No items match your filters.</p>
+                @if (results.TotalItems == 0)
+                {
+                    <p class="no-results-hint">
+                        Portals are checked on their configured schedule. Use <strong>▶ Run All Checks</strong>
+                        above to scan now.
+                    </p>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="results-table-wrapper">
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th class="col-title">Title</th>
+                            <th class="col-company">Company</th>
+                            <th class="col-location">Location</th>
+                            <th class="col-source">Source</th>
+                            <th class="col-score">Score</th>
+                            <th class="col-date">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in filteredItems)
+                        {
+                            <tr class="@(item.IsNew ? "row-new" : "")">
+                                <td class="col-title">
+                                    <div class="title-cell">
+                                        @if (item.IsNew)
+                                        {
+                                            <span class="new-badge">NEW</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(item.Url))
+                                        {
+                                            <a href="@item.Url" target="_blank" rel="noopener noreferrer"
+                                               class="title-link">@item.Title</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="title-text">@item.Title</span>
+                                        }
+                                    </div>
+                                </td>
+                                <td class="col-company">@(item.Company ?? "—")</td>
+                                <td class="col-location">@(item.Location ?? "—")</td>
+                                <td class="col-source">
+                                    <div class="source-cell">
+                                        <a href="/watches/@item.SourceWatchId" class="source-link"
+                                           title="View watch details">@item.Source</a>
+                                        @if (item.IsMultiSource)
+                                        {
+                                            <span class="multi-source-badge">multi-source</span>
+                                            <div class="source-pill-list">
+                                                @for (var sourceIndex = 0; sourceIndex < item.SourceNames.Count; sourceIndex++)
+                                                {
+                                                    var sourceName = item.SourceNames[sourceIndex];
+                                                    var watchId = item.SourceWatchIds.ElementAtOrDefault(sourceIndex);
+                                                    if (!string.IsNullOrWhiteSpace(watchId))
+                                                    {
+                                                        <a href="/watches/@watchId" class="source-pill" title="View @sourceName watch">@sourceName</a>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="source-pill">@sourceName</span>
+                                                    }
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </td>
+                                <td class="col-score">
+                                    @if (item.RelevanceScore.HasValue)
+                                    {
+                                        <div class="score-cell">
+                                            <div class="score-bar-mini">
+                                                <div class="score-fill-mini @GetScoreTier(item.RelevanceScore.Value)"
+                                                     style="width: @($"{item.RelevanceScore.Value * 100:F0}%")">
+                                                </div>
+                                            </div>
+                                            <span class="score-text">@($"{item.RelevanceScore.Value * 100:F0}")</span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="col-date">
+                                    <span title="@item.FirstSeen.ToString("yyyy-MM-dd HH:mm")">
+                                        @FormatRelativeDate(item.FirstSeen)
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="results-footer">
+                <span class="results-count">
+                    Showing @filteredItems.Count of @results.TotalItems items
+                </span>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid GroupId { get; set; }
+
+    private bool isLoading = true;
+    private bool isRunningChecks;
+    private int checksCompleted;
+    private string? errorMessage;
+    private GroupResultsDto? results;
+    private WatchGroupDetailDto? group;
+    private List<GroupResultItemDto> filteredItems = [];
+    private Dictionary<string, int> sourceCounts = [];
+    private List<string> availableSources = [];
+
+    // Filter state
+    private string searchText = "";
+    private string selectedSource = "";
+    private bool showNewOnly;
+
+    // Profile state
+    private string profileText = "";
+    private bool isUpdatingProfile;
+    private bool profileSectionOpen;
+    private string? profileStatusMessage;
+    private bool profileStatusIsError;
+    private ProfileUpdateResult? currentProfileKeywords;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Load results and group detail in parallel
+            var resultsTask = Http.GetFromJsonAsync<GroupResultsDto>($"/api/groups/{GroupId}/results");
+            var groupTask = Http.GetFromJsonAsync<WatchGroupDetailDto>($"/api/groups/{GroupId}");
+
+            results = await resultsTask;
+            group = await groupTask;
+
+            if (results is not null)
+            {
+                // Compute source counts
+                sourceCounts = results.Items
+                    .SelectMany(GetItemWatchIds)
+                    .GroupBy(id => id)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                availableSources = results.Items
+                    .SelectMany(GetItemSourceNames)
+                    .Distinct()
+                    .OrderBy(s => s)
+                    .ToList();
+
+                ApplyFilters();
+            }
+
+            // Load existing profile keywords if present
+            if (group?.AnalysisProfileJson is not null)
+            {
+                try
+                {
+                    var profileDoc = JsonDocument.Parse(group.AnalysisProfileJson);
+                    var root = profileDoc.RootElement;
+
+                    currentProfileKeywords = new ProfileUpdateResult
+                    {
+                        GroupId = GroupId.ToString(),
+                        Summary = root.TryGetProperty("summary", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null,
+                        PositiveKeywords = ParseKeywordsFromJson(root, "positiveKeywords"),
+                        NegativeKeywords = ParseKeywordsFromJson(root, "negativeKeywords")
+                    };
+
+                    if (root.TryGetProperty("profileText", out var pt) && pt.ValueKind == JsonValueKind.String)
+                        profileText = pt.GetString() ?? "";
+                }
+                catch { /* ignore malformed profile JSON */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load results: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        if (results is null) return;
+
+        IEnumerable<GroupResultItemDto> items = results.Items;
+
+        if (showNewOnly)
+            items = items.Where(i => i.IsNew);
+
+        if (!string.IsNullOrEmpty(selectedSource))
+            items = items.Where(i => GetItemSourceNames(i).Contains(selectedSource, StringComparer.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var terms = searchText.Trim().ToLowerInvariant();
+            items = items.Where(i =>
+                (i.Title?.Contains(terms, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Company?.Contains(terms, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Location?.Contains(terms, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Source?.Contains(terms, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                i.SourceNames.Any(name => name.Contains(terms, StringComparison.OrdinalIgnoreCase)) ||
+                i.Sources.Any(url => url.Contains(terms, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        filteredItems = items.ToList();
+    }
+
+    private void ToggleNewOnly()
+    {
+        showNewOnly = !showNewOnly;
+        ApplyFilters();
+    }
+
+    private async Task RunAllChecks()
+    {
+        if (group is null || isRunningChecks) return;
+        isRunningChecks = true;
+        checksCompleted = 0;
+        errorMessage = null;
+        StateHasChanged();
+
+        var errors = 0;
+        var members = group.Members.ToList();
+        const int batchSize = 4;
+
+        for (var i = 0; i < members.Count; i += batchSize)
+        {
+            var batch = members.Skip(i).Take(batchSize).ToList();
+            StateHasChanged();
+            await Task.Delay(1);
+
+            var tasks = batch.Select(async member =>
+            {
+                try
+                {
+                    await Http.PostAsync($"/api/watches/{member.WatchId}/check", null);
+                }
+                catch
+                {
+                    Interlocked.Increment(ref errors);
+                }
+                Interlocked.Increment(ref checksCompleted);
+            });
+
+            await Task.WhenAll(tasks);
+            StateHasChanged();
+        }
+
+        // Reload results
+        try
+        {
+            results = await Http.GetFromJsonAsync<GroupResultsDto>($"/api/groups/{GroupId}/results");
+            group = await Http.GetFromJsonAsync<WatchGroupDetailDto>($"/api/groups/{GroupId}");
+
+            if (results is not null)
+            {
+                sourceCounts = results.Items
+                    .SelectMany(GetItemWatchIds)
+                    .GroupBy(id => id)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                availableSources = results.Items
+                    .SelectMany(GetItemSourceNames)
+                    .Distinct()
+                    .OrderBy(s => s)
+                    .ToList();
+
+                ApplyFilters();
+            }
+        }
+        catch { }
+
+        if (errors > 0)
+            errorMessage = $"Checks complete — {errors} portal(s) had errors";
+        isRunningChecks = false;
+        StateHasChanged();
+    }
+
+    private static string GetScoreTier(float score) => score switch
+    {
+        >= 0.7f => "score-high",
+        >= 0.4f => "score-medium",
+        _ => "score-low"
+    };
+
+    private static IEnumerable<string> GetItemWatchIds(GroupResultItemDto item) =>
+        item.SourceWatchIds.Count > 0
+            ? item.SourceWatchIds.Distinct(StringComparer.OrdinalIgnoreCase)
+            : string.IsNullOrWhiteSpace(item.SourceWatchId)
+                ? Enumerable.Empty<string>()
+                : new[] { item.SourceWatchId };
+
+    private static IEnumerable<string> GetItemSourceNames(GroupResultItemDto item) =>
+        item.SourceNames.Count > 0
+            ? item.SourceNames
+            : string.IsNullOrWhiteSpace(item.Source)
+                ? Enumerable.Empty<string>()
+                : new[] { item.Source };
+
+    private static string FormatRelativeDate(DateTime date)
+    {
+        var now = DateTime.Now;
+        var diff = now - date;
+        if (diff.TotalSeconds < 0) diff = TimeSpan.Zero;
+        var mins = (int)diff.TotalMinutes;
+        var hours = (int)diff.TotalHours;
+        var days = (int)diff.TotalDays;
+
+        if (mins < 1) return "just now";
+        if (mins < 60) return $"{mins}m ago";
+        if (hours < 24) return $"{hours}h ago";
+        if (days < 7) return $"{days}d ago";
+        return date.ToString("MMM dd");
+    }
+
+    private async Task UpdateProfile()
+    {
+        if (string.IsNullOrWhiteSpace(profileText) || isUpdatingProfile) return;
+
+        isUpdatingProfile = true;
+        profileStatusMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PutAsJsonAsync(
+                $"/api/groups/{GroupId}/profile",
+                new ProfileUpdateRequest { ProfileText = profileText });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ProfileUpdateResult>();
+                if (result is not null)
+                {
+                    currentProfileKeywords = result;
+                    profileStatusMessage = $"Profile applied to {result.WatchesUpdated} watches — {result.PositiveKeywords.Count} positive, {result.NegativeKeywords.Count} negative keywords extracted.";
+                    profileStatusIsError = false;
+                }
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                profileStatusMessage = $"Failed to update profile: {error}";
+                profileStatusIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            profileStatusMessage = $"Error: {ex.Message}";
+            profileStatusIsError = true;
+        }
+        finally
+        {
+            isUpdatingProfile = false;
+            StateHasChanged();
+        }
+    }
+
+    private static List<KeywordDto> ParseKeywordsFromJson(JsonElement root, string propertyName)
+    {
+        var keywords = new List<KeywordDto>();
+        if (!root.TryGetProperty(propertyName, out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return keywords;
+
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+
+            var kw = item.TryGetProperty("Keyword", out var k) ? k.GetString()
+                   : item.TryGetProperty("keyword", out var k2) ? k2.GetString()
+                   : null;
+            var weight = item.TryGetProperty("Weight", out var w) && w.TryGetInt32(out var wv) ? wv
+                       : item.TryGetProperty("weight", out var w2) && w2.TryGetInt32(out var wv2) ? wv2
+                       : 0;
+
+            if (!string.IsNullOrWhiteSpace(kw))
+                keywords.Add(new KeywordDto { Keyword = kw, Weight = weight });
+        }
+
+        return keywords;
+    }
+}

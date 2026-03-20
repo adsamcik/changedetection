@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Services.GroupWatch;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
 
 namespace ChangeDetection.Endpoints;
@@ -16,8 +18,14 @@ public static class WatchGroupEndpoints
         group.MapDelete("/{id}", DeleteGroup).WithName("DeleteGroup").Produces(204).Produces(404);
         group.MapPost("/{id}/members/{watchId}", AddMember).WithName("AddGroupMember").Produces(204).Produces(404);
         group.MapDelete("/{id}/members/{watchId}", RemoveMember).WithName("RemoveGroupMember").Produces(204).Produces(404);
+        group.MapGet("/{id}/health", GetHealth).WithName("GetGroupHealth").Produces<WatchGroupHealthDto>().Produces(404);
         group.MapGet("/{id}/aggregate", GetAggregate).WithName("GetGroupAggregate").Produces<AggregateSnapshotDto>().Produces(404);
         group.MapGet("/{id}/alerts/evaluate", EvaluateAlerts).WithName("EvaluateGroupAlerts").Produces<AggregateAlertResultDto>().Produces(404);
+        group.MapGet("/{id}/results", GetGroupResults).WithName("GetGroupResults").Produces<GroupResultsDto>().Produces(404);
+        group.MapGet("/{id}/suggestions", GetSuggestions).WithName("GetPortalSuggestions").Produces<List<PortalSuggestionDto>>().Produces(404);
+        group.MapPost("/{id}/suggestions/{suggestionId}/accept", AcceptSuggestion).WithName("AcceptPortalSuggestion").Produces<PortalSuggestionAcceptResultDto>().Produces(404);
+        group.MapPost("/{id}/suggestions/{suggestionId}/dismiss", DismissSuggestion).WithName("DismissPortalSuggestion").Produces(204).Produces(404);
+        group.MapPut("/{id}/profile", UpdateProfile).WithName("UpdateGroupProfile").Produces<ProfileUpdateResult>().Produces(404).Produces(400);
         return group;
     }
 
@@ -168,6 +176,13 @@ public static class WatchGroupEndpoints
         return Results.Ok(MapSnapshotDto(await svc.ComputeAggregateAsync(id, ct)));
     }
 
+    private static async Task<IResult> GetHealth(Guid id, IWatchGroupService svc, CancellationToken ct)
+    {
+        var g = await svc.GetByIdAsync(id, ct);
+        if (g is null) return Results.NotFound();
+        return Results.Ok(MapHealthDto(await svc.GetGroupHealthAsync(id, ct)));
+    }
+
     private static async Task<IResult> EvaluateAlerts(Guid id, IWatchGroupService svc, CancellationToken ct)
     {
         var g = await svc.GetByIdAsync(id, ct);
@@ -183,6 +198,54 @@ public static class WatchGroupEndpoints
                 Message = t.Message, Importance = t.Importance.ToString()
             }).ToList()
         });
+    }
+
+    private static async Task<IResult> GetSuggestions(
+        Guid id,
+        IWatchGroupService groupSvc,
+        IPortalSuggestionService suggestionSvc,
+        CancellationToken ct)
+    {
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        var suggestions = await suggestionSvc.GetPendingForGroupAsync(id, ct);
+        return Results.Ok(suggestions.Select(MapSuggestionDto).ToList());
+    }
+
+    private static async Task<IResult> AcceptSuggestion(
+        Guid id,
+        Guid suggestionId,
+        IWatchGroupService groupSvc,
+        IPortalSuggestionService suggestionSvc,
+        CancellationToken ct)
+    {
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        var watch = await suggestionSvc.AcceptAsync(id, suggestionId, ct);
+        if (watch is null) return Results.NotFound();
+
+        return Results.Ok(new PortalSuggestionAcceptResultDto
+        {
+            SuggestionId = suggestionId.ToString(),
+            WatchId = watch.Id.ToString(),
+            Url = watch.Url
+        });
+    }
+
+    private static async Task<IResult> DismissSuggestion(
+        Guid id,
+        Guid suggestionId,
+        IWatchGroupService groupSvc,
+        IPortalSuggestionService suggestionSvc,
+        CancellationToken ct)
+    {
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        var dismissed = await suggestionSvc.DismissAsync(id, suggestionId, ct);
+        return dismissed ? Results.NoContent() : Results.NotFound();
     }
 
     // --- Mapping helpers ---
@@ -219,6 +282,17 @@ public static class WatchGroupEndpoints
         }).ToList()
     };
 
+    private static PortalSuggestionDto MapSuggestionDto(PortalSuggestionEntity suggestion) => new()
+    {
+        Id = suggestion.Id.ToString(),
+        Url = suggestion.Url,
+        Domain = suggestion.Domain,
+        DetectedPlatform = suggestion.DetectedPlatform,
+        Reason = suggestion.Reason,
+        SourceWatchId = suggestion.SourceWatchId.ToString(),
+        CreatedAt = suggestion.CreatedAt
+    };
+
     private static WatchGroupMemberDto MapMemberDto(WatchedSite w) => new()
     {
         WatchId = w.Id.ToString(), Name = w.Name ?? w.Url, Url = w.Url,
@@ -235,4 +309,329 @@ public static class WatchGroupEndpoints
             Status = m.Status.ToString(), LastChecked = m.LastChecked, HasErrors = m.HasErrors
         }).ToList()
     };
+
+    private static async Task<IResult> GetGroupResults(
+        Guid id,
+        IWatchGroupService groupSvc,
+        IRepository<ChangeSnapshot> snapshotRepo,
+        IRepository<ChangeEvent> eventRepo,
+        IJobDeduplicationService deduplicationService,
+        CancellationToken ct)
+    {
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        var members = await groupSvc.GetGroupMembersAsync(id, ct);
+
+        // Determine the most recent check time across the group
+        var lastChecked = members
+            .Where(m => m.LastChecked.HasValue)
+            .Select(m => m.LastChecked!.Value)
+            .DefaultIfEmpty()
+            .Max();
+
+        // Threshold: items first seen within 24h of the latest check are "new"
+        var newThreshold = lastChecked != default
+            ? lastChecked.AddHours(-24)
+            : DateTime.UtcNow.AddHours(-24);
+
+        var allItems = new List<GroupResultItemDto>();
+        var healthyCount = members.Count(m => m.Status != WatchStatus.Error);
+
+        // Well-known field names to extract into dedicated properties
+        var titleFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "title", "name", "job_title", "jobtitle", "position", "role" };
+        var urlFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "url", "link", "href", "apply_url", "apply_link" };
+        var companyFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "company", "employer", "organization", "organisation" };
+        var locationFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "location", "city", "region", "place" };
+
+        foreach (var member in members)
+        {
+            // Get the latest snapshot with extracted objects
+            var latestSnapshot = await snapshotRepo.FirstOrDefaultOrderedDescAsync(
+                s => s.WatchedSiteId == member.Id,
+                s => s.CapturedAt,
+                ct);
+
+            if (latestSnapshot?.ExtractedObjectsJson is null or "")
+                continue;
+
+            List<ExtractedObject>? objects;
+            try
+            {
+                objects = JsonSerializer.Deserialize<List<ExtractedObject>>(
+                    latestSnapshot.ExtractedObjectsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (objects is null) continue;
+
+            // Get relevance score from the most recent change event for this watch
+            var latestEvent = await eventRepo.FirstOrDefaultOrderedDescAsync(
+                e => e.WatchedSiteId == member.Id,
+                e => e.DetectedAt,
+                ct);
+
+            var sourceName = member.Name ?? new Uri(member.Url, UriKind.RelativeOrAbsolute).Host;
+
+            foreach (var obj in objects)
+            {
+                string? GetField(HashSet<string> candidates)
+                {
+                    foreach (var key in candidates)
+                        if (obj.Fields.TryGetValue(key, out var val) && !string.IsNullOrWhiteSpace(val))
+                            return val;
+                    return null;
+                }
+
+                var title = GetField(titleFields) ?? obj.IdentityKey ?? $"Item #{obj.Index}";
+                var url = GetField(urlFields);
+                var company = GetField(companyFields);
+                var location = GetField(locationFields);
+
+                // Collect remaining fields as extras
+                var wellKnown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                wellKnown.UnionWith(titleFields);
+                wellKnown.UnionWith(urlFields);
+                wellKnown.UnionWith(companyFields);
+                wellKnown.UnionWith(locationFields);
+
+                var extras = new Dictionary<string, string>();
+                foreach (var (key, val) in obj.Fields)
+                {
+                    if (!wellKnown.Contains(key) && !string.IsNullOrWhiteSpace(val))
+                        extras[key] = val;
+                }
+
+                allItems.Add(new GroupResultItemDto
+                {
+                    Title = title,
+                    Url = url,
+                    Company = company,
+                    Location = location,
+                    Source = sourceName,
+                    SourceWatchId = member.Id.ToString(),
+                    Sources = string.IsNullOrWhiteSpace(url) ? new List<string>() : new List<string> { url },
+                    SourceNames = new List<string> { sourceName },
+                    SourceWatchIds = new List<string> { member.Id.ToString() },
+                    RelevanceScore = latestEvent?.RelevanceScore,
+                    FirstSeen = latestSnapshot.CapturedAt,
+                    IsNew = latestSnapshot.CapturedAt >= newThreshold,
+                    ExtraFields = extras
+                });
+            }
+        }
+
+        var deduped = deduplicationService.DeduplicateAcrossSources(allItems);
+
+        return Results.Ok(new GroupResultsDto
+        {
+            GroupId = id.ToString(),
+            GroupName = group.Name,
+            GroupIcon = group.Icon,
+            TotalWatches = members.Count,
+            HealthyWatches = healthyCount,
+            TotalItems = deduped.Count,
+            NewItems = deduped.Count(i => i.IsNew),
+            LastChecked = lastChecked != default ? lastChecked : null,
+            Items = deduped
+        });
+    }
+
+    private static WatchGroupHealthDto MapHealthDto(WatchGroupHealth health) => new()
+    {
+        GroupId = health.GroupId.ToString(),
+        TotalWatches = health.TotalWatches,
+        Healthy = health.Healthy,
+        Degraded = health.Degraded,
+        Errored = health.Errored,
+        Watches = health.Watches.Select(w => new WatchHealthItemDto
+        {
+            Id = w.Id.ToString(),
+            Name = w.Name,
+            Url = w.Url,
+            Status = w.Status.ToString(),
+            LastChecked = w.LastChecked,
+            ItemCount = w.ItemCount,
+            PipelineBlocks = w.PipelineBlocks,
+            ConsecutiveErrors = w.ConsecutiveErrors,
+            LastError = w.LastError
+        }).ToList()
+    };
+
+    private static async Task<IResult> UpdateProfile(
+        Guid id,
+        ProfileUpdateRequest request,
+        IWatchGroupService groupSvc,
+        IWatchService watchService,
+        ILlmProviderChain llmChain,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var logger = loggerFactory.CreateLogger("WatchGroupEndpoints");
+
+        if (string.IsNullOrWhiteSpace(request.ProfileText))
+            return Results.BadRequest("profileText is required");
+
+        if (request.ProfileText.Length > 50_000)
+            return Results.BadRequest("profileText exceeds maximum length of 50000 characters");
+
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        // Call LLM to extract structured keywords from the profile text
+        var prompt = $$"""
+            Given this candidate profile, extract relevance scoring keywords for job matching.
+
+            Profile: "{{request.ProfileText}}"
+
+            Return JSON only, no markdown fencing:
+            {
+              "positiveKeywords": [
+                {"keyword": "example skill", "weight": 10},
+                {"keyword": "another skill", "weight": 8}
+              ],
+              "negativeKeywords": [
+                {"keyword": "director", "weight": -15},
+                {"keyword": "senior manager", "weight": -10}
+              ],
+              "summary": "Brief one-line description of the candidate"
+            }
+
+            Rules:
+            - positiveKeywords: skills, techniques, fields, qualifications, tools mentioned or implied. Weights 1-10 by importance.
+            - negativeKeywords: seniority levels, roles, or requirements the candidate is unlikely to match. Weights -5 to -20.
+            - Include both specific skills (e.g., "PCR", "flow cytometry") and broader terms (e.g., "molecular biology", "cell culture").
+            - For a junior/mid candidate, add negative keywords for very senior roles (director, VP, principal investigator, 10+ years).
+            - Return ONLY valid JSON, no explanation.
+            """;
+
+        var llmResponse = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+        {
+            Temperature = 0.3f,
+            MaxTokens = 2048,
+            ExpectJson = true,
+            UsageType = LlmUsageType.EntityExtraction
+        }, ct);
+
+        if (!llmResponse.IsSuccess || string.IsNullOrWhiteSpace(llmResponse.Content))
+            return Results.Problem("Failed to extract keywords from profile text: " + (llmResponse.ErrorMessage ?? "empty response"));
+
+        // Parse LLM response
+        List<RelevanceKeyword> positiveKeywords;
+        List<RelevanceKeyword> negativeKeywords;
+        string? summary;
+        try
+        {
+            var parsed = ParseProfileKeywords(llmResponse.Content);
+            positiveKeywords = parsed.positive;
+            negativeKeywords = parsed.negative;
+            summary = parsed.summary;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to parse LLM keyword extraction response");
+            return Results.Problem("Failed to parse keyword extraction response from LLM");
+        }
+
+        // Store the extracted profile on the group
+        var profilePayload = new
+        {
+            profileText = request.ProfileText,
+            positiveKeywords = positiveKeywords.Select(k => new { k.Keyword, k.Weight }),
+            negativeKeywords = negativeKeywords.Select(k => new { k.Keyword, k.Weight }),
+            summary,
+            extractedAt = DateTime.UtcNow
+        };
+        group.AnalysisProfileJson = JsonSerializer.Serialize(profilePayload);
+        group.UpdatedAt = DateTime.UtcNow;
+        await groupSvc.UpdateGroupAsync(group, ct);
+
+        // Patch all watches in the group with the new keywords
+        var members = await groupSvc.GetGroupMembersAsync(id, ct);
+        var watchesUpdated = 0;
+        foreach (var member in members)
+        {
+            var watch = await watchService.GetByIdAsync(member.Id, ct);
+            if (watch?.PipelineDefinitionJson is null) continue;
+
+            var patched = PipelineKeywordPatcher.PatchPipelineJson(
+                watch.PipelineDefinitionJson, positiveKeywords, negativeKeywords);
+
+            if (patched is not null && patched != watch.PipelineDefinitionJson)
+            {
+                watch.PipelineDefinitionJson = patched;
+                await watchService.UpdateWatchAsync(watch, ct);
+                watchesUpdated++;
+            }
+        }
+
+        logger.LogInformation(
+            "Profile updated for group {GroupId}: {PositiveCount} positive, {NegativeCount} negative keywords, {WatchCount} watches patched",
+            id, positiveKeywords.Count, negativeKeywords.Count, watchesUpdated);
+
+        return Results.Ok(new ProfileUpdateResult
+        {
+            GroupId = id.ToString(),
+            PositiveKeywords = positiveKeywords.Select(k => new KeywordDto { Keyword = k.Keyword, Weight = k.Weight }).ToList(),
+            NegativeKeywords = negativeKeywords.Select(k => new KeywordDto { Keyword = k.Keyword, Weight = k.Weight }).ToList(),
+            Summary = summary,
+            WatchesUpdated = watchesUpdated
+        });
+    }
+
+    private static (List<RelevanceKeyword> positive, List<RelevanceKeyword> negative, string? summary) ParseProfileKeywords(string llmContent)
+    {
+        // Strip markdown code fencing if present
+        var content = llmContent.Trim();
+        if (content.StartsWith("```"))
+        {
+            var firstNewline = content.IndexOf('\n');
+            if (firstNewline >= 0)
+                content = content[(firstNewline + 1)..];
+            if (content.EndsWith("```"))
+                content = content[..^3];
+            content = content.Trim();
+        }
+
+        using var doc = JsonDocument.Parse(content, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip });
+        var root = doc.RootElement;
+
+        var positive = new List<RelevanceKeyword>();
+        if (root.TryGetProperty("positiveKeywords", out var posArray) && posArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in posArray.EnumerateArray())
+            {
+                var kw = item.TryGetProperty("keyword", out var k) ? k.GetString() : null;
+                var weight = item.TryGetProperty("weight", out var w) && w.TryGetInt32(out var wv) ? wv : 5;
+                if (!string.IsNullOrWhiteSpace(kw))
+                    positive.Add(new RelevanceKeyword(kw, Math.Clamp(weight, 1, 10)));
+            }
+        }
+
+        var negative = new List<RelevanceKeyword>();
+        if (root.TryGetProperty("negativeKeywords", out var negArray) && negArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in negArray.EnumerateArray())
+            {
+                var kw = item.TryGetProperty("keyword", out var k) ? k.GetString() : null;
+                var weight = item.TryGetProperty("weight", out var w) && w.TryGetInt32(out var wv) ? wv : -10;
+                if (!string.IsNullOrWhiteSpace(kw))
+                    negative.Add(new RelevanceKeyword(kw, Math.Clamp(weight, -20, -1)));
+            }
+        }
+
+        string? summary = null;
+        if (root.TryGetProperty("summary", out var sumEl) && sumEl.ValueKind == JsonValueKind.String)
+            summary = sumEl.GetString();
+
+        return (positive, negative, summary);
+    }
 }

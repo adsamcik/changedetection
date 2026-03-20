@@ -12,6 +12,7 @@ public class WatchGroupServiceTests : TestBase
 {
     private readonly IRepository<WatchGroup> _groupRepo;
     private readonly IRepository<WatchedSite> _watchRepo;
+    private readonly IRepository<ChangeSnapshot> _snapshotRepo;
     private readonly IPriceHistoryRepository _priceHistoryRepo;
     private readonly ServerWatchGroupService _sut;
 
@@ -19,9 +20,10 @@ public class WatchGroupServiceTests : TestBase
     {
         _groupRepo = Substitute.For<IRepository<WatchGroup>>();
         _watchRepo = Substitute.For<IRepository<WatchedSite>>();
+        _snapshotRepo = Substitute.For<IRepository<ChangeSnapshot>>();
         _priceHistoryRepo = Substitute.For<IPriceHistoryRepository>();
         var logger = CreateLogger<ServerWatchGroupService>();
-        _sut = new ServerWatchGroupService(_groupRepo, _watchRepo, _priceHistoryRepo, logger);
+        _sut = new ServerWatchGroupService(_groupRepo, _watchRepo, _snapshotRepo, _priceHistoryRepo, logger);
     }
 
     [Test]
@@ -508,6 +510,76 @@ public class WatchGroupServiceTests : TestBase
         var snapshot = await _sut.ComputeAggregateAsync(groupId);
         snapshot.DataQualityWarnings.Count.ShouldBe(0);
         snapshot.Fields[0].PerSiteValues.ShouldAllBe(p => !p.IsQuarantined);
+    }
+
+    [Test]
+    public async Task GetGroupHealthAsync_ClassifiesMembersAndCountsItems()
+    {
+        var groupId = Guid.NewGuid();
+        var healthy = new WatchedSite
+        {
+            Url = "https://healthy.example",
+            Name = "Healthy",
+            GroupId = groupId,
+            Status = WatchStatus.Active,
+            LastChecked = DateTime.UtcNow.AddMinutes(-5)
+        };
+        var degraded = new WatchedSite
+        {
+            Url = "https://degraded.example",
+            Name = "Degraded",
+            GroupId = groupId,
+            Status = WatchStatus.Checking,
+            ConsecutiveFailures = 2,
+            LastError = "Temporary timeout"
+        };
+        var errored = new WatchedSite
+        {
+            Url = "https://errored.example",
+            Name = "Errored",
+            GroupId = groupId,
+            Status = WatchStatus.Error,
+            ConsecutiveFailures = 4,
+            LastError = "Fetch failed"
+        };
+
+        _groupRepo.GetByIdAsync(groupId, Arg.Any<CancellationToken>())
+            .Returns(new WatchGroup { Id = groupId, Name = "Health Group" });
+        _watchRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<WatchedSite, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns([healthy, degraded, errored]);
+        _snapshotRepo.FindAsync(Arg.Any<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var predicate = ci.Arg<System.Linq.Expressions.Expression<Func<ChangeSnapshot, bool>>>().Compile();
+                var snapshots = new[]
+                {
+                    new ChangeSnapshot
+                    {
+                        WatchedSiteId = healthy.Id,
+                        ContentHash = "healthy",
+                        Content = "healthy",
+                        ExtractedObjectsJson = """[{"identityKey":"1"},{"identityKey":"2"}]"""
+                    },
+                    new ChangeSnapshot
+                    {
+                        WatchedSiteId = degraded.Id,
+                        ContentHash = "degraded",
+                        Content = "degraded",
+                        ExtractedObjectsJson = """[{"identityKey":"1"}]"""
+                    }
+                };
+
+                return snapshots.Where(predicate).ToList();
+            });
+
+        var result = await _sut.GetGroupHealthAsync(groupId);
+
+        result.TotalWatches.ShouldBe(3);
+        result.Healthy.ShouldBe(1);
+        result.Degraded.ShouldBe(1);
+        result.Errored.ShouldBe(1);
+        result.Watches.ShouldContain(w => w.Name == "Healthy" && w.ItemCount == 2);
+        result.Watches.ShouldContain(w => w.Name == "Errored" && w.Status == WatchHealthStatus.Errored);
     }
 
     // --- Helpers ---

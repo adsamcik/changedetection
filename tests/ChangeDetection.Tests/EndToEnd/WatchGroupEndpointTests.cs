@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ChangeDetection.Core.Entities;
+using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -219,6 +222,33 @@ public class WatchGroupEndpointTests : TestBase, IAsyncDisposable
     }
 
     [Test]
+    public async Task GetHealth_ReturnsSummaryForGroupMembers()
+    {
+        var group = await CreateGroupAsync("Health Group");
+        var watchDto = new WatchCreateDto
+        {
+            Url = "https://example.com/health",
+            Title = "Health Watch",
+            CheckInterval = TimeSpan.FromHours(1)
+        };
+
+        var watchResponse = await _client.PostAsJsonAsync("/api/watches", watchDto);
+        watchResponse.EnsureSuccessStatusCode();
+        var watchId = await ExtractIdAsync(watchResponse);
+        await _client.PostAsync($"/api/groups/{group.Id}/members/{watchId}", null);
+
+        var response = await _client.GetAsync($"/api/groups/{group.Id}/health");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var health = await response.Content.ReadFromJsonAsync<WatchGroupHealthDto>();
+        health.ShouldNotBeNull();
+        health.GroupId.ShouldBe(group.Id);
+        health.TotalWatches.ShouldBe(1);
+        health.Healthy.ShouldBe(1);
+        health.Watches.ShouldContain(w => w.Id == watchId && w.Status == "Healthy");
+    }
+
+    [Test]
     public async Task EvaluateAlerts_EmptyGroup_ReturnsNoAlerts()
     {
         var group = await CreateGroupAsync("Alert Eval Group");
@@ -292,6 +322,59 @@ public class WatchGroupEndpointTests : TestBase, IAsyncDisposable
         getWatch.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
+    [Test]
+    public async Task GetSuggestions_ReturnsPendingPortalSuggestions()
+    {
+        var group = await CreateGroupAsync("Suggestion Group");
+        var suggestion = await SeedSuggestionAsync(Guid.Parse(group.Id), "https://company.wd3.myworkdayjobs.com/en-US/careers");
+
+        var response = await _client.GetAsync($"/api/groups/{group.Id}/suggestions");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var suggestions = await response.Content.ReadFromJsonAsync<List<PortalSuggestionDto>>();
+        suggestions.ShouldNotBeNull();
+        suggestions.Count.ShouldBe(1);
+        suggestions[0].Id.ShouldBe(suggestion.Id.ToString());
+        suggestions[0].DetectedPlatform.ShouldBe("workday");
+    }
+
+    [Test]
+    public async Task AcceptSuggestion_CreatesWatchAndRemovesPendingSuggestion()
+    {
+        var group = await CreateGroupAsync("Accept Suggestion Group");
+        var suggestion = await SeedSuggestionAsync(Guid.Parse(group.Id), "https://company.wd3.myworkdayjobs.com/en-US/careers");
+
+        var response = await _client.PostAsync($"/api/groups/{group.Id}/suggestions/{suggestion.Id}/accept", null);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var accepted = await response.Content.ReadFromJsonAsync<PortalSuggestionAcceptResultDto>();
+        accepted.ShouldNotBeNull();
+        accepted.SuggestionId.ShouldBe(suggestion.Id.ToString());
+
+        var watchResponse = await _client.GetAsync($"/api/watches/{accepted.WatchId}");
+        watchResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var suggestionsResponse = await _client.GetAsync($"/api/groups/{group.Id}/suggestions");
+        var suggestions = await suggestionsResponse.Content.ReadFromJsonAsync<List<PortalSuggestionDto>>();
+        suggestions.ShouldNotBeNull();
+        suggestions.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task DismissSuggestion_MarksSuggestionDismissed()
+    {
+        var group = await CreateGroupAsync("Dismiss Suggestion Group");
+        var suggestion = await SeedSuggestionAsync(Guid.Parse(group.Id), "https://new-company.example/careers");
+
+        var response = await _client.PostAsync($"/api/groups/{group.Id}/suggestions/{suggestion.Id}/dismiss", null);
+        response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var suggestionsResponse = await _client.GetAsync($"/api/groups/{group.Id}/suggestions");
+        var suggestions = await suggestionsResponse.Content.ReadFromJsonAsync<List<PortalSuggestionDto>>();
+        suggestions.ShouldNotBeNull();
+        suggestions.ShouldBeEmpty();
+    }
+
     // --- Helpers ---
 
     private async Task<WatchGroupDetailDto> CreateGroupAsync(string name)
@@ -312,5 +395,24 @@ public class WatchGroupEndpointTests : TestBase, IAsyncDisposable
     {
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         return json.GetProperty("id").GetString()!;
+    }
+
+    private async Task<PortalSuggestionEntity> SeedSuggestionAsync(Guid groupId, string url)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IRepository<PortalSuggestionEntity>>();
+
+        var suggestion = new PortalSuggestionEntity
+        {
+            Url = url,
+            Domain = new Uri(url).Host,
+            DetectedPlatform = ChangeDetection.Services.Pipeline.SetupFlowEnhancements.DetectPlatformFromUrl(url),
+            Reason = "Discovered from extracted listing data.",
+            SourceWatchId = Guid.NewGuid(),
+            GroupId = groupId
+        };
+
+        await repo.InsertAsync(suggestion);
+        return suggestion;
     }
 }

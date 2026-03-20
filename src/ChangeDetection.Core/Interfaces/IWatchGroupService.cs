@@ -14,6 +14,7 @@ public interface IWatchGroupService
     Task<List<WatchedSite>> GetGroupMembersAsync(Guid groupId, CancellationToken ct = default);
     Task<AggregateSnapshot> ComputeAggregateAsync(Guid groupId, CancellationToken ct = default);
     Task<AggregateAlertResult> EvaluateAggregateAlertsAsync(Guid groupId, CancellationToken ct = default);
+    Task<WatchGroupHealth> GetGroupHealthAsync(Guid groupId, CancellationToken ct = default);
 }
 
 public class WatchGroupCreateRequest

@@ -22,6 +22,11 @@
                 </div>
             }
         </div>
+        <a href="@($"groupwatch/results/{Group.Id}")" @onclick:stopPropagation="true" title="View aggregated results"
+           style="text-decoration:none; font-size:1.125rem; padding:0.25rem 0.5rem; border-radius:6px; transition:background 0.15s;"
+           onmouseover="this.style.background='rgba(13,148,136,0.08)'" onmouseout="this.style.background='transparent'">
+            📋
+        </a>
         <div class="group-expand-toggle">
             <span>@(IsExpanded ? "▲" : "▼")</span>
         </div>
@@ -35,21 +40,48 @@
                 <p class="group-description">@Detail.Description</p>
             }
 
+            @if (Health is not null)
+            {
+                <div class="group-health-summary">
+                    <div class="primary-field">
+                        <span class="field-value">@Health.TotalWatches</span>
+                        <span class="field-label">total</span>
+                    </div>
+                    <div class="primary-field">
+                        <span class="field-value">@Health.Healthy</span>
+                        <span class="field-label">healthy</span>
+                    </div>
+                    <div class="primary-field">
+                        <span class="field-value">@Health.Degraded</span>
+                        <span class="field-label">degraded</span>
+                    </div>
+                    <div class="primary-field">
+                        <span class="field-value">@Health.Errored</span>
+                        <span class="field-label">errored</span>
+                    </div>
+                </div>
+            }
+
             <table class="data-grid group-members-grid">
                 <thead>
                     <tr>
                         <th width="40">St</th>
                         <th>Site</th>
+                        <th width="90">Health</th>
                         @foreach (var field in (Detail.LatestSnapshot?.Fields ?? []))
                         {
                             <th>@field.FieldName</th>
                         }
+                        <th width="70">Items</th>
+                        <th width="70">Blocks</th>
+                        <th width="90">Errors</th>
                         <th width="120">Last Check</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var member in Detail.Members)
                     {
+                        var memberHealth = GetHealth(member.WatchId);
                         <tr class="grid-row @(member.HasErrors ? "error-row" : "")">
                             <td class="status-cell">
                                 <div class="status-indicator @member.Status.ToLower()"></div>
@@ -58,15 +90,23 @@
                                 <div class="watch-title">@member.Name</div>
                                 <div class="watch-url">@member.Url</div>
                             </td>
+                            <td>@(memberHealth?.Status ?? "-")</td>
                             @foreach (var field in (Detail.LatestSnapshot?.Fields ?? []))
                             {
                                 var siteVal = field.PerSiteValues.FirstOrDefault(p => p.WatchId == member.WatchId);
                                 <td>@(siteVal?.FormattedValue ?? siteVal?.Value?.ToString("N2") ?? "-")</td>
                             }
+                            <td>@(memberHealth?.ItemCount.ToString() ?? "-")</td>
+                            <td>@(memberHealth?.PipelineBlocks.ToString() ?? "-")</td>
+                            <td>@(memberHealth?.ConsecutiveErrors.ToString() ?? "-")</td>
                             <td class="meta-cell">
                                 @if (member.LastChecked.HasValue)
                                 {
                                     <span>@FormatTimeAgo(member.LastChecked.Value)</span>
+                                    @if (!string.IsNullOrWhiteSpace(memberHealth?.LastError))
+                                    {
+                                        <div class="watch-url">@memberHealth.LastError</div>
+                                    }
                                 }
                                 else
                                 {
@@ -89,6 +129,9 @@
     public WatchGroupDetailDto? Detail { get; set; }
 
     [Parameter]
+    public WatchGroupHealthDto? Health { get; set; }
+
+    [Parameter]
     public EventCallback<string> OnExpandToggled { get; set; }
 
     private bool IsExpanded { get; set; }
@@ -107,6 +150,9 @@
         if (field.FormattedValue is not null) return field.FormattedValue;
         return field.Value.HasValue ? field.Value.Value.ToString("N2") : "-";
     }
+
+    private WatchHealthItemDto? GetHealth(string watchId)
+        => Health?.Watches.FirstOrDefault(w => w.Id == watchId);
 
     private static string FormatTimeAgo(DateTime dt)
     {

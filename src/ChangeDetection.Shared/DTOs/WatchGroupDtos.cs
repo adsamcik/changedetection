@@ -128,3 +128,56 @@ public class TriggeredAggregateAlertDto
     public string? Message { get; set; }
     public string Importance { get; set; } = "Medium";
 }
+
+public class WatchGroupHealthDto
+{
+    public string GroupId { get; set; } = "";
+    public int TotalWatches { get; set; }
+    public int Healthy { get; set; }
+    public int Degraded { get; set; }
+    public int Errored { get; set; }
+    public List<WatchHealthItemDto> Watches { get; set; } = [];
+}
+
+public class WatchHealthItemDto
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string Status { get; set; } = "Healthy";
+    public DateTime? LastChecked { get; set; }
+    public int ItemCount { get; set; }
+    public int PipelineBlocks { get; set; }
+    public int ConsecutiveErrors { get; set; }
+    public string? LastError { get; set; }
+}
+
+/// <summary>
+/// Request body for PUT /api/groups/{id}/profile — accepts free-text CV/resume
+/// that the LLM converts into structured relevance keywords.
+/// </summary>
+public class ProfileUpdateRequest
+{
+    /// <summary>
+    /// Free-text profile/CV description. The LLM extracts keywords from this.
+    /// </summary>
+    public string ProfileText { get; set; } = "";
+}
+
+/// <summary>
+/// Response from the profile update endpoint showing extracted keywords and patch status.
+/// </summary>
+public class ProfileUpdateResult
+{
+    public string GroupId { get; set; } = "";
+    public List<KeywordDto> PositiveKeywords { get; set; } = [];
+    public List<KeywordDto> NegativeKeywords { get; set; } = [];
+    public string? Summary { get; set; }
+    public int WatchesUpdated { get; set; }
+}
+
+public class KeywordDto
+{
+    public string Keyword { get; set; } = "";
+    public int Weight { get; set; }
+}
