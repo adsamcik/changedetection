@@ -1,33 +1,36 @@
 @inject NavigationManager Navigation
-@inject HttpClient Http
 
 <div class="smart-input-container">
+    <label for="smart-input" class="visually-hidden">Describe what you want to watch or paste a URL</label>
     <div class="input-wrapper">
-        <textarea @ref="_inputElement"
+        <textarea id="smart-input"
+                  @ref="_inputElement"
                   @bind="InputText"
                   @bind:event="oninput"
                   @onkeydown="HandleKeyDown"
                   placeholder="@Placeholder"
                   class="smart-input"
+                  aria-label="Describe what you want to watch or paste a URL"
                   rows="2" />
+        <button class="smart-input-submit"
+                @onclick="ProcessInput"
+                disabled="@string.IsNullOrWhiteSpace(InputText)"
+                aria-label="Start monitoring"
+                title="Start monitoring (Enter)">
+            →
+        </button>
     </div>
 
-    @if (_isSubmitting)
+    @if (!string.IsNullOrEmpty(_errorMessage))
     {
-        <div class="mode-indicator submitting">
-            <span>⏳ Starting setup...</span>
-        </div>
-    }
-    else if (!string.IsNullOrEmpty(_errorMessage))
-    {
-        <div class="mode-indicator error">
+        <div class="mode-indicator error" role="alert">
             <span>⚠️ @_errorMessage</span>
         </div>
     }
     else if (!string.IsNullOrEmpty(InputText))
     {
-        <div class="mode-indicator">
-            <span>✨ Press Enter to start setup</span>
+        <div class="mode-indicator" aria-live="polite">
+            <span>💡 Paste a URL or describe what you want to monitor in plain English</span>
         </div>
     }
 </div>
@@ -37,7 +40,6 @@
 
     private ElementReference _inputElement;
     private string _inputText = "";
-    private bool _isSubmitting;
     private string? _errorMessage;
 
     private string InputText
@@ -60,44 +62,33 @@
         return Task.CompletedTask;
     }
 
-    private async Task ProcessInput()
+    private Task ProcessInput()
     {
         if (string.IsNullOrWhiteSpace(_inputText))
-            return;
+            return Task.CompletedTask;
 
         var trimmedInput = _inputText.Trim();
-        _isSubmitting = true;
-        StateHasChanged();
-        
-        try
-        {
-            // Start the setup session on the server - this begins processing immediately
-            var response = await Http.PostAsJsonAsync("/api/llm/start-setup", new { Input = trimmedInput });
-            
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<StartSetupResponse>();
-                if (result != null)
-                {
-                    // Navigate to setup page - no query params needed, session already has the input
-                    Navigation.NavigateTo($"/setup/{result.SessionId}");
-                    return;
-                }
-            }
-            
-            // Fallback: show error
-            _errorMessage = "Failed to start setup. Please try again.";
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Error: {ex.Message}";
-        }
-        finally
-        {
-            _isSubmitting = false;
-            StateHasChanged();
-        }
+
+        // Route directly based on input type — no wasted hub connections
+        if (LooksLikeUrl(trimmedInput))
+            Navigation.NavigateTo($"/setup?input={Uri.EscapeDataString(trimmedInput)}");
+        else
+            Navigation.NavigateTo($"/groupwatch/setup?input={Uri.EscapeDataString(trimmedInput)}");
+
+        return Task.CompletedTask;
     }
 
-    private record StartSetupResponse(Guid SessionId, DateTimeOffset CreatedAt);
+    private static bool LooksLikeUrl(string input)
+    {
+        if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (Uri.TryCreate($"https://{input}", UriKind.Absolute, out var uri) &&
+            (uri.Host.Contains('.') || uri.Host == "localhost" || System.Net.IPAddress.TryParse(uri.Host, out _)) &&
+            !input.Contains(' '))
+            return true;
+
+        return false;
+    }
 }

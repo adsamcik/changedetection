@@ -13,6 +13,7 @@ namespace ChangeDetection.Hubs;
 /// SignalR hub for interactive watch setup conversations.
 /// Streams pipeline outputs in real-time as they process user input.
 /// </summary>
+[Obsolete("Use ComposableSetupHub instead. This legacy hub is retained only for reference and will be removed in a future release.")]
 public class SetupConversationHub(
     IConversationSessionManager sessionManager,
     IWatchSetupPipeline pipeline,

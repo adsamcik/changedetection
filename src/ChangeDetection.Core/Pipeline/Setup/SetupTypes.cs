@@ -15,6 +15,9 @@ public record SetupProgress
     public required string Message { get; init; }
     public string? Detail { get; init; }
 
+    /// <summary>Session ID for subsequent checkpoint calls (ConfirmIntent, ConfirmPipeline).</summary>
+    public string? SessionId { get; init; }
+
     /// <summary>Set at Checkpoint 1 — parsed intent for user confirmation.</summary>
     public ParsedIntent? Intent { get; init; }
 
@@ -95,6 +98,9 @@ public record DryRunResult
     public bool WasBaseline { get; init; }
     public string? Error { get; init; }
     public string? SampleOutput { get; init; }
+
+    /// <summary>Human-readable per-block data flow summary for observability.</summary>
+    public string? BlockFlowSummary { get; init; }
 }
 
 /// <summary>QC validation results from LLM.</summary>
@@ -137,6 +143,7 @@ public class SetupSession
     public DryRunResult? DryRunResult { get; set; }
     public QcResult? QcResult { get; set; }
     public AdversarialTestResult? AdversarialTestResult { get; set; }
+    public string? AnalysisSource { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;
     public int LlmCallCount { get; set; }

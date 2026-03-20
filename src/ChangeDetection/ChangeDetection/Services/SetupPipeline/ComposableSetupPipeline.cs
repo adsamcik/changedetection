@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChangeDetection.Core.Entities;
@@ -7,6 +8,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.Pipeline;
 using Microsoft.Extensions.Logging;
 
 namespace ChangeDetection.Services.SetupPipeline;
@@ -20,11 +22,42 @@ public class ComposableSetupPipeline(
     IPlatformDetector platformDetector,
     IPipelineTemplateRegistry templateRegistry,
     IRepository<WatchedSite> watchRepo,
+    SetupFlowEnhancements setupFlowEnhancements,
     ILogger<ComposableSetupPipeline> logger) : IComposableSetupPipeline
 {
     private static readonly ConcurrentDictionary<string, SetupSession> Sessions = new();
     private static readonly TimeSpan SessionExpiration = TimeSpan.FromMinutes(30);
     private const float TemplateConfidenceThreshold = 0.9f;
+    private static readonly IReadOnlyDictionary<string, int> IntentPositiveKeywordWeights =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["scientist"] = 10,
+            ["research"] = 8,
+            ["laboratory"] = 5,
+            ["lab technician"] = 6,
+            ["molecular biology"] = 10,
+            ["cell culture"] = 8,
+            ["PCR"] = 8,
+            ["biotech"] = 5,
+            ["microscopy"] = 5,
+            ["GMP"] = 5,
+            ["CRISPR"] = 6,
+            ["diagnostics"] = 5,
+            ["engineer"] = 6,
+            ["developer"] = 6,
+            ["analyst"] = 6
+        };
+
+    private static readonly IReadOnlyDictionary<string, int> IntentNegativeKeywordWeights =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["director"] = -15,
+            ["VP"] = -20,
+            ["senior"] = -3,
+            ["manager"] = -5,
+            ["PhD required"] = -20,
+            ["intern"] = -5
+        };
 
     public async IAsyncEnumerable<SetupProgress> StartSetupAsync(
         SetupRequest request,
@@ -39,12 +72,74 @@ public class ComposableSetupPipeline(
         logger.LogInformation("Starting composable setup session {SessionId}", session.Id);
 
         // Phase 1: Parse intent
-        yield return Progress(SetupPhase.IntentParsing, SetupProgressType.Started, "Analyzing your request...");
+        yield return Progress(SetupPhase.IntentParsing, SetupProgressType.Started, "Analyzing your request...") with { SessionId = session.Id };
         yield return Progress(SetupPhase.IntentParsing, SetupProgressType.Thinking, "Understanding what you want to monitor...");
 
         ParsedIntent? intent = null;
         string? parseError = null;
+        ContentAnalysisResult? analysis = null;
+        string? analysisSource = null;
+        string? analysisError = null;
+        var (positiveKeywords, negativeKeywords) = ExtractKeywordsFromIntent(request.UserInput);
 
+        // Fast path: if the input is a known platform URL, skip LLM intent parsing entirely
+        var extractedUrl = ExtractUrlFromInput(request.UserInput);
+        if (extractedUrl is not null)
+        {
+            // Direct platform detection from URL (no content needed)
+            var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(extractedUrl);
+            var fastTemplate = detectedPlatform is not null 
+                ? await setupFlowEnhancements.GetPlatformTemplateAsync(
+                    detectedPlatform,
+                    extractedUrl,
+                    positiveKeywords,
+                    negativeKeywords,
+                    ct)
+                : null;
+            if (detectedPlatform is not null && fastTemplate is not null)
+            {
+                logger.LogInformation(
+                    "Fast path: Detected {Platform} from URL, skipping LLM intent parsing",
+                    detectedPlatform);
+
+                yield return Progress(SetupPhase.IntentParsing, SetupProgressType.Progress,
+                    $"Detected {detectedPlatform} platform — using optimized pipeline template",
+                    $"URL pattern matched known platform");
+
+                // Create synthetic intent
+                intent = new ParsedIntent
+                {
+                    Url = extractedUrl,
+                    Intent = $"Monitor job listings on {detectedPlatform}",
+                    Summary = $"Monitoring {new Uri(extractedUrl).Host} for new job postings",
+                    ChangeType = "listing"
+                };
+                session.Intent = intent;
+                session.AssembledPipeline = fastTemplate with
+                {
+                    Metadata = new PipelineMetadata
+                    {
+                        DisplayTitle = intent.Summary,
+                        CreatedAt = DateTime.UtcNow,
+                        UserIntent = intent.Intent,
+                        CardType = "jobs",
+                        EstimatedLlmCallsPerRun = 0
+                    }
+                };
+                session.ContentAnalysis = new ContentAnalysisResult
+                {
+                    ContentType = "listing",
+                    PageSummary = $"{detectedPlatform} job board — using pre-built API pipeline"
+                };
+
+                // Skip directly to checkpoint 1
+                analysisSource = $"deterministic-template:{detectedPlatform}";
+                analysis = session.ContentAnalysis;
+                goto checkpoint1;
+            }
+        }
+
+        // Normal path: use LLM to parse intent
         try
         {
             intent = await ParseIntentAsync(request.UserInput, ct);
@@ -100,59 +195,255 @@ public class ComposableSetupPipeline(
         yield return Progress(SetupPhase.ContentFetching, SetupProgressType.Progress,
             "Page content fetched successfully.", $"HTTP {fetchResult.HttpStatusCode} in {fetchResult.DurationMs}ms");
 
+        // Check for JS shell (SPA that needs longer render wait)
+        var didRetryFetch = false;
+        var jsDetection = setupFlowEnhancements.DetectJsShell(session.FetchedHtml, session.FetchedHtml.Length);
+        if (jsDetection.IsJsShell && jsDetection.ShouldRetryWithPlaywright)
+        {
+            yield return Progress(SetupPhase.ContentFetching, SetupProgressType.Progress,
+                $"Detected JS shell ({string.Join(", ", jsDetection.Signals)}). Re-fetching with extended wait...");
+
+            var originalLength = session.FetchedHtml.Length;
+            FetchResult? retryResult = null;
+            try
+            {
+                retryResult = await contentFetcher.FetchAsync(intent!.Url, new FetchOptions
+                {
+                    UseJavaScript = true,
+                    TimeoutSeconds = 45,
+                    WaitAfterLoadMs = 3000
+                }, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "JS shell re-fetch failed for session {SessionId}, continuing with original content", session.Id);
+            }
+
+            if (retryResult is { IsSuccess: true } && retryResult.Html is not null
+                && retryResult.Html.Length > originalLength * 2)
+            {
+                session.FetchedHtml = retryResult.Html;
+                didRetryFetch = true;
+                yield return Progress(SetupPhase.ContentFetching, SetupProgressType.Progress,
+                    $"Playwright re-fetch: {retryResult.Html.Length:N0} chars (was {originalLength:N0})");
+            }
+        }
+
+        // Check for cookie wall / consent page blocking actual content
+        if (!didRetryFetch)
+        {
+            var fetchedContent = session.FetchedHtml;
+            if (fetchedContent != null)
+            {
+                var lower = fetchedContent.ToLowerInvariant();
+                var hasCookieWall = lower.Contains("cookie") && (
+                    lower.Contains("consent") || lower.Contains("accept all") ||
+                    lower.Contains("cookie policy") || lower.Contains("cookie information") ||
+                    lower.Contains("gdpr") || lower.Contains("privacy"));
+
+                if (hasCookieWall)
+                {
+                    yield return Progress(SetupPhase.ContentFetching, SetupProgressType.Progress,
+                        "Cookie consent page detected. Re-fetching with browser automation...");
+
+                    FetchResult? cookieRetryResult = null;
+                    try
+                    {
+                        cookieRetryResult = await contentFetcher.FetchAsync(intent!.Url, new FetchOptions
+                        {
+                            UseJavaScript = true,
+                            TimeoutSeconds = 45,
+                            WaitAfterLoadMs = 5000
+                        }, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Cookie wall re-fetch failed for session {SessionId}", session.Id);
+                    }
+
+                    if (cookieRetryResult is { IsSuccess: true, Html: not null } &&
+                        cookieRetryResult.Html.Length > fetchedContent.Length)
+                    {
+                        session.FetchedHtml = cookieRetryResult.Html;
+                        yield return Progress(SetupPhase.ContentFetching, SetupProgressType.Progress,
+                            $"Browser re-fetch: {cookieRetryResult.Html.Length:N0} chars (was {fetchedContent.Length:N0})");
+                    }
+                }
+            }
+        }
+
         // Phase 3: Analyze content
         yield return Progress(SetupPhase.ContentAnalysis, SetupProgressType.Thinking, "Analyzing page structure...");
 
-        ContentAnalysisResult? analysis = null;
-        string? analysisError = null;
+        // Track how the analysis was determined for transparent checkpoint messaging
+        // (variables declared earlier for goto scope)
 
+        // Try deterministic classifier first (fast, no LLM needed)
+        ContentClassification? classification = null;
         try
         {
-            var detectedPlatform = DetectPlatform(intent.Url, session.FetchedHtml);
-            session.DetectedPlatform = detectedPlatform;
-
-            if (TryGetTemplatePipeline(detectedPlatform, intent, out var selectedTemplate, out var templatePipeline))
+            string? responseContentType = null;
+            if (fetchResult?.ResponseHeaders is { } headers)
             {
-                analysis = BuildTemplateAnalysis(intent, detectedPlatform!, selectedTemplate!);
-                session.ContentAnalysis = analysis;
-                session.SelectedTemplate = selectedTemplate;
-                session.AssembledPipeline = SpecializeTemplatePipeline(
-                    templatePipeline!,
-                    intent,
-                    analysis,
-                    detectedPlatform!,
-                    selectedTemplate!);
-
-                logger.LogInformation(
-                    "Detected platform: {Platform} (confidence: {Confidence}). Using pre-built template.",
-                    detectedPlatform!.PlatformName,
-                    detectedPlatform.Confidence);
+                responseContentType = headers
+                    .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
             }
-            else
-            {
-                analysis = await AnalyzeContentAsync(session.FetchedHtml, intent, ct);
-                session.ContentAnalysis = analysis;
-                session.LlmCallCount++;
-            }
+            classification = setupFlowEnhancements.ClassifyContent(
+                session.FetchedHtml!, intent!.Url, responseContentType);
+            
+            logger.LogInformation(
+                "Deterministic classifier result: Type={Type}, Confidence={Confidence}, Platform={Platform}, Signals={Signals}",
+                classification.Type, classification.Confidence, classification.DetectedPlatform ?? "none",
+                string.Join("; ", classification.Signals));
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to analyze content for session {SessionId}", session.Id);
-            analysisError = ex.Message;
+            logger.LogWarning(ex, "Deterministic classification failed for session {SessionId}, falling back to LLM", session.Id);
+        }
+
+        if (classification is { Confidence: >= 0.7 })
+        {
+            logger.LogInformation(
+                "Deterministic classification: {Type} with {Confidence:P0} confidence (signals: {Signals})",
+                classification.Type, classification.Confidence, string.Join(", ", classification.Signals));
+
+            yield return Progress(SetupPhase.ContentAnalysis, SetupProgressType.Progress,
+                $"Detected {classification.Type} with {classification.Confidence:P0} confidence",
+                $"Signals: {string.Join(", ", classification.Signals)}");
+
+            // If platform detected, try to get a pre-built pipeline template
+            if (classification.DetectedPlatform is not null)
+            {
+                var deterministicTemplate = await setupFlowEnhancements.GetPlatformTemplateAsync(
+                    classification.DetectedPlatform,
+                    intent!.Url,
+                    positiveKeywords,
+                    negativeKeywords,
+                    ct);
+                if (deterministicTemplate is not null)
+                {
+                    analysis = BuildDeterministicAnalysis(classification, intent!);
+                    session.ContentAnalysis = analysis;
+                    session.AssembledPipeline = deterministicTemplate with
+                    {
+                        Metadata = new PipelineMetadata
+                        {
+                            DisplayTitle = intent!.Summary ?? intent.Intent,
+                            CreatedAt = DateTime.UtcNow,
+                            UserIntent = intent.Intent,
+                            CardType = analysis.ContentType,
+                            EstimatedLlmCallsPerRun = 0
+                        }
+                    };
+
+                    logger.LogInformation(
+                        "Using pre-built pipeline template for {Platform}, skipping LLM analysis",
+                        classification.DetectedPlatform);
+
+                    analysisSource = $"deterministic-template:{classification.DetectedPlatform}";
+                }
+            }
+
+            // Deterministic classification succeeded but no template — build synthetic analysis to skip LLM
+            if (analysis is null && classification.Type is not (DetectedContentType.Unknown
+                    or DetectedContentType.JsShell or DetectedContentType.ErrorPage))
+            {
+                analysis = BuildDeterministicAnalysis(classification, intent!);
+                session.ContentAnalysis = analysis;
+                analysisSource = $"deterministic-classification:{classification.Type}";
+            }
+        }
+
+        // Fall through to existing platform detection + LLM if analysis not yet determined
+        if (analysis is null)
+        {
+            try
+            {
+                var detectedPlatform = DetectPlatform(intent!.Url, session.FetchedHtml);
+                session.DetectedPlatform = detectedPlatform;
+
+                if (TryGetTemplatePipeline(detectedPlatform, intent, out var selectedTemplate, out var templatePipeline))
+                {
+                    analysis = BuildTemplateAnalysis(intent, detectedPlatform!, selectedTemplate!);
+                    session.ContentAnalysis = analysis;
+                    session.SelectedTemplate = selectedTemplate;
+                    session.AssembledPipeline = SpecializeTemplatePipeline(
+                        templatePipeline!,
+                        intent,
+                        analysis,
+                        detectedPlatform!,
+                        selectedTemplate!);
+
+                    logger.LogInformation(
+                        "Detected platform: {Platform} (confidence: {Confidence}). Using pre-built template.",
+                        detectedPlatform!.PlatformName,
+                        detectedPlatform.Confidence);
+
+                    analysisSource = $"platform-template:{detectedPlatform.PlatformName}";
+                }
+                else
+                {
+                    analysis = await AnalyzeContentAsync(session.FetchedHtml, intent, ct);
+                    session.ContentAnalysis = analysis;
+                    session.LlmCallCount++;
+                    analysisSource = "llm";
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "LLM content analysis failed for session {SessionId}. The AI provider may be unavailable.", session.Id);
+                analysisError = ex.Message;
+            }
         }
 
         if (analysisError != null)
         {
-            yield return FailedProgress(SetupPhase.ContentAnalysis, "Failed to analyze the page content.", analysisError);
+            yield return FailedProgress(SetupPhase.ContentAnalysis,
+                "AI analysis failed — please check your Copilot/LLM provider settings. " +
+                "Without AI analysis, the system cannot determine page structure or generate extraction selectors.",
+                analysisError);
             yield break;
         }
 
-        yield return Progress(SetupPhase.ContentAnalysis, SetupProgressType.Progress,
-            "Page analysis complete.", analysis!.PageSummary);
+        // Guard: if LLM returned a vague "other" type with no regions, it couldn't determine page structure.
+        // Don't silently proceed — flag it to the user so they can provide guidance.
+        if (analysisSource == "llm"
+            && analysis!.ContentType is "other"
+            && (analysis.Regions is null || analysis.Regions.Count == 0))
+        {
+            logger.LogWarning(
+                "LLM analysis for session {SessionId} returned content type 'other' with no regions — page structure undetermined",
+                session.Id);
 
-        // Checkpoint 1: Show understanding to user
+            yield return Progress(SetupPhase.ContentAnalysis, SetupProgressType.Progress,
+                "I couldn't determine the page structure. The AI wasn't able to identify specific content regions. " +
+                "You may want to describe what you'd like to extract, or choose basic full-page monitoring.",
+                analysis.PageSummary);
+        }
+        else
+        {
+            yield return Progress(SetupPhase.ContentAnalysis, SetupProgressType.Progress,
+                "Page analysis complete.", analysis!.PageSummary);
+        }
+
+        checkpoint1:
+        session.AnalysisSource = analysisSource;
+
+        // Checkpoint 1: Show understanding to user — be transparent about how we got here
         session.CurrentPhase = SetupPhase.Checkpoint1;
         session.LastActivityAt = DateTime.UtcNow;
+
+        var analysisDetail = analysisSource switch
+        {
+            string s when s.StartsWith("deterministic-template:") =>
+                $"Using pre-built template for {s["deterministic-template:".Length..]} (fast path, no AI needed)",
+            string s when s.StartsWith("deterministic-classification:") =>
+                $"Detected as {s["deterministic-classification:".Length..]} by pattern matching (fast path)",
+            string s when s.StartsWith("platform-template:") =>
+                $"Recognized {s["platform-template:".Length..]} platform, using pre-built template",
+            "llm" => $"AI analyzed the page: {analysis!.ContentType} content with {analysis.Regions?.Count ?? 0} regions identified",
+            _ => "Analysis complete"
+        };
 
         var summary = intent.Summary
             ?? $"I'll watch {intent.Url} for {intent.ChangeType} changes: {intent.Intent}";
@@ -163,7 +454,8 @@ public class ComposableSetupPipeline(
             Type = SetupProgressType.CheckpointReached,
             Message = summary,
             Intent = intent,
-            Detail = $"Session: {session.Id}"
+            Detail = analysisDetail,
+            SessionId = session.Id
         };
     }
 
@@ -291,11 +583,15 @@ public class ComposableSetupPipeline(
             session.DryRunResult = dryRunResult;
         }
 
+        var dryRunDetail = dryRunResult.BlockFlowSummary is not null
+            ? dryRunResult.BlockFlowSummary + "\n\n" + (dryRunResult.SampleOutput ?? dryRunResult.Error ?? "")
+            : dryRunResult.SampleOutput ?? dryRunResult.Error;
+
         yield return Progress(SetupPhase.DryRun, SetupProgressType.Progress,
             dryRunResult.Success
                 ? "Dry run succeeded — pipeline produces valid output."
                 : "Dry run completed with issues.",
-            dryRunResult.SampleOutput ?? dryRunResult.Error);
+            dryRunDetail);
 
         // Phase 5.5: Adversarial testing (optional, requires large model)
         session.CurrentPhase = SetupPhase.AdversarialTest;
@@ -347,26 +643,51 @@ public class ComposableSetupPipeline(
             qcResult.Valid ? "Quality check passed." : "Quality check found potential issues.",
             qcResult.Issues.Count > 0 ? string.Join("; ", qcResult.Issues) : null);
 
+        var dryRunHasUsableOutput = HasUsableDryRunOutput(dryRunResult);
+        var userFacingQcResult = CreateUserFacingQcResult(qcResult);
+
         // Checkpoint 2: Show pipeline + results for approval
         session.CurrentPhase = SetupPhase.Checkpoint2;
         session.LastActivityAt = DateTime.UtcNow;
 
-        var humanSummary = BuildHumanSummary(session.Intent!, pipeline, dryRunResult, qcResult, adversarialResult);
+        var humanSummary = BuildHumanSummary(session.Intent!, pipeline, dryRunResult, userFacingQcResult, adversarialResult);
+
+        if (IsDeterministicTemplateSource(session.AnalysisSource) && dryRunHasUsableOutput)
+        {
+            logger.LogInformation("Auto-approving template pipeline (dry run passed, no LLM needed)");
+            yield return Progress(
+                SetupPhase.Checkpoint2,
+                SetupProgressType.Progress,
+                "Trusted template passed the dry run — creating your watch automatically.");
+
+            await foreach (var progress in ConfirmPipelineAsync(sessionId, confirmed: true, ct: ct))
+                yield return progress;
+
+            yield break;
+        }
+
+        var checkpoint2Message = dryRunHasUsableOutput
+            ? "Pipeline ready for your approval."
+            : "⚠️ Pipeline ran but extracted no data";
+        var checkpoint2Detail = dryRunHasUsableOutput
+            ? $"{dryRunResult.BlockFlowSummary}\n\nSession: {session.Id}"
+            : $"{dryRunResult.BlockFlowSummary}\n\nThe page may need JavaScript rendering or has a cookie wall blocking content. Session: {session.Id}";
 
         yield return new SetupProgress
         {
             Phase = SetupPhase.Checkpoint2,
             Type = SetupProgressType.CheckpointReached,
-            Message = "Pipeline ready for your approval.",
+            Message = checkpoint2Message,
             Proposal = new PipelineProposal
             {
                 Pipeline = pipeline,
                 HumanSummary = humanSummary,
                 DryRun = dryRunResult,
-                QcValidation = qcResult,
+                QcValidation = userFacingQcResult,
                 AdversarialTest = adversarialResult
             },
-            Detail = $"Session: {session.Id}"
+            Detail = checkpoint2Detail,
+            SessionId = session.Id
         };
     }
 
@@ -410,14 +731,15 @@ public class ComposableSetupPipeline(
                 session.QcResult = qcResult;
                 session.LlmCallCount++;
 
-                var humanSummary = BuildHumanSummary(session.Intent!, revisedPipeline, dryRunResult, qcResult, adversarialResult);
+                var userFacingQcResult = CreateUserFacingQcResult(qcResult);
+                var humanSummary = BuildHumanSummary(session.Intent!, revisedPipeline, dryRunResult, userFacingQcResult, adversarialResult);
 
                 proposal = new PipelineProposal
                 {
                     Pipeline = revisedPipeline,
                     HumanSummary = humanSummary,
                     DryRun = dryRunResult,
-                    QcValidation = qcResult,
+                    QcValidation = userFacingQcResult,
                     AdversarialTest = adversarialResult
                 };
             }
@@ -433,13 +755,21 @@ public class ComposableSetupPipeline(
                 yield break;
             }
 
+            var revisedDryRunHasUsableOutput = proposal?.DryRun is not null && HasUsableDryRunOutput(proposal.DryRun);
+            var revisedBlockFlow = proposal?.DryRun?.BlockFlowSummary;
+
             yield return new SetupProgress
             {
                 Phase = SetupPhase.Checkpoint2,
                 Type = SetupProgressType.CheckpointReached,
-                Message = "Revised pipeline ready for approval.",
+                Message = revisedDryRunHasUsableOutput
+                    ? "Revised pipeline ready for approval."
+                    : "⚠️ Revised pipeline ran but extracted no data",
                 Proposal = proposal,
-                Detail = $"Session: {session.Id}"
+                Detail = revisedDryRunHasUsableOutput
+                    ? $"{revisedBlockFlow}\n\nSession: {session.Id}"
+                    : $"{revisedBlockFlow}\n\nThe page may need JavaScript rendering or has a cookie wall blocking content. Session: {session.Id}",
+                SessionId = session.Id
             };
             yield break;
         }
@@ -474,6 +804,10 @@ public class ComposableSetupPipeline(
                 FetchSettings = new FetchSettings
                 {
                     UseJavaScript = session.ContentAnalysis?.NeedsJavaScript ?? false
+                },
+                Notifications = new NotificationSettings
+                {
+                    MinimumImportance = ChangeImportance.Medium
                 }
             };
 
@@ -511,6 +845,64 @@ public class ComposableSetupPipeline(
 
     private static SetupProgress FailedProgress(SetupPhase phase, string message, string? error = null) =>
         new() { Phase = phase, Type = SetupProgressType.Failed, Message = message, Error = error };
+
+    /// <summary>
+    /// Strips markdown code fences from LLM responses that wrap JSON in markdown.
+    /// </summary>
+    private static string StripMarkdownFences(string content)
+    {
+        var trimmed = content.Trim();
+        if (!trimmed.StartsWith('`')) return trimmed;
+        
+        var firstNewline = trimmed.IndexOf('\n');
+        if (firstNewline > 0)
+            trimmed = trimmed[(firstNewline + 1)..];
+        if (trimmed.EndsWith("```"))
+            trimmed = trimmed[..^3].TrimEnd();
+        return trimmed;
+    }
+
+    /// <summary>
+    /// Extracts a URL from user input text. Returns null if no valid URL found.
+    /// Handles both bare URLs and URLs embedded in natural language.
+    /// </summary>
+    private static string? ExtractUrlFromInput(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var trimmed = input.Trim();
+
+        // If the entire input is a URL
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var directUri) &&
+            (directUri.Scheme == "http" || directUri.Scheme == "https"))
+            return trimmed;
+
+        // Extract URL from natural language
+        var match = System.Text.RegularExpressions.Regex.Match(
+            trimmed, @"https?://[^\s""'<>]+",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        return match.Success ? match.Value.TrimEnd('.', ',', ')', ']') : null;
+    }
+
+    private static (List<RelevanceKeyword> positive, List<RelevanceKeyword> negative) ExtractKeywordsFromIntent(string input)
+    {
+        var normalizedInput = input ?? string.Empty;
+        var lowerInput = normalizedInput.ToLowerInvariant();
+
+        var positive = IntentPositiveKeywordWeights
+            .Select(pattern => new RelevanceKeyword(
+                pattern.Key,
+                lowerInput.Contains(pattern.Key.ToLowerInvariant(), StringComparison.Ordinal)
+                    ? pattern.Value + 5
+                    : pattern.Value))
+            .ToList();
+
+        var negative = IntentNegativeKeywordWeights
+            .Select(pattern => new RelevanceKeyword(pattern.Key, pattern.Value))
+            .ToList();
+
+        return (positive, negative);
+    }
 
     // ── LLM interaction methods ─────────────────────────────────────────
 
@@ -628,42 +1020,67 @@ public class ComposableSetupPipeline(
             
             Design a pipeline by selecting blocks and providing configuration for each.
             The pipeline MUST start with an "Input" block and end with an "Output" block.
-            Include a "Navigate" block to fetch the page, then appropriate extraction and comparison blocks.
             
-            Common patterns:
-            - Price tracking: Input → Navigate → Filter (CSS selector) → ExtractSchema → NumericDelta → Condition → Notify → Output
-            - Content changes: Input → Navigate → Filter → HashCompare → Output
-            - List monitoring: Input → Navigate → Filter → ExtractSchema → ListDiff → Output
-            - Availability: Input → Navigate → Filter → ExtractSchema → Condition → Notify → Output
+            PIPELINE PATTERNS (choose the best match):
             
-            Respond with a JSON object:
+            1. JSON API monitoring (job boards, REST APIs):
+               Input → HttpRequest (POST/GET with JSON body/headers) → JsonExtract (JSONPath) → DataFilter → RelevanceScore → ListDiff → Output
+               Config: HttpRequest needs method, headers, body. JsonExtract needs jsonpath expressions. DataFilter needs field conditions.
+            
+            2. HTML page with job listings:
+               Input → Navigate (with useJavaScript if SPA) → ExtractSchema (CSS selectors) → DataFilter → ListDiff → Output
+               
+            3. Multi-query search (aggregating results from multiple searches):
+               Input → Iterate (values=["query1","query2",...], urlTemplate, extract jsonpath) → DataFilter → RelevanceScore → ListDiff → Output
+               
+            4. List + detail enrichment (fetch detail pages for each item):
+               Input → HttpRequest → JsonExtract → ForEachRequest (urlTemplate for detail, extract mappings) → ListDiff → Output
+            
+            5. Price/stock tracking:
+               Input → Navigate → ExtractSchema → NumericDelta → Condition → Notify → Output
+            
+            6. Simple content change detection:
+               Input → Navigate → HashCompare → Condition → Notify → Output
+            
+            BLOCK CONFIGS:
+            - Input: { "url": "https://..." }
+            - Navigate: { "useJavaScript": true/false, "timeout": 30000, "waitForSelector": ".css-selector" }
+            - HttpRequest: { "method": "GET"/"POST", "headers": {"Accept":"application/json","Content-Type":"application/json"}, "body": "{json}", "timeout": 30000 }
+              Output ports: body (raw text), json (parsed), html, status, response (full composite with url+requestBody — use this when connecting to Paginate offset mode)
+            - JsonExtract: { "extractions": [{"name":"items","jsonpath":"$.data[*]","type":"array"}, {"name":"total","jsonpath":"$.total","type":"number"}] }
+            - ExtractSchema: { "scope": ".item-container", "listMode": true, "schema": [{"field":"title","selector":".title"},{"field":"url","selector":"a[href]"}], "preferStructuredData": true }
+              When listMode=true, scope selects repeating elements and schema fields are extracted per element → outputs JSON array. Use for job listing pages.
+            - DataFilter: { "conditions": [{"field":"location","operator":"contains","value":"Denmark"}], "mode": "any" }
+            - RelevanceScore: { "targetFields": ["title","description"], "positiveKeywords": [{"keyword":"scientist","weight":10}], "negativeKeywords": [{"keyword":"director","weight":-15}], "minScore": 0 }
+            - ListDiff: { "identityKey": "url" or "id", "mode": "all_changes"/"additions_only" }
+            - Iterate: { "values": ["q1","q2"], "request": {"urlTemplate":"https://api?q=URLTEMPLATE_VALUE","method":"GET"}, "extract": {"jsonpath":"$.hits[*]","type":"array"}, "deduplicateKey": "id" }
+            - ForEachRequest: { "request": {"urlTemplate":"https://api/URLTEMPLATE_ITEM_ID","method":"GET"}, "extract": {"format":"json","mappings":[{"source":"$.description","target":"description"}]}, "rateLimit": {"delayMs":500} }
+            - Deduplicate: { "identityKey": "id" }
+            - LlmExtract: { "prompt": "Extract job listings as JSON array with title, company, location, url", "outputSchema": {"type":"array"} }
+            - Condition: { "operator": "greaterThan", "field": "added.length", "value": 0 }
+            - Notify: { "template": "New items detected" }
+            
+            IMPORTANT RULES:
+            - For JSON APIs: Use HttpRequest + JsonExtract (NOT Navigate + ExtractSchema)
+            - For HTML pages: Use Navigate + ExtractSchema with listMode=true (for lists of items)
+            - For pages needing login/cookies: Use Navigate with useJavaScript: true
+            - Always include ListDiff for change tracking (unless it's a one-off check)
+            - When using Paginate offset mode after HttpRequest, connect from httprequest "response" port (not "body" or "json") to paginate "json" port
+            - DataFilter and RelevanceScore are optional — include them when the user wants filtering/scoring
+            - ListDiff accepts both arrays and objects with "items" array
+            - ExtractSchema with listMode=true outputs a JSON array — use for job listing pages with repeating elements
+            - CSS selectors must be Level 3 compatible — do NOT use :has() pseudo-class
+            - Use block types ONLY from the available list
+            - Every block needs a unique id in format "type-N" (e.g. "httprequest-1")
+            - Include Input at position 0 and Output at the last position
+            - Always include connections between blocks
+            
+            Respond ONLY with a JSON object:
             {
-              "blocks": [
-                {
-                  "id": "unique-id (e.g. 'navigate-1')",
-                  "type": "block type from the available list",
-                  "config": { block-specific config or null },
-                  "position": 0
-                }
-              ],
+              "blocks": [...],
+              "connections": [{"fromBlockId":"input-1","fromPort":"url","toBlockId":"navigate-1","toPort":"url"}, ...],
               "estimatedLlmCallsPerRun": 0
             }
-            
-            Config examples:
-            - Navigate: { "timeoutSeconds": 30 }
-            - Filter: { "cssSelector": "#price", "mode": "css" }
-            - ExtractSchema: { "fields": [{"name": "price", "selector": ".price", "type": "number"}] }
-            - Condition: { "operator": "lessThan", "field": "price", "value": 50 }
-            - NumericDelta: { "field": "price", "threshold": 0.01 }
-            - Notify: { "template": "Price changed from {previous} to {current}" }
-            
-            Rules:
-            - Use block types ONLY from the available list
-            - Every block needs a unique id in format "type-N" (e.g. "navigate-1")
-            - Include Input at position 0 and Output at the last position
-            - Match the pipeline pattern to the change type and page analysis
-            
-            Respond ONLY with the JSON object.
             """;
 
         var response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
@@ -681,7 +1098,9 @@ public class ComposableSetupPipeline(
                 $"LLM failed to build pipeline: {response.ErrorMessage ?? "empty response"}");
         }
 
-        var llmOutput = JsonDocument.Parse(response.Content);
+        var jsonContent = StripMarkdownFences(response.Content);
+
+        var llmOutput = JsonDocument.Parse(jsonContent);
         var blocksElement = llmOutput.RootElement.GetProperty("blocks");
 
         var blocks = new List<BlockDefinition>();
@@ -718,8 +1137,29 @@ public class ComposableSetupPipeline(
             blocks.Add(new BlockDefinition { Id = "output-1", Type = "Output", Position = blocks.Count });
         }
 
-        // Auto-wire connections based on port compatibility
-        var connections = AutoWireConnections(blocks);
+        // Use LLM-provided connections if present, otherwise auto-wire
+        List<ConnectionDefinition> connections;
+        if (llmOutput.RootElement.TryGetProperty("connections", out var connectionsEl) && 
+            connectionsEl.ValueKind == JsonValueKind.Array && connectionsEl.GetArrayLength() > 0)
+        {
+            connections = [];
+            foreach (var connEl in connectionsEl.EnumerateArray())
+            {
+                connections.Add(new ConnectionDefinition
+                {
+                    FromBlockId = connEl.GetProperty("fromBlockId").GetString()!,
+                    FromPort = connEl.GetProperty("fromPort").GetString()!,
+                    ToBlockId = connEl.GetProperty("toBlockId").GetString()!,
+                    ToPort = connEl.GetProperty("toPort").GetString()!
+                });
+            }
+            logger.LogInformation("Using {Count} LLM-provided connections", connections.Count);
+        }
+        else
+        {
+            connections = AutoWireConnections(blocks);
+            logger.LogInformation("Auto-wired {Count} connections (LLM didn't provide them)", connections.Count);
+        }
 
         var estimatedLlmCalls = llmOutput.RootElement.TryGetProperty("estimatedLlmCallsPerRun", out var llmCallsEl)
             ? llmCallsEl.GetInt32()
@@ -870,7 +1310,8 @@ public class ComposableSetupPipeline(
                 $"LLM failed to rebuild pipeline: {response.ErrorMessage ?? "empty response"}");
         }
 
-        var llmOutput = JsonDocument.Parse(response.Content);
+        var rebuildJson = StripMarkdownFences(response.Content);
+        var llmOutput = JsonDocument.Parse(rebuildJson);
         var blocksElement = llmOutput.RootElement.GetProperty("blocks");
 
         var blocks = new List<BlockDefinition>();
@@ -999,6 +1440,14 @@ public class ComposableSetupPipeline(
             var result = await pipelineExecutor.ExecuteAsync(
                 dryRunPipeline, tempWatchId, stateStore, null, ct, isDryRun: true);
 
+            if (result.Success && IsDryRunOutputEmpty(result.OutputData))
+            {
+                logger.LogInformation("Dry run produced empty output, retrying after 2s delay...");
+                await Task.Delay(2000, ct);
+                result = await pipelineExecutor.ExecuteAsync(
+                    dryRunPipeline, tempWatchId, stateStore, null, ct, isDryRun: true);
+            }
+
             var blockOutputs = new Dictionary<string, object?>();
             foreach (var (blockId, blockResult) in result.BlockResults)
             {
@@ -1023,7 +1472,8 @@ public class ComposableSetupPipeline(
                 SkippedBlockIds = [.. result.SkippedBlockIds],
                 WasBaseline = result.WasBaseline,
                 SampleOutput = sampleOutput,
-                Error = result.Error
+                Error = result.Error,
+                BlockFlowSummary = BuildBlockFlowSummary(result, dryRunPipeline)
             };
         }
         catch (Exception ex)
@@ -1179,10 +1629,18 @@ public class ComposableSetupPipeline(
             $"**Pipeline:** {string.Join(" → ", pipeline.Blocks.Select(b => b.Type))} ({pipeline.Blocks.Count} blocks)"
         };
 
-        if (dryRun.Success)
+        if (dryRun.Success && HasUsableDryRunOutput(dryRun))
             parts.Add("**Dry run:** ✓ Pipeline executed successfully");
+        else if (dryRun.Success)
+        {
+            parts.Add("**Dry run:** ⚠ Pipeline executed but extracted no data");
+            parts.Add("**Why this matters:** The page may need JavaScript rendering or a cookie banner may be blocking extraction.");
+        }
         else
             parts.Add($"**Dry run:** ✗ {dryRun.Error ?? "Failed"}");
+
+        if (!string.IsNullOrWhiteSpace(dryRun.BlockFlowSummary))
+            parts.Add(dryRun.BlockFlowSummary);
 
         if (qc.Valid)
             parts.Add("**Quality check:** ✓ Passed");
@@ -1208,6 +1666,170 @@ public class ComposableSetupPipeline(
         }
 
         return string.Join("\n", parts);
+    }
+
+    private static string BuildBlockFlowSummary(
+        PipelineExecutionResult result, PipelineDefinition pipeline)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("📊 Block Flow:");
+
+        // Build a lookup from block ID to block type for readable labels
+        var blockTypeById = pipeline.Blocks.ToDictionary(b => b.Id, b => b.Type, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (blockId, blockResult) in result.BlockResults)
+        {
+            var icon = blockResult.Status switch
+            {
+                BlockExecutionStatus.Completed => "✅",
+                BlockExecutionStatus.Failed => "❌",
+                BlockExecutionStatus.Skipped => "⚠️",
+                BlockExecutionStatus.Baseline => "⏳",
+                _ => "❓"
+            };
+
+            var blockType = blockTypeById.TryGetValue(blockId, out var t) ? t : blockId;
+
+            var detail = BuildBlockDetail(blockResult);
+            sb.AppendLine($"  {icon} {blockType} → {detail}");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildBlockDetail(BlockResult blockResult)
+    {
+        if (blockResult.Status == BlockExecutionStatus.Skipped)
+            return blockResult.SkipReason ?? "skipped";
+
+        if (blockResult.Status == BlockExecutionStatus.Baseline)
+            return DescribeOutput(blockResult, suffix: " (baseline captured)");
+
+        if (!blockResult.Success)
+            return blockResult.Error ?? "failed";
+
+        return DescribeOutput(blockResult);
+    }
+
+    private static string DescribeOutput(BlockResult blockResult, string? suffix = null)
+    {
+        if (!blockResult.Output.HasValue || blockResult.Output.Value.ValueKind == JsonValueKind.Undefined)
+            return blockResult.Success ? "no output" + (suffix ?? "") : "empty";
+
+        var output = blockResult.Output.Value;
+        string detail;
+
+        if (output.ValueKind == JsonValueKind.Array)
+        {
+            detail = $"{output.GetArrayLength()} items";
+        }
+        else if (output.ValueKind == JsonValueKind.Object)
+        {
+            if (output.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+                detail = $"{items.GetArrayLength()} items";
+            else if (output.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                detail = $"{data.GetArrayLength()} items";
+            else if (output.TryGetProperty("body", out var body))
+                detail = $"response received ({body.GetString()?.Length ?? 0} chars)";
+            else
+                detail = "data received";
+        }
+        else
+        {
+            detail = "data received";
+        }
+
+        return detail + (suffix ?? "");
+    }
+
+    private static bool IsDeterministicTemplateSource(string? analysisSource)
+        => analysisSource?.StartsWith("deterministic-template:", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool HasUsableDryRunOutput(DryRunResult? dryRunResult)
+        => dryRunResult is { Success: true } && !IsDryRunOutputEmpty(dryRunResult);
+
+    private static bool IsDryRunOutputEmpty(JsonElement? outputData)
+    {
+        if (outputData is null or { ValueKind: JsonValueKind.Undefined })
+            return true;
+
+        return IsEffectivelyEmpty(outputData.Value);
+    }
+
+    private static bool IsDryRunOutputEmpty(DryRunResult dryRunResult)
+    {
+        if (!dryRunResult.Success)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(dryRunResult.SampleOutput))
+            return true;
+
+        var sampleOutput = dryRunResult.SampleOutput.Trim();
+        if (sampleOutput is "[]" or "{}" or "null")
+            return true;
+
+        try
+        {
+            using var document = JsonDocument.Parse(sampleOutput);
+            return IsEffectivelyEmpty(document.RootElement);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsEffectivelyEmpty(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Null => true,
+            JsonValueKind.Undefined => true,
+            JsonValueKind.String => string.IsNullOrWhiteSpace(element.GetString()),
+            JsonValueKind.Array => element.GetArrayLength() == 0,
+            JsonValueKind.Object => element.EnumerateObject().ToList() is var properties &&
+                                    (properties.Count == 0 || properties.All(property => IsEffectivelyEmpty(property.Value))),
+            _ => false
+        };
+    }
+
+    private static QcResult CreateUserFacingQcResult(QcResult qcResult)
+    {
+        var simplifiedIssues = qcResult.Issues
+            .Select(SimplifyQcMessage)
+            .Where(issue => !string.IsNullOrWhiteSpace(issue))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return qcResult with
+        {
+            Issues = simplifiedIssues
+        };
+    }
+
+    private static string SimplifyQcMessage(string technicalMessage)
+    {
+        if (technicalMessage.Contains("pagination", StringComparison.OrdinalIgnoreCase))
+            return "⚠️ This will only monitor the first page of results. Some older listings may be missed.";
+
+        if (technicalMessage.Contains("empty list", StringComparison.OrdinalIgnoreCase) ||
+            technicalMessage.Contains("empty array", StringComparison.OrdinalIgnoreCase))
+            return "⚠️ The initial test didn't find any data. The page may have a cookie wall or require JavaScript.";
+
+        if (technicalMessage.Contains("RelevanceScore", StringComparison.OrdinalIgnoreCase) &&
+            technicalMessage.Contains("not clearly aligned", StringComparison.OrdinalIgnoreCase))
+            return "ℹ️ The relevance scoring uses default keywords. You can customize these after creation.";
+
+        if (technicalMessage.Contains("stable key", StringComparison.OrdinalIgnoreCase) ||
+            technicalMessage.Contains("normalization", StringComparison.OrdinalIgnoreCase))
+            return "ℹ️ Minor changes in job listing order might trigger false alerts initially.";
+
+        if (technicalMessage.Contains("cookie", StringComparison.OrdinalIgnoreCase) ||
+            technicalMessage.Contains("consent", StringComparison.OrdinalIgnoreCase))
+            return "⚠️ This site has a cookie consent banner that may block content extraction.";
+
+        var firstSentence = technicalMessage.Split('.')[0];
+        return firstSentence.Length > 100 ? firstSentence[..100] + "..." : firstSentence;
     }
 
     private static TimeSpan ParseFrequency(string? frequency)
@@ -1345,6 +1967,58 @@ public class ComposableSetupPipeline(
         builder.Path = string.IsNullOrEmpty(path) ? "/feed/" : $"{path}/feed/";
         return builder.Uri.ToString();
     }
+
+    private static ContentAnalysisResult BuildDeterministicAnalysis(
+        ContentClassification classification, ParsedIntent intent)
+    {
+        return classification.Type switch
+        {
+            DetectedContentType.JobListing => new ContentAnalysisResult
+            {
+                ContentType = "listing",
+                Regions = ["job listings", "job metadata"],
+                HasPagination = classification.DetectedPlatform is "workday",
+                NeedsJavaScript = false,
+                PageSummary = BuildDeterministicSummary(classification)
+            },
+            DetectedContentType.ProductListing => new ContentAnalysisResult
+            {
+                ContentType = "product",
+                Regions = ["product listings", "product details"],
+                HasPagination = true,
+                NeedsJavaScript = false,
+                PageSummary = BuildDeterministicSummary(classification)
+            },
+            DetectedContentType.NewsFeed => new ContentAnalysisResult
+            {
+                ContentType = "article",
+                Regions = ["news articles", "post entries"],
+                HasPagination = false,
+                NeedsJavaScript = false,
+                PageSummary = BuildDeterministicSummary(classification)
+            },
+            DetectedContentType.ApiJson => new ContentAnalysisResult
+            {
+                ContentType = "other",
+                Regions = ["API response data"],
+                HasPagination = false,
+                NeedsJavaScript = false,
+                PageSummary = BuildDeterministicSummary(classification)
+            },
+            _ => new ContentAnalysisResult
+            {
+                ContentType = "other",
+                Regions = [],
+                HasPagination = false,
+                NeedsJavaScript = classification.Type == DetectedContentType.JsShell,
+                PageSummary = BuildDeterministicSummary(classification)
+            }
+        };
+    }
+
+    private static string BuildDeterministicSummary(ContentClassification classification)
+        => $"Deterministic: {classification.Type} on {classification.DetectedPlatform ?? "unknown"} " +
+           $"({classification.Confidence:P0}). Signals: {string.Join(", ", classification.Signals)}";
 
     private record MutationAnalysis
     {

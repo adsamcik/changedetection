@@ -4,6 +4,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.SetupPipeline;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -94,9 +95,11 @@ public class ComposableSetupPipelineTests : TestBase
             .Returns(ChangeDetection.Core.Pipeline.Validation.ValidationResult.Valid());
 
         var logger = CreateLogger<ComposableSetupPipeline>();
+        var setupFlowEnhancements = new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>());
         _sut = new ComposableSetupPipeline(
             _llmChain, _contentFetcher, _pipelineExecutor,
-            _pipelineValidator, _blockRegistry, _platformDetector, _templateRegistry, _watchRepo, logger);
+            _pipelineValidator, _blockRegistry, _platformDetector, _templateRegistry, _watchRepo,
+            setupFlowEnhancements, logger);
     }
 
     [Test]
@@ -288,7 +291,7 @@ public class ComposableSetupPipelineTests : TestBase
     {
         var intentJson = """
             {
-                "url": "https://acme.myworkdayjobs.com/en-US/Careers",
+                "url": "https://acme.wd3.myworkdayjobs.com/en-US/Careers",
                 "intent": "Track new job openings",
                 "changeType": "jobs",
                 "summary": "I'll watch the Workday careers page for new jobs"
@@ -331,7 +334,161 @@ public class ComposableSetupPipelineTests : TestBase
                 SkippedBlockIds = []
             });
 
-        var request = new SetupRequest { UserInput = "Track new jobs at https://acme.myworkdayjobs.com/en-US/Careers" };
+        var request = new SetupRequest { UserInput = "Track new jobs at https://acme.wd3.myworkdayjobs.com/en-US/Careers" };
+        string? sessionId = null;
+        await foreach (var progress in _sut.StartSetupAsync(request))
+        {
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+                sessionId = progress.Detail.Replace("Session: ", "");
+        }
+
+        sessionId.ShouldNotBeNull();
+
+        var confirmProgress = new List<SetupProgress>();
+        await foreach (var progress in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            confirmProgress.Add(progress);
+
+        confirmProgress.ShouldNotContain(p => p.Phase == SetupPhase.Checkpoint2 && p.Type == SetupProgressType.CheckpointReached);
+        confirmProgress.ShouldContain(p => p.Phase == SetupPhase.Checkpoint2 && p.Message.Contains("creating your watch automatically"));
+
+        var completed = confirmProgress.Last();
+        completed.Phase.ShouldBe(SetupPhase.Saving);
+        completed.Type.ShouldBe(SetupProgressType.Completed);
+        completed.WatchId.ShouldNotBeNull();
+
+        await _watchRepo.Received(1).InsertAsync(
+            Arg.Is<WatchedSite>(w =>
+                w.Url == "https://acme.wd3.myworkdayjobs.com/en-US/Careers" &&
+                w.PipelineDefinitionJson.Contains("\"HttpRequest\"") &&
+                w.PipelineDefinitionJson.Contains("\"JsonExtract\"") &&
+                !w.PipelineDefinitionJson.Contains("\"LlmExtract\"") &&
+                w.PipelineDefinitionJson.Contains("wday/cxs/acme/Careers/jobs")),
+            Arg.Any<CancellationToken>());
+
+        await _llmChain.Received(1).ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Any<LlmRequestOptions>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_KnownPlatform_PersonalizesRelevanceKeywordsFromUserInput()
+    {
+        const string qcJson = """
+            {
+                "valid": true,
+                "issues": [],
+                "suggestions": []
+            }
+            """;
+
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(SuccessResponse(qcJson));
+
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(new PipelineExecutionResult
+            {
+                Success = true,
+                BlockResults = new Dictionary<string, BlockResult>(),
+                OutputData = JsonDocument.Parse("""[{"title":"Scientist"}]""").RootElement,
+                ExecutionDurationMs = 150,
+                WasBaseline = true,
+                IsDegraded = false,
+                SkippedBlockIds = []
+            });
+
+        WatchedSite? savedWatch = null;
+        _watchRepo.InsertAsync(Arg.Do<WatchedSite>(watch => savedWatch = watch), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var request = new SetupRequest
+        {
+            UserInput = "Track molecular biology PCR scientist jobs at https://acme.wd3.myworkdayjobs.com/en-US/Careers and avoid manager roles"
+        };
+
+        string? sessionId = null;
+        await foreach (var progress in _sut.StartSetupAsync(request))
+        {
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+                sessionId = progress.Detail.Replace("Session: ", "");
+        }
+
+        sessionId.ShouldNotBeNull();
+
+        await foreach (var _ in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+        {
+        }
+
+        savedWatch.ShouldNotBeNull();
+
+        using var pipelineDocument = JsonDocument.Parse(savedWatch.PipelineDefinitionJson);
+        var relevanceScoreConfig = pipelineDocument.RootElement
+            .GetProperty("blocks")
+            .EnumerateArray()
+            .Single(block => block.GetProperty("id").GetString() == "relevancescore-1")
+            .GetProperty("config");
+
+        var positiveKeywords = relevanceScoreConfig.GetProperty("positiveKeywords").EnumerateArray().ToArray();
+        var negativeKeywords = relevanceScoreConfig.GetProperty("negativeKeywords").EnumerateArray().ToArray();
+
+        positiveKeywords.ShouldContain(keyword =>
+            keyword.GetProperty("keyword").GetString() == "scientist" &&
+            keyword.GetProperty("weight").GetInt32() == 15);
+        positiveKeywords.ShouldContain(keyword =>
+            keyword.GetProperty("keyword").GetString() == "molecular biology" &&
+            keyword.GetProperty("weight").GetInt32() == 15);
+        positiveKeywords.ShouldContain(keyword =>
+            keyword.GetProperty("keyword").GetString() == "PCR" &&
+            keyword.GetProperty("weight").GetInt32() == 13);
+        negativeKeywords.ShouldContain(keyword =>
+            keyword.GetProperty("keyword").GetString() == "manager" &&
+            keyword.GetProperty("weight").GetInt32() == -5);
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_EmptyDryRun_ShowsWarningAndSimplifiedQcIssues()
+    {
+        var qcJson = """
+            {
+                "valid": false,
+                "issues": [
+                    "No pagination handling is present; Workday listings are typically paged.",
+                    "No stable key normalization is present so normalization drift may cause noise.",
+                    "RelevanceScore keywords are not clearly aligned with the user intent."
+                ],
+                "suggestions": []
+            }
+            """;
+
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult
+            {
+                IsSuccess = true,
+                Html = "<html><head><script>window.__NEXT_DATA__={};</script></head><body>Careers</body></html>",
+                HttpStatusCode = 200,
+                DurationMs = 250
+            });
+
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(new PipelineExecutionResult
+            {
+                Success = true,
+                BlockResults = new Dictionary<string, BlockResult>(),
+                OutputData = JsonDocument.Parse("[]").RootElement,
+                ExecutionDurationMs = 120,
+                WasBaseline = true,
+                IsDegraded = false,
+                SkippedBlockIds = []
+            });
+
+        var request = new SetupRequest { UserInput = "Track new jobs at https://acme.wd3.myworkdayjobs.com/en-US/Careers" };
         string? sessionId = null;
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
@@ -346,15 +503,93 @@ public class ComposableSetupPipelineTests : TestBase
             confirmProgress.Add(progress);
 
         var checkpoint2 = confirmProgress.Last();
+        checkpoint2.Phase.ShouldBe(SetupPhase.Checkpoint2);
+        checkpoint2.Type.ShouldBe(SetupProgressType.CheckpointReached);
+        checkpoint2.Message.ShouldBe("⚠️ Pipeline ran but extracted no data");
+        checkpoint2.Detail.ShouldContain("JavaScript rendering");
         checkpoint2.Proposal.ShouldNotBeNull();
-        checkpoint2.Proposal.Pipeline.Blocks.ShouldContain(b => b.Type == "LlmExtract");
-        checkpoint2.Proposal.Pipeline.Metadata!.DisplayTitle.ShouldContain("Workday");
-        checkpoint2.Proposal.HumanSummary.ShouldContain("Track new job openings");
+        checkpoint2.Proposal.HumanSummary.ShouldContain("extracted no data");
+        checkpoint2.Proposal.HumanSummary.ShouldContain("cookie banner");
+        checkpoint2.Proposal.QcValidation.ShouldNotBeNull();
+        checkpoint2.Proposal.QcValidation.Issues.ShouldContain("⚠️ This will only monitor the first page of results. Some older listings may be missed.");
+        checkpoint2.Proposal.QcValidation.Issues.ShouldContain("ℹ️ Minor changes in job listing order might trigger false alerts initially.");
+        checkpoint2.Proposal.QcValidation.Issues.ShouldContain("ℹ️ The relevance scoring uses default keywords. You can customize these after creation.");
 
-        await _llmChain.Received(2).ExecuteAsync(
-            Arg.Any<string>(),
-            Arg.Any<LlmRequestOptions>(),
-            Arg.Any<CancellationToken>());
+        confirmProgress.ShouldNotContain(p => p.Type == SetupProgressType.Completed);
+    }
+
+    [Test]
+    public async Task ConfirmIntentAsync_EmptyDryRun_RetriesOnceBeforeReportingSuccess()
+    {
+        var qcJson = """
+            {
+                "valid": true,
+                "issues": [],
+                "suggestions": []
+            }
+            """;
+
+        _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(SuccessResponse(qcJson));
+
+        _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new FetchResult
+            {
+                IsSuccess = true,
+                Html = "<html><head><script>window.__NEXT_DATA__={};</script></head><body>Careers</body></html>",
+                HttpStatusCode = 200,
+                DurationMs = 250
+            });
+
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(
+                new PipelineExecutionResult
+                {
+                    Success = true,
+                    BlockResults = new Dictionary<string, BlockResult>(),
+                    OutputData = JsonDocument.Parse("[]").RootElement,
+                    ExecutionDurationMs = 120,
+                    WasBaseline = true,
+                    IsDegraded = false,
+                    SkippedBlockIds = []
+                },
+                new PipelineExecutionResult
+                {
+                    Success = true,
+                    BlockResults = new Dictionary<string, BlockResult>(),
+                    OutputData = JsonDocument.Parse("""[{"id":"job-1"}]""").RootElement,
+                    ExecutionDurationMs = 140,
+                    WasBaseline = true,
+                    IsDegraded = false,
+                    SkippedBlockIds = []
+                });
+
+        var request = new SetupRequest { UserInput = "Track new jobs at https://acme.wd3.myworkdayjobs.com/en-US/Careers" };
+        string? sessionId = null;
+        await foreach (var progress in _sut.StartSetupAsync(request))
+        {
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+                sessionId = progress.Detail.Replace("Session: ", "");
+        }
+
+        sessionId.ShouldNotBeNull();
+
+        var confirmProgress = new List<SetupProgress>();
+        await foreach (var progress in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
+            confirmProgress.Add(progress);
+
+        await _pipelineExecutor.Received(2).ExecuteAsync(
+            Arg.Any<PipelineDefinition>(), Arg.Any<Guid>(),
+            Arg.Any<IBlockStateStore>(), Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
+
+        confirmProgress.ShouldContain(p =>
+            p.Phase == SetupPhase.Checkpoint2 &&
+            p.Message.Contains("creating your watch automatically", StringComparison.OrdinalIgnoreCase));
+        confirmProgress.ShouldContain(p =>
+            p.Type == SetupProgressType.Completed &&
+            p.Message.Contains("Watch created", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]
