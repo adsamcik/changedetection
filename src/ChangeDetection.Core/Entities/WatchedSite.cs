@@ -246,6 +246,13 @@ public class WatchedSite : IOwnedEntity
     public bool NeedsPipelineSetup { get; set; }
 
     /// <summary>
+    /// Number of failed headless LLM pipeline build attempts.
+    /// After 2 failures, headless building is abandoned and manual setup is required.
+    /// Reset to 0 when a pipeline is successfully configured.
+    /// </summary>
+    public int HeadlessBuildAttempts { get; set; }
+
+    /// <summary>
     /// Per-watch retention override in days. Null uses global default.
     /// Capped by AppSettings.MaxRetentionDays.
     /// </summary>

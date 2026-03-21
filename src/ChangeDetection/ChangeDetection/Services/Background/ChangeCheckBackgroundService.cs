@@ -189,13 +189,30 @@ public class ChangeCheckBackgroundService : BackgroundService
 
                         if (pipeline is null)
                         {
+                            // Guard 4: Provide specific failure reason to the user
+                            var isMaxedOut = watch.HeadlessBuildAttempts >= 2;
+                            var errorMessage = isMaxedOut
+                                ? "Manual setup required — could not automatically identify listings on this page after multiple attempts"
+                                : "Could not automatically identify job listings on this page";
+
                             _logger.LogWarning(
-                                "Watch {WatchId} ({Url}) has no pipeline and headless LLM build failed — marking as needing setup",
-                                watch.Id, watch.Url);
+                                "Watch {WatchId} ({Url}) has no pipeline and headless LLM build failed (attempt {Attempt}) — marking as needing setup",
+                                watch.Id, watch.Url, watch.HeadlessBuildAttempts);
                             watch.NeedsPipelineSetup = true;
+                            watch.LastError = errorMessage;
                             var watchRepo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
                             watch.UpdatedAt = DateTime.UtcNow;
                             await watchRepo.UpdateAsync(watch, ct);
+
+                            await hubContext.Clients.Group(dashboardGroup).SendAsync("WatchStatusChanged", new
+                            {
+                                WatchId = watch.Id,
+                                WatchName = watch.Name ?? watch.Url,
+                                Status = "NeedsSetup",
+                                LastError = errorMessage,
+                                LastCheck = DateTime.UtcNow
+                            }, ct);
+
                             return;
                         }
                     }
@@ -361,6 +378,16 @@ public class ChangeCheckBackgroundService : BackgroundService
         WatchedSite watch,
         CancellationToken ct)
     {
+        // Guard 5: Don't retry endlessly — after 2 failed headless build attempts, give up
+        const int maxHeadlessBuildAttempts = 2;
+        if (watch.HeadlessBuildAttempts >= maxHeadlessBuildAttempts)
+        {
+            _logger.LogDebug(
+                "Skipping headless LLM build for watch {WatchId} — already failed {Attempts} times (max {Max})",
+                watch.Id, watch.HeadlessBuildAttempts, maxHeadlessBuildAttempts);
+            return null;
+        }
+
         IComposableSetupPipeline? composable;
         try
         {
@@ -381,8 +408,8 @@ public class ChangeCheckBackgroundService : BackgroundService
         try
         {
             _logger.LogInformation(
-                "Attempting headless LLM pipeline build for watch {WatchId} ({Url})",
-                watch.Id, watch.Url);
+                "Attempting headless LLM pipeline build for watch {WatchId} ({Url}), attempt {Attempt}",
+                watch.Id, watch.Url, watch.HeadlessBuildAttempts + 1);
 
             var pipeline = await composable.BuildPipelineHeadlessAsync(
                 watch.Url, watch.UserIntent, ct);
@@ -395,6 +422,16 @@ public class ChangeCheckBackgroundService : BackgroundService
 
                 watch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
                 watch.NeedsPipelineSetup = false;
+                watch.HeadlessBuildAttempts = 0; // Reset on success
+                watch.LastError = null;
+                var watchRepo = sp.GetRequiredService<IRepository<WatchedSite>>();
+                watch.UpdatedAt = DateTime.UtcNow;
+                await watchRepo.UpdateAsync(watch, ct);
+            }
+            else
+            {
+                // Null return (guards rejected the pipeline) — increment attempt counter
+                watch.HeadlessBuildAttempts++;
                 var watchRepo = sp.GetRequiredService<IRepository<WatchedSite>>();
                 watch.UpdatedAt = DateTime.UtcNow;
                 await watchRepo.UpdateAsync(watch, ct);
@@ -405,8 +442,15 @@ public class ChangeCheckBackgroundService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "Headless LLM pipeline build failed for watch {WatchId} ({Url})",
-                watch.Id, watch.Url);
+                "Headless LLM pipeline build failed for watch {WatchId} ({Url}), attempt {Attempt}",
+                watch.Id, watch.Url, watch.HeadlessBuildAttempts + 1);
+
+            // Increment attempt counter on exception too
+            watch.HeadlessBuildAttempts++;
+            var watchRepo = sp.GetRequiredService<IRepository<WatchedSite>>();
+            watch.UpdatedAt = DateTime.UtcNow;
+            await watchRepo.UpdateAsync(watch, ct);
+
             return null;
         }
     }

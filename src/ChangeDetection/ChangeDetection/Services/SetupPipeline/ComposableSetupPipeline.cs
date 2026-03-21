@@ -849,6 +849,11 @@ public class ComposableSetupPipeline(
         string? userIntent,
         CancellationToken ct = default)
     {
+        var headlessStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        logger.LogInformation(
+            "[Headless] Step 0: Starting headless build for {Url}, intent: {Intent}",
+            url, userIntent ?? "(none)");
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(60));
         var token = cts.Token;
@@ -857,9 +862,16 @@ public class ComposableSetupPipeline(
             ? url
             : $"{url} — {userIntent}";
         var (positiveKeywords, negativeKeywords) = ExtractKeywordsFromIntent(input);
+        logger.LogInformation(
+            "[Headless] Step 0b: Extracted {PosCount} positive, {NegCount} negative keywords from intent",
+            positiveKeywords.Count, negativeKeywords.Count);
 
         // Fast path: platform template (no LLM needed)
         var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(url);
+        logger.LogInformation(
+            "[Headless] Step 1: URL platform detection result: {Platform}",
+            detectedPlatform ?? "(none — will use LLM path)");
+
         if (detectedPlatform is not null)
         {
             var template = await setupFlowEnhancements.GetPlatformTemplateAsync(
@@ -867,7 +879,8 @@ public class ComposableSetupPipeline(
             if (template is not null)
             {
                 logger.LogInformation(
-                    "[Headless] Using platform template {Platform} for {Url}", detectedPlatform, url);
+                    "[Headless] Step 1b: Platform template {Platform} resolved with {BlockCount} blocks for {Url} in {Elapsed}ms",
+                    detectedPlatform, template.Blocks.Count, url, headlessStopwatch.ElapsedMilliseconds);
                 return template with
                 {
                     Metadata = new PipelineMetadata
@@ -880,21 +893,34 @@ public class ComposableSetupPipeline(
                     }
                 };
             }
+
+            logger.LogWarning(
+                "[Headless] Step 1b: Platform {Platform} detected but GetPlatformTemplateAsync returned null — no template handler exists, falling through to LLM path",
+                detectedPlatform);
         }
 
         // Phase 1: Parse intent via LLM
+        logger.LogInformation("[Headless] Step 2: Parsing intent via LLM for input: {Input}", input);
         ParsedIntent intent;
         try
         {
             intent = await ParseIntentAsync(input, token);
+            logger.LogInformation(
+                "[Headless] Step 2b: Intent parsed — URL: {Url}, ChangeType: {ChangeType}, Intent: {Intent}, Summary: {Summary}",
+                intent.Url, intent.ChangeType, intent.Intent, intent.Summary ?? "(none)");
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Headless] Failed to parse intent for {Url}", url);
+            logger.LogWarning(ex,
+                "[Headless] Step 2 FAILED: Intent parsing threw {ExType}: {ExMsg} for {Url} after {Elapsed}ms",
+                ex.GetType().Name, ex.Message, url, headlessStopwatch.ElapsedMilliseconds);
             return null;
         }
 
-        // Phase 2: Fetch content
+        // Phase 2: Fetch content (always uses Playwright via UseJavaScript = true)
+        logger.LogInformation(
+            "[Headless] Step 3: Fetching content from {Url} (UseJavaScript=true, Playwright browser mode)",
+            intent.Url);
         FetchResult? fetchResult;
         try
         {
@@ -906,14 +932,47 @@ public class ComposableSetupPipeline(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Headless] Failed to fetch content for {Url}", url);
+            logger.LogWarning(ex,
+                "[Headless] Step 3 FAILED: Content fetch threw {ExType}: {ExMsg} for {Url} after {Elapsed}ms",
+                ex.GetType().Name, ex.Message, url, headlessStopwatch.ElapsedMilliseconds);
             return null;
         }
 
+        var htmlLength = fetchResult.Html?.Length ?? 0;
+        string? responseContentType = null;
+        if (fetchResult.ResponseHeaders is { } respHeaders)
+        {
+            responseContentType = respHeaders
+                .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
+        }
+
+        logger.LogInformation(
+            "[Headless] Step 3b: Fetch result — Success: {Success}, HTTP {StatusCode}, {Length} chars, " +
+            "Content-Type: {ContentType}, Duration: {Duration}ms, ErrorCategory: {ErrCat}, Diag: {Diag}",
+            fetchResult.IsSuccess, fetchResult.HttpStatusCode, htmlLength,
+            responseContentType ?? "(unknown)",
+            fetchResult.DurationMs,
+            fetchResult.ErrorCategory,
+            fetchResult.GetDiagnosticSummary());
+
         if (!fetchResult.IsSuccess || string.IsNullOrWhiteSpace(fetchResult.Html))
         {
-            logger.LogWarning("[Headless] No HTML content from {Url}", url);
+            logger.LogWarning(
+                "[Headless] Step 3 FAILED: No usable HTML content from {Url} — " +
+                "IsSuccess={Success}, HtmlNull={IsNull}, HtmlEmpty={IsEmpty}, Error={Error}",
+                url, fetchResult.IsSuccess, fetchResult.Html is null,
+                string.IsNullOrWhiteSpace(fetchResult.Html), fetchResult.ErrorMessage);
             return null;
+        }
+
+        // Detect JS shell (important diagnostic — if HTML is tiny with lots of scripts, content is JS-rendered)
+        var jsShellCheck = setupFlowEnhancements.DetectJsShell(fetchResult.Html, htmlLength);
+        if (jsShellCheck.IsJsShell)
+        {
+            logger.LogWarning(
+                "[Headless] Step 3c: JS shell detected despite using Playwright! Signals: [{Signals}]. " +
+                "Page may require additional wait time or specific interaction to render content",
+                string.Join("; ", jsShellCheck.Signals));
         }
 
         // Phase 3: Analyze content (deterministic first, LLM fallback)
@@ -921,29 +980,41 @@ public class ComposableSetupPipeline(
 
         try
         {
-            string? responseContentType = null;
-            if (fetchResult.ResponseHeaders is { } headers)
-            {
-                responseContentType = headers
-                    .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
-            }
             var classification = setupFlowEnhancements.ClassifyContent(
                 fetchResult.Html, intent.Url, responseContentType);
+
+            logger.LogInformation(
+                "[Headless] Step 4: Content classification — Type: {Type}, Confidence: {Confidence:F2}, " +
+                "Platform: {Platform}, Signals: [{Signals}]",
+                classification.Type, classification.Confidence,
+                classification.DetectedPlatform ?? "(none)",
+                string.Join("; ", classification.Signals));
 
             if (classification is { Confidence: >= 0.7 }
                 && classification.Type is not (DetectedContentType.Unknown
                     or DetectedContentType.JsShell or DetectedContentType.ErrorPage))
             {
                 analysis = BuildDeterministicAnalysis(classification, intent);
+                logger.LogInformation(
+                    "[Headless] Step 4b: Deterministic analysis built — ContentType: {ContentType}, " +
+                    "NeedsJS: {NeedsJs}, HasPagination: {HasPag}, Selector: {Selector}",
+                    analysis.ContentType, analysis.NeedsJavaScript,
+                    analysis.HasPagination, analysis.RecommendedSelector ?? "(none)");
 
                 // If platform detected, try template
                 if (classification.DetectedPlatform is not null)
                 {
+                    logger.LogInformation(
+                        "[Headless] Step 4c: Platform {Platform} found in content, attempting template lookup",
+                        classification.DetectedPlatform);
+
                     var deterministicTemplate = await setupFlowEnhancements.GetPlatformTemplateAsync(
                         classification.DetectedPlatform, intent.Url, positiveKeywords, negativeKeywords, ct: token);
                     if (deterministicTemplate is not null)
                     {
-                        logger.LogInformation("[Headless] Using deterministic template for {Url}", url);
+                        logger.LogInformation(
+                            "[Headless] Step 4c: Deterministic template resolved with {BlockCount} blocks for {Url} in {Elapsed}ms",
+                            deterministicTemplate.Blocks.Count, url, headlessStopwatch.ElapsedMilliseconds);
                         return deterministicTemplate with
                         {
                             Metadata = new PipelineMetadata
@@ -956,24 +1027,46 @@ public class ComposableSetupPipeline(
                             }
                         };
                     }
+
+                    logger.LogWarning(
+                        "[Headless] Step 4c: Platform {Platform} detected in content but no template handler — falling through to LLM",
+                        classification.DetectedPlatform);
                 }
+            }
+            else
+            {
+                logger.LogInformation(
+                    "[Headless] Step 4: Classification insufficient for deterministic path " +
+                    "(Confidence={Confidence:F2}, Type={Type}) — will use LLM analysis",
+                    classification.Confidence, classification.Type);
             }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Headless] Deterministic classification failed for {Url}", url);
+            logger.LogWarning(ex,
+                "[Headless] Step 4 FAILED: Deterministic classification threw {ExType}: {ExMsg}",
+                ex.GetType().Name, ex.Message);
         }
 
         // LLM content analysis fallback
         if (analysis is null)
         {
+            logger.LogInformation("[Headless] Step 5: Invoking LLM content analysis (deterministic path unavailable)");
             try
             {
                 analysis = await AnalyzeContentAsync(fetchResult.Html, intent, token);
+                logger.LogInformation(
+                    "[Headless] Step 5b: LLM analysis result — ContentType: {ContentType}, NeedsJS: {NeedsJs}, " +
+                    "HasPagination: {HasPag}, Selector: {Selector}, Summary: {Summary}",
+                    analysis.ContentType, analysis.NeedsJavaScript,
+                    analysis.HasPagination, analysis.RecommendedSelector ?? "(none)",
+                    analysis.PageSummary ?? "(none)");
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[Headless] LLM content analysis failed for {Url}", url);
+                logger.LogWarning(ex,
+                    "[Headless] Step 5 FAILED: LLM content analysis threw {ExType}: {ExMsg} for {Url} after {Elapsed}ms",
+                    ex.GetType().Name, ex.Message, url, headlessStopwatch.ElapsedMilliseconds);
                 return null;
             }
         }
@@ -981,18 +1074,28 @@ public class ComposableSetupPipeline(
         // Auto-confirm checkpoint 1 (intent) — headless mode
 
         // Phase 4: Build pipeline via LLM
+        logger.LogInformation(
+            "[Headless] Step 6: Building pipeline via LLM — Intent: {Intent}, ContentType: {ContentType}, HtmlLength: {Length}",
+            intent.Intent, analysis.ContentType, htmlLength);
         PipelineDefinition pipeline;
         try
         {
             pipeline = await BuildPipelineAsync(intent, analysis, fetchResult.Html, token);
+            var blockTypes = string.Join(", ", pipeline.Blocks.Select(b => b.Type));
+            logger.LogInformation(
+                "[Headless] Step 6b: LLM returned pipeline with {BlockCount} blocks [{BlockTypes}], {ConnCount} connections",
+                pipeline.Blocks.Count, blockTypes, pipeline.Connections.Count);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Headless] Failed to build pipeline for {Url}", url);
+            logger.LogWarning(ex,
+                "[Headless] Step 6 FAILED: Pipeline build threw {ExType}: {ExMsg} for {Url} after {Elapsed}ms",
+                ex.GetType().Name, ex.Message, url, headlessStopwatch.ElapsedMilliseconds);
             return null;
         }
 
         // Phase 5: Dry run — auto-confirm checkpoint 2 only if dry run passes
+        logger.LogInformation("[Headless] Step 7: Executing dry run for pipeline with {BlockCount} blocks", pipeline.Blocks.Count);
         var session = new SetupSession
         {
             UserInput = input,
@@ -1006,22 +1109,53 @@ public class ComposableSetupPipeline(
         try
         {
             dryRunResult = await ExecuteDryRunAsync(pipeline, session, token);
+            logger.LogInformation(
+                "[Headless] Step 7b: Dry run completed — Success: {Success}, Duration: {Duration}ms, " +
+                "SkippedBlocks: {Skipped}, SampleOutput: {Sample}, Error: {Error}",
+                dryRunResult.Success, dryRunResult.ExecutionDurationMs,
+                dryRunResult.SkippedBlockIds.Count,
+                dryRunResult.SampleOutput?[..Math.Min(200, dryRunResult.SampleOutput?.Length ?? 0)] ?? "(none)",
+                dryRunResult.Error ?? "(none)");
+
+            if (dryRunResult.BlockFlowSummary is not null)
+            {
+                logger.LogDebug("[Headless] Step 7b: Block flow summary:\n{FlowSummary}", dryRunResult.BlockFlowSummary);
+            }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[Headless] Dry run failed for {Url}", url);
+            logger.LogWarning(ex,
+                "[Headless] Step 7 FAILED: Dry run threw {ExType}: {ExMsg} for {Url} after {Elapsed}ms",
+                ex.GetType().Name, ex.Message, url, headlessStopwatch.ElapsedMilliseconds);
             return null;
         }
 
         if (!dryRunResult.Success)
         {
-            logger.LogWarning("[Headless] Dry run unsuccessful for {Url}: {Error}", url, dryRunResult.Error);
+            logger.LogWarning(
+                "[Headless] Step 7 FAILED: Dry run unsuccessful for {Url}: {Error}. " +
+                "Duration: {Duration}ms, Skipped: [{Skipped}], Total elapsed: {Elapsed}ms",
+                url, dryRunResult.Error,
+                dryRunResult.ExecutionDurationMs,
+                string.Join(", ", dryRunResult.SkippedBlockIds),
+                headlessStopwatch.ElapsedMilliseconds);
             return null;
         }
 
+        // Guard 2: Reject pipelines that produce zero items — selectors likely don't match actual DOM
+        if (IsDryRunOutputEmpty(dryRunResult))
+        {
+            logger.LogWarning(
+                "[Headless] Step 7 REJECTED: Pipeline built but extracted 0 items for {Url} — " +
+                "selectors likely don't match actual DOM. Total elapsed: {Elapsed}ms",
+                url, headlessStopwatch.ElapsedMilliseconds);
+            return null;
+        }
+
+        headlessStopwatch.Stop();
         logger.LogInformation(
-            "[Headless] Pipeline built successfully for {Url}: {BlockCount} blocks, dry run passed",
-            url, pipeline.Blocks.Count);
+            "[Headless] SUCCESS: Pipeline built for {Url} — {BlockCount} blocks, dry run passed, total elapsed: {Elapsed}ms",
+            url, pipeline.Blocks.Count, headlessStopwatch.ElapsedMilliseconds);
         return pipeline;
     }
 
@@ -1047,6 +1181,153 @@ public class ComposableSetupPipeline(
         if (trimmed.EndsWith("```"))
             trimmed = trimmed[..^3].TrimEnd();
         return trimmed;
+    }
+
+    /// <summary>
+    /// Prepares a focused HTML excerpt for the pipeline builder LLM prompt.
+    /// Without this, the LLM must guess CSS selectors blind (no DOM visibility) — the #1 cause
+    /// of headless pipeline failures.
+    ///
+    /// Strategy:
+    /// 1. Sanitize (strip scripts/styles/injection patterns)
+    /// 2. If a recommended selector region exists in the HTML, try to extract that region
+    /// 3. Collapse whitespace and strip data attributes to maximize signal density
+    /// 4. Truncate to ~8KB — large enough to show repeating item structure, small enough for token budget
+    /// </summary>
+    private string PrepareHtmlExcerptForPipelineBuilder(string html, string? recommendedSelector)
+    {
+        const int maxExcerptLength = 8_000;
+
+        if (string.IsNullOrWhiteSpace(html))
+            return "<!-- empty page -->";
+
+        // Sanitize to remove script/style/injection — reuse the existing sanitizer
+        var sanitized = contentSanitizer.SanitizeHtml(html);
+        var clean = sanitized.Content;
+
+        // Collapse runs of whitespace to single spaces (maximizes information density)
+        clean = System.Text.RegularExpressions.Regex.Replace(clean, @"\s{2,}", " ",
+            System.Text.RegularExpressions.RegexOptions.None,
+            TimeSpan.FromSeconds(1));
+
+        // Strip common noise: data-* attributes, inline styles, aria labels
+        // (keeps class/id/href which are essential for CSS selectors)
+        clean = System.Text.RegularExpressions.Regex.Replace(
+            clean, @"\s+data-[a-z0-9-]+=""[^""]*""", "",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        clean = System.Text.RegularExpressions.Regex.Replace(
+            clean, @"\s+style=""[^""]*""", "",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+
+        if (clean.Length <= maxExcerptLength)
+            return clean;
+
+        // Try to find content-rich region: look for the densest area of repeated elements
+        // This heuristic finds the region with the most <tr>, <li>, or <article> tags
+        var contentStart = FindContentRegionStart(clean, recommendedSelector);
+        if (contentStart > 0 && contentStart < clean.Length - 1000)
+        {
+            // Take from start of content region, show enough to reveal repeating patterns
+            var regionExcerpt = clean[contentStart..Math.Min(clean.Length, contentStart + maxExcerptLength)];
+            // Include some preceding context for the parent element
+            var preContext = clean[Math.Max(0, contentStart - 500)..contentStart];
+            var combined = preContext + regionExcerpt;
+            if (combined.Length > maxExcerptLength)
+                combined = combined[..maxExcerptLength];
+
+            logger.LogDebug(
+                "[Headless] HTML excerpt: content region found at offset {Offset}, excerpt {Length} chars",
+                contentStart, combined.Length);
+            return combined + "\n<!-- truncated -->";
+        }
+
+        // Fallback: take from the middle of the page (header/nav is usually at the start,
+        // footer at the end — content is in the middle)
+        if (clean.Length > maxExcerptLength * 2)
+        {
+            var midStart = clean.Length / 4; // Start at 25% to skip header/nav
+            var excerpt = clean[midStart..Math.Min(clean.Length, midStart + maxExcerptLength)];
+            logger.LogDebug(
+                "[Headless] HTML excerpt: using mid-page slice from offset {Offset}, {Length} chars",
+                midStart, excerpt.Length);
+            return excerpt + "\n<!-- truncated -->";
+        }
+
+        // Small enough to just truncate from start
+        logger.LogDebug("[Headless] HTML excerpt: truncating from start, {Length} chars", maxExcerptLength);
+        return clean[..maxExcerptLength] + "\n<!-- truncated -->";
+    }
+
+    /// <summary>
+    /// Finds the start offset of the main content region in sanitized HTML.
+    /// Looks for clusters of repeating elements (table rows, list items, article cards)
+    /// which indicate the data-bearing section of the page.
+    /// </summary>
+    private static int FindContentRegionStart(string html, string? selectorHint)
+    {
+        // If we have a selector hint, try to find an element matching it
+        if (!string.IsNullOrWhiteSpace(selectorHint))
+        {
+            // Extract tag/class from simple selectors like "table.vacancies", ".job-list", "#results"
+            var selectorTarget = ExtractSelectorSearchTerm(selectorHint);
+            if (selectorTarget is not null)
+            {
+                var idx = html.IndexOf(selectorTarget, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                    return Math.Max(0, idx - 100); // Back up a bit to include the opening tag
+            }
+        }
+
+        // Heuristic: find the first cluster of repeating elements
+        // Look for common list/table patterns that indicate data content
+        string[] contentMarkers = ["<tbody", "<ul class", "<ol class", "<article", "<main",
+            "class=\"results", "class=\"listings", "class=\"jobs", "class=\"items",
+            "class=\"search-results", "class=\"vacancies"];
+
+        var bestIndex = -1;
+        foreach (var marker in contentMarkers)
+        {
+            var idx = html.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0 && (bestIndex < 0 || idx < bestIndex))
+                bestIndex = idx;
+        }
+
+        return bestIndex >= 0 ? Math.Max(0, bestIndex - 200) : -1;
+    }
+
+    /// <summary>
+    /// Extracts a search term from a CSS selector for indexOf-based matching.
+    /// e.g. "table.vacancies" → "class=\"vacancies", ".job-list" → "class=\"job-list",
+    /// "#results" → "id=\"results"
+    /// </summary>
+    private static string? ExtractSelectorSearchTerm(string selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector)) return null;
+
+        // Handle class selector: ".foo" or "tag.foo"
+        var dotIndex = selector.IndexOf('.');
+        if (dotIndex >= 0 && dotIndex < selector.Length - 1)
+        {
+            var className = selector[(dotIndex + 1)..].Split(' ', ',', '>', '+', '~', '[', ':')[0];
+            return $"class=\"{className}";
+        }
+
+        // Handle ID selector: "#foo"
+        var hashIndex = selector.IndexOf('#');
+        if (hashIndex >= 0 && hashIndex < selector.Length - 1)
+        {
+            var idName = selector[(hashIndex + 1)..].Split(' ', ',', '>', '+', '~', '[', ':')[0];
+            return $"id=\"{idName}";
+        }
+
+        // Handle bare tag names: "table", "ul", "main"
+        var tag = selector.Split(' ', ',', '>', '+', '~', '[', ':')[0].Trim();
+        if (tag.Length is > 0 and < 20 && tag.All(char.IsLetterOrDigit))
+            return $"<{tag}";
+
+        return null;
     }
 
     /// <summary>
@@ -1204,6 +1485,10 @@ public class ComposableSetupPipeline(
     {
         var availableBlocks = string.Join(", ", blockRegistry.RegisteredBlockTypes);
 
+        // Sanitize + extract a focused HTML excerpt so the LLM can see actual CSS classes,
+        // DOM structure, and data patterns — without this, it's building selectors blind.
+        var htmlExcerpt = PrepareHtmlExcerptForPipelineBuilder(html, analysis.RecommendedSelector);
+
         var prompt = $$"""
             You are a pipeline builder for a website monitoring system.
             
@@ -1215,6 +1500,11 @@ public class ComposableSetupPipeline(
             Page regions: {{string.Join(", ", analysis.Regions)}}
             Recommended selector: {{analysis.RecommendedSelector ?? "none"}}
             Needs JavaScript: {{analysis.NeedsJavaScript}}
+            
+            HTML EXCERPT from the target page (use this to pick accurate CSS selectors):
+            ```html
+            {{htmlExcerpt}}
+            ```
             
             Design a pipeline by selecting blocks and providing configuration for each.
             The pipeline MUST start with an "Input" block and end with an "Output" block.
@@ -1270,6 +1560,9 @@ public class ComposableSetupPipeline(
             - Do NOT connect Navigate "html" directly to ListDiff "data" — use ExtractSchema between them to extract structured items first
             
             IMPORTANT RULES:
+            - STUDY THE HTML EXCERPT ABOVE. Use the actual CSS class names, element IDs, and DOM structure you see — do NOT guess generic selectors.
+            - For ExtractSchema: set "scope" to the actual repeating element selector visible in the HTML (e.g. "tr.vacancy-specs", "li.job-item", "div.search-result"). Set "schema" field selectors to actual child elements visible in the HTML.
+            - If the HTML shows a <table>, use table row selectors. If it shows <div> cards, use div selectors. Match what you SEE, not what you assume.
             - Use ONLY the URL provided: {{intent.Url}}. Do NOT generate example or placeholder URLs.
             - All URLs in block configs (Input url, Navigate url, HttpRequest url, etc.) MUST use the domain from the provided URL. Never invent URLs.
             - For JSON APIs: Use HttpRequest + JsonExtract (NOT Navigate + ExtractSchema)
@@ -1285,6 +1578,13 @@ public class ComposableSetupPipeline(
             - Every block needs a unique id in format "type-N" (e.g. "httprequest-1")
             - Include Input at position 0 and Output at the last position
             - Always include connections between blocks
+            
+            SELF-ASSESSMENT (critical):
+            After analyzing the HTML excerpt, if you cannot identify a clear repeating list of items (jobs, products, articles, etc.)
+            with specific CSS classes or HTML patterns visible in the excerpt, respond with ONLY:
+            {"cannotExtract": true, "reason": "explanation of why extraction is not possible"}
+            Do NOT guess generic selectors like ".job-card", ".listing", ".result-item". Only build a pipeline if you can identify
+            specific CSS classes or HTML patterns actually present in the excerpt above.
             
             Respond ONLY with a JSON object:
             {
@@ -1312,6 +1612,20 @@ public class ComposableSetupPipeline(
         var jsonContent = StripMarkdownFences(response.Content);
 
         var llmOutput = JsonDocument.Parse(jsonContent);
+
+        // Guard 1: LLM self-assessment — if it signals it cannot extract, fail honestly
+        if (llmOutput.RootElement.TryGetProperty("cannotExtract", out var cannotExtractEl)
+            && cannotExtractEl.ValueKind == JsonValueKind.True)
+        {
+            var reason = llmOutput.RootElement.TryGetProperty("reason", out var reasonEl)
+                ? reasonEl.GetString() ?? "no reason provided"
+                : "no reason provided";
+            logger.LogWarning(
+                "LLM self-assessment: cannot extract from {Url} — {Reason}",
+                intent.Url, reason);
+            throw new InvalidOperationException($"LLM cannot extract: {reason}");
+        }
+
         var blocksElement = llmOutput.RootElement.GetProperty("blocks");
 
         var blocks = new List<BlockDefinition>();
@@ -1390,6 +1704,16 @@ public class ComposableSetupPipeline(
                 CardType = intent.ChangeType
             }
         };
+
+        // Guard 3: Reject pipelines that use only generic/placeholder selectors (likely hallucinated)
+        if (HasOnlyPlaceholderSelectors(pipeline))
+        {
+            logger.LogWarning(
+                "Pipeline for {Url} uses only generic placeholder selectors — likely hallucinated, rejecting",
+                intent.Url);
+            throw new InvalidOperationException(
+                "Pipeline uses only generic selectors — likely hallucinated");
+        }
 
         // Validate the pipeline
         var validationResult = pipelineValidator.Validate(pipeline, blockRegistry);
@@ -1978,6 +2302,70 @@ public class ComposableSetupPipeline(
 
     private static bool HasUsableDryRunOutput(DryRunResult? dryRunResult)
         => dryRunResult is { Success: true } && !IsDryRunOutputEmpty(dryRunResult);
+
+    /// <summary>
+    /// Known generic/placeholder CSS selectors that LLMs hallucinate when they can't identify
+    /// real selectors from the HTML. If ALL selectors in the pipeline match this list,
+    /// the pipeline is almost certainly fabricated.
+    /// </summary>
+    private static readonly HashSet<string> PlaceholderSelectors = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".job-card", ".job-listing", ".result-item", ".search-result",
+        "li.result", "div.job", ".listing", ".vacancy",
+        "table.jobs", ".careers-list", ".job-item", ".position",
+        ".job", ".results", ".items", ".card"
+    };
+
+    /// <summary>
+    /// Guard 3: Checks whether a pipeline's ExtractSchema blocks use only generic placeholder
+    /// selectors (none page-specific). Returns true if ALL selectors are placeholders.
+    /// Returns false (passes) if there are no ExtractSchema blocks or at least one page-specific selector.
+    /// </summary>
+    private static bool HasOnlyPlaceholderSelectors(PipelineDefinition pipeline)
+    {
+        var extractBlocks = pipeline.Blocks
+            .Where(b => string.Equals(b.Type, "ExtractSchema", StringComparison.OrdinalIgnoreCase)
+                        && b.Config is not null)
+            .ToList();
+
+        if (extractBlocks.Count == 0)
+            return false; // No extraction blocks — not applicable
+
+        var allSelectors = new List<string>();
+
+        foreach (var block in extractBlocks)
+        {
+            var config = block.Config!.Value;
+
+            // Collect the scope selector
+            if (config.TryGetProperty("scope", out var scopeEl)
+                && scopeEl.ValueKind == JsonValueKind.String
+                && scopeEl.GetString() is { Length: > 0 } scope)
+            {
+                allSelectors.Add(scope);
+            }
+
+            // Collect field selectors from schema array
+            if (config.TryGetProperty("schema", out var schemaEl)
+                && schemaEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var field in schemaEl.EnumerateArray())
+                {
+                    if (field.TryGetProperty("selector", out var selEl)
+                        && selEl.ValueKind == JsonValueKind.String
+                        && selEl.GetString() is { Length: > 0 } selector)
+                    {
+                        allSelectors.Add(selector);
+                    }
+                }
+            }
+        }
+
+        if (allSelectors.Count == 0)
+            return false; // No selectors found — let other guards catch this
+
+        return allSelectors.All(s => PlaceholderSelectors.Contains(s.Trim()));
+    }
 
     private static bool IsDryRunOutputEmpty(JsonElement? outputData)
     {
