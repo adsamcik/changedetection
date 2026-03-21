@@ -1,7 +1,6 @@
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.AutoHealing;
-using ChangeDetection.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,7 +59,6 @@ public class ServiceRegistrationTests : TestBase, IAsyncDisposable
     [Arguments(typeof(IFieldHistoryService))]
     [Arguments(typeof(IDatabaseBackupService))]
     [Arguments(typeof(ISessionPersistenceService))]
-    [Arguments(typeof(IInputAnchorValidator))]
     [Arguments(typeof(IPlatformDetector))]
     [Arguments(typeof(IPipelineTemplateRegistry))]
     public async Task CoreService_ShouldResolveFromDI(Type serviceType)

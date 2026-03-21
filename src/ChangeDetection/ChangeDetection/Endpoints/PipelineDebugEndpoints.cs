@@ -1,6 +1,5 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
-using ChangeDetection.Hubs;
 using ChangeDetection.Shared.Dtos;
 
 namespace ChangeDetection.Endpoints;
@@ -139,13 +138,10 @@ public static class PipelineDebugEndpoints
         ISessionPersistenceService sessionPersistence,
         CancellationToken ct)
     {
-        var pipelineSessionCount = SetupConversationHub.PipelineSessionCount;
-        var stateHistoryCount = SetupConversationHub.StateHistoryCount;
-
         return Task.FromResult(Results.Ok(new ActiveSessionsDto
         {
-            InMemoryPipelineSessions = pipelineSessionCount,
-            InMemoryStateHistories = stateHistoryCount
+            InMemoryPipelineSessions = 0,
+            InMemoryStateHistories = 0
         }));
     }
 

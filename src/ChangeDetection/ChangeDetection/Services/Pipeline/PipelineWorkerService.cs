@@ -2,10 +2,8 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
-using ChangeDetection.Hubs;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Shared.Dtos;
-using Microsoft.AspNetCore.SignalR;
 
 namespace ChangeDetection.Services.Pipeline;
 
@@ -18,7 +16,6 @@ public sealed class PipelineWorkerService : BackgroundService
     private readonly IBackgroundServiceScopeFactory _scopeFactory;
     private readonly PipelineQueueService _queueService;
     private readonly IPipelineQueueRepository _queueRepository;
-    private readonly IHubContext<SetupConversationHub> _hubContext;
     private readonly ILogger<PipelineWorkerService> _logger;
     
     /// <summary>
@@ -45,13 +42,11 @@ public sealed class PipelineWorkerService : BackgroundService
         IBackgroundServiceScopeFactory scopeFactory,
         PipelineQueueService queueService,
         IPipelineQueueRepository queueRepository,
-        IHubContext<SetupConversationHub> hubContext,
         ILogger<PipelineWorkerService> logger)
     {
         _scopeFactory = scopeFactory;
         _queueService = queueService;
         _queueRepository = queueRepository;
-        _hubContext = hubContext;
         _logger = logger;
     }
 
@@ -366,22 +361,15 @@ public sealed class PipelineWorkerService : BackgroundService
         await NotifyClientAsync(sessionId, ownerId, entry, ct);
     }
 
-    private async Task NotifyClientAsync(
+    private Task NotifyClientAsync(
         Guid sessionId,
         Guid ownerId,
         FlowStateEntryDto entry,
         CancellationToken ct)
     {
-        try
-        {
-            // Send to the specific session group
-            var groupName = $"setup-{sessionId}";
-            await _hubContext.Clients.Group(groupName).SendAsync("FlowStateUpdate", entry, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to notify client for session {SessionId}", sessionId);
-        }
+        // Legacy SetupConversationHub was removed — no hub is mapped for queue-driven pipeline progress.
+        // The modern ComposableSetupHub handles its own streaming directly.
+        return Task.CompletedTask;
     }
 
     private static FlowStateEntryDto MapProgressToFlowState(PipelineProgress progress)

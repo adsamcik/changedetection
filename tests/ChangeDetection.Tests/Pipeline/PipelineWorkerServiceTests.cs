@@ -1,10 +1,8 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
-using ChangeDetection.Hubs;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -23,23 +21,17 @@ public class PipelineWorkerServiceTests : TestBase, IDisposable
     private readonly IBackgroundServiceScopeFactory _scopeFactory;
     private readonly PipelineQueueService _queueService;
     private readonly IPipelineQueueRepository _queueRepository;
-    private readonly IHubContext<SetupConversationHub> _hubContext;
     private readonly IServiceScope _scope;
     private readonly IWatchSetupPipeline _pipeline;
     private readonly IRepository<AppSettings> _settingsRepo;
-    private readonly IClientProxy _clientProxy;
-    private readonly IHubClients _hubClients;
 
     public PipelineWorkerServiceTests()
     {
         _scopeFactory = Substitute.For<IBackgroundServiceScopeFactory>();
         _queueRepository = Substitute.For<IPipelineQueueRepository>();
-        _hubContext = Substitute.For<IHubContext<SetupConversationHub>>();
         _scope = Substitute.For<IServiceScope>();
         _pipeline = Substitute.For<IWatchSetupPipeline>();
         _settingsRepo = Substitute.For<IRepository<AppSettings>>();
-        _clientProxy = Substitute.For<IClientProxy>();
-        _hubClients = Substitute.For<IHubClients>();
 
         // Setup default mocks
         var scopedServiceProvider = Substitute.For<IServiceProvider>();
@@ -58,10 +50,6 @@ public class PipelineWorkerServiceTests : TestBase, IDisposable
         _queueRepository.ResetStaleItemsAsync(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(0);
 
-        // Setup SignalR mocks
-        _hubContext.Clients.Returns(_hubClients);
-        _hubClients.Group(Arg.Any<string>()).Returns(_clientProxy);
-
         // Create a real PipelineQueueService with mocked repository
         var optionsMonitor = Substitute.For<Microsoft.Extensions.Options.IOptionsMonitor<AppSettings>>();
         optionsMonitor.CurrentValue.Returns(new AppSettings());
@@ -77,7 +65,6 @@ public class PipelineWorkerServiceTests : TestBase, IDisposable
             _scopeFactory,
             _queueService,
             _queueRepository,
-            _hubContext,
             CreateLogger<PipelineWorkerService>());
     }
 
@@ -863,164 +850,6 @@ public class PipelineWorkerServiceTests : TestBase, IDisposable
         await _queueRepository.DidNotReceive().ResetForRetryAsync(item.Id, Arg.Any<CancellationToken>());
         await _queueRepository.Received().MoveToDeadLetterAsync(
             item.Id, Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    #endregion
-
-    #region SignalR Notification Tests
-
-    [Test]
-    public async Task NotifyClientAsync_SendsToCorrectGroup()
-    {
-        // Arrange
-        var sessionId = Guid.NewGuid();
-        var item = new PipelineQueueItem
-        {
-            SessionId = sessionId,
-            OwnerId = Guid.NewGuid(),
-            OperationType = PipelineOperationType.Process,
-            UserInput = "Watch https://example.com"
-        };
-
-        _queueRepository.ClaimNextAsync(Arg.Any<CancellationToken>())
-            .Returns(item, (PipelineQueueItem?)null);
-
-        var progress = new PipelineProgress
-        {
-            Stage = PipelineStage.UrlExtraction,
-            Type = ProgressType.InProgress,
-            Summary = "Extracting URL"
-        };
-
-        _pipeline.ProcessStreamingAsync(Arg.Any<string>(), Arg.Any<PipelineOptions?>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(progress));
-
-        var service = CreateService();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-
-        _queueService.SignalItemAvailable();
-
-        // Act
-        try
-        {
-            await service.StartAsync(cts.Token);
-            await Task.Delay(150, cts.Token);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            await service.StopAsync(CancellationToken.None);
-        }
-
-        // Assert - verify the correct group was targeted
-        _hubClients.Received().Group($"setup-{sessionId}");
-    }
-
-    [Test]
-    public async Task NotifyClientAsync_HandlesSignalRFailure()
-    {
-        // Arrange
-        var item = new PipelineQueueItem
-        {
-            SessionId = Guid.NewGuid(),
-            OwnerId = Guid.NewGuid(),
-            OperationType = PipelineOperationType.Process,
-            UserInput = "Watch https://example.com"
-        };
-
-        _queueRepository.ClaimNextAsync(Arg.Any<CancellationToken>())
-            .Returns(item, (PipelineQueueItem?)null);
-
-        var progress = new PipelineProgress
-        {
-            Stage = PipelineStage.UrlExtraction,
-            Type = ProgressType.InProgress,
-            Summary = "Extracting URL"
-        };
-
-        _pipeline.ProcessStreamingAsync(Arg.Any<string>(), Arg.Any<PipelineOptions?>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(progress));
-
-        // SignalR throws
-        _clientProxy.SendCoreAsync(Arg.Any<string>(), Arg.Any<object?[]>(), Arg.Any<CancellationToken>())
-            .ThrowsAsync(new Exception("SignalR connection lost"));
-
-        var service = CreateService();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-
-        _queueService.SignalItemAvailable();
-
-        // Act - should not throw even though SignalR fails
-        try
-        {
-            await service.StartAsync(cts.Token);
-            await Task.Delay(150, cts.Token);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            await service.StopAsync(CancellationToken.None);
-        }
-
-        // Assert - processing should still complete despite notification failure
-        await _queueRepository.Received().CompleteAsync(item.Id, Arg.Any<CancellationToken>());
-    }
-
-    #endregion
-
-    #region Progress Mapping Tests
-
-    [Test]
-    public async Task MapProgressToFlowState_MapsAllProgressTypes()
-    {
-        // This test verifies mapping indirectly through actual processing
-        // The mapping happens inside the service for each progress update
-        
-        var item = new PipelineQueueItem
-        {
-            SessionId = Guid.NewGuid(),
-            OwnerId = Guid.NewGuid(),
-            OperationType = PipelineOperationType.Process,
-            UserInput = "test"
-        };
-
-        _queueRepository.ClaimNextAsync(Arg.Any<CancellationToken>())
-            .Returns(item, (PipelineQueueItem?)null);
-
-        var progressSequence = new[]
-        {
-            new PipelineProgress { Stage = PipelineStage.UrlExtraction, Type = ProgressType.Starting, Summary = "Starting" },
-            new PipelineProgress { Stage = PipelineStage.UrlExtraction, Type = ProgressType.InProgress, Summary = "In Progress" },
-            new PipelineProgress { Stage = PipelineStage.UrlExtraction, Type = ProgressType.Thinking, Summary = "Thinking" },
-            new PipelineProgress { Stage = PipelineStage.UrlExtraction, Type = ProgressType.StageCompleted, Summary = "Stage Done" },
-            new PipelineProgress { Stage = PipelineStage.Complete, Type = ProgressType.Completed, Summary = "Complete" }
-        };
-
-        _pipeline.ProcessStreamingAsync(Arg.Any<string>(), Arg.Any<PipelineOptions?>(), Arg.Any<CancellationToken>())
-            .Returns(progressSequence.ToAsyncEnumerable());
-
-        var service = CreateService();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-
-        _queueService.SignalItemAvailable();
-
-        // Act
-        try
-        {
-            await service.StartAsync(cts.Token);
-            await Task.Delay(250, cts.Token);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            await service.StopAsync(CancellationToken.None);
-        }
-
-        // Assert - verify notifications were sent
-        await _clientProxy.Received(5).SendCoreAsync(
-            "FlowStateUpdate",
-            Arg.Any<object?[]>(),
-            Arg.Any<CancellationToken>());
     }
 
     #endregion

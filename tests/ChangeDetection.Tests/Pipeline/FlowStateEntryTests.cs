@@ -7,7 +7,7 @@ namespace ChangeDetection.Tests.Pipeline;
 /// <summary>
 /// Contract tests for FlowStateEntry record and FlowStateEntryDto class.
 /// Verifies data model shapes, defaults, record semantics, and enum parity
-/// that production code (SetupConversationHub, PipelineWorkerService) relies on.
+/// that production code (PipelineWorkerService) relies on.
 /// </summary>
 [Category("Unit")]
 public class FlowStateEntryTests
@@ -214,7 +214,7 @@ public class FlowStateEntryTests
     }
 
     /// <summary>
-    /// Production RecordStateEntry (SetupConversationHub) mutates IsCurrentState
+    /// Production RecordStateEntry mutates IsCurrentState
     /// on existing entries to mark only the latest as current.
     /// </summary>
     [Test]

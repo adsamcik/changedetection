@@ -1,6 +1,5 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
-using ChangeDetection.Hubs;
 
 namespace ChangeDetection.Services.Startup;
 
@@ -25,7 +24,6 @@ public class GracefulShutdownService(
         try
         {
             await ResetInProgressWatchesAsync(cancellationToken);
-            LogSessionState();
             
             logger.LogInformation("Graceful shutdown complete");
         }
@@ -83,34 +81,6 @@ public class GracefulShutdownService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to reset in-progress watches during shutdown");
-        }
-    }
-
-    /// <summary>
-    /// Logs the current state of in-memory sessions for diagnostic purposes.
-    /// </summary>
-    private void LogSessionState()
-    {
-        try
-        {
-            var pipelineCount = SetupConversationHub.PipelineSessionCount;
-            var historyCount = SetupConversationHub.StateHistoryCount;
-
-            if (pipelineCount > 0 || historyCount > 0)
-            {
-                logger.LogWarning(
-                    "Shutdown with {PipelineCount} pipeline sessions and {HistoryCount} state histories in memory (will be lost)",
-                    pipelineCount,
-                    historyCount);
-            }
-            else
-            {
-                logger.LogDebug("No in-memory sessions to report");
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to log session state during shutdown");
         }
     }
 }

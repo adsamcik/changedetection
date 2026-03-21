@@ -291,7 +291,6 @@ builder.Services.AddScoped<IRepository<BlockExecutionSnapshotEntity>>(sp =>
 builder.Services.AddSingleton<PlaywrightFetcher>();
 builder.Services.AddSingleton<IContentFetcher>(sp => sp.GetRequiredService<PlaywrightFetcher>());
 builder.Services.AddSingleton<ILlmLogService, LlmLogService>();
-builder.Services.AddSingleton<IRobotsTxtChecker, RobotsTxtChecker>();
 builder.Services.AddSingleton<ContentSanitizer>();
 builder.Services.AddScoped<PinnedHttpClient>();
 
@@ -314,7 +313,6 @@ builder.Services.AddScoped<ICategoryService, ServerCategoryService>();
 builder.Services.AddScoped<IWatchGroupService, ServerWatchGroupService>();
 builder.Services.AddScoped<IPortalDiscoveryAnalyzer, PortalDiscoveryAnalyzer>();
 builder.Services.AddScoped<IPortalSuggestionService, PortalSuggestionService>();
-builder.Services.AddScoped<IAggregateSetupPipeline, AggregateSetupPipeline>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
@@ -346,16 +344,13 @@ builder.Services.AddScoped<IPipelineEventService, PipelineEventService>();
 
 // Pipeline support services
 builder.Services.AddSingleton<IConversationSessionManager, ConversationSessionManager>();
-builder.Services.AddScoped<IInputAnchorValidator, InputAnchorValidator>();
-
-// Session cleanup service - cleans up hub dictionaries when sessions expire
-builder.Services.AddHostedService<SetupSessionCleanupService>();
 
 // URL validation for SSRF protection
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
 builder.Services.AddSingleton<DomainPinValidator>();
 builder.Services.AddSingleton<PipelineSecurityValidator>();
 builder.Services.AddSingleton<PipelineAuditService>();
+builder.Services.AddScoped<ExecutionBudget>();
 
 // Search provider configuration
 builder.Services.Configure<SearchSettings>(builder.Configuration.GetSection("SearchSettings"));
@@ -398,13 +393,12 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var logger = sp.GetRequiredService<ILogger<LlmSearchProvider>>();
-    return new LlmSearchProvider(scopeFactory, httpClientFactory, logger);
+    var urlVal = sp.GetRequiredService<IUrlValidator>();
+    return new LlmSearchProvider(scopeFactory, httpClientFactory, urlVal, logger);
 });
 builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
 builder.Services.AddSingleton<MultiProviderSearchService>();
-builder.Services.AddScoped<IQueryEvolutionService, QueryEvolutionService>();
-builder.Services.AddScoped<IRssDiscoveryService, RssDiscoveryService>();
-builder.Services.AddSingleton<AdversarialSearchAnalyzer>();
+
 
 // Group Watch discovery service
 builder.Services.Configure<GroupWatchDiscoveryOptions>(
@@ -430,7 +424,7 @@ builder.Services.AddSingleton<PipelineDegradationService>();
 // Composable setup pipeline (LLM-driven pipeline assembly from natural language)
 builder.Services.AddScoped<IComposableSetupPipeline, ComposableSetupPipeline>();
 
-// Legacy setup pipeline + stages — kept for AggregateSetupPipeline, PipelineWorkerService, LlmEndpoints
+// Legacy setup pipeline + stages — kept for PipelineWorkerService and LlmEndpoints
 // Marked [Obsolete] in WatchSetupPipeline.cs. Will be fully removed when dependents are migrated.
 builder.Services.AddScoped<UrlExtractionStage>();
 builder.Services.AddScoped<ContentFetchingStage>();
@@ -449,11 +443,13 @@ builder.Services.AddSingleton<IProfileFilterRuleGenerator, ProfileFilterRuleGene
 builder.Services.AddScoped<JobWatchSeeder>();
 builder.Services.AddSingleton<IAlertPolicyService, AlertPolicyService>();
 builder.Services.AddScoped<IItemTrackingService, ItemTrackingService>();
-builder.Services.AddSingleton<IAlertContentGenerator, AlertContentGenerator>();
-
 // Auto-healing services
 builder.Services.AddScoped<IAutoHealingService, AutoHealingService>();
-builder.Services.AddSingleton<IFailureTracker, FailureTracker>();
+builder.Services.AddScoped<IFailureTracker, FailureTracker>();
+
+// Resilience services
+builder.Services.AddSingleton<IDomainThrottleService, DomainThrottleService>();
+builder.Services.AddSingleton<IWatchExecutionLock, WatchExecutionLock>();
 
 // Price tracking services
 builder.Services.AddScoped<IPriceHistoryRepository, PriceHistoryRepository>();
@@ -595,9 +591,7 @@ app.MapGroup("/api/catalog")
 app.MapHub<ChangeDetectionHub>("/hubs/changes")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<ComposableSetupHub>("/hubs/composable-setup")
-    .RequireAuthenticationInSsoMode(builder.Configuration);  // MODERN
-app.MapHub<AggregateSetupHub>("/hubs/aggregate-setup")
-    .RequireAuthenticationInSsoMode(builder.Configuration);  // MODERN
+    .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<GroupWatchHub>("/hubs/group-watch")
     .RequireAuthenticationInSsoMode(builder.Configuration);  // Group watch discovery
 
