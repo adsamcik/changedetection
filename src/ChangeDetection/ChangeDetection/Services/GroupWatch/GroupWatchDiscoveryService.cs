@@ -103,22 +103,64 @@ public class GroupWatchDiscoveryService(
 
         logger.LogInformation("Starting group watch discovery for intent: {Intent}", userInput);
 
-        // Phase 1: Ask LLM to understand intent AND suggest career portals in one call
+        // Phase 1: Parse intent via LLM — extract location, roles, field, and search queries
         yield return CreateProgress(
             GroupWatchPhase.Parsing,
-            "Understanding your request and finding relevant career portals...",
+            "Understanding your request...",
             completedCount: 0,
             totalCount: null);
 
-        LlmDiscoveryResult? llmResult = null;
+        StructuredDiscoveryIntent? parsedIntent = null;
         GroupWatchProgress? failureProgress = null;
         try
         {
-            llmResult = await DiscoverPortalsViaLlmAsync(userInput, ct);
+            parsedIntent = await ParseIntentAsync(userInput, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "LLM discovery failed for intent: {Intent}", userInput);
+            logger.LogError(ex, "Intent parsing failed for: {Intent}", userInput);
+            failureProgress = CreateProgress(
+                GroupWatchPhase.Complete,
+                $"Failed to understand request: {ex.Message}",
+                completedCount: 0,
+                totalCount: 0);
+        }
+
+        if (failureProgress is not null)
+        {
+            yield return failureProgress;
+            yield break;
+        }
+
+        logger.LogInformation(
+            "Parsed intent: Location={Location}, Roles={Roles}, Field={Field}, Queries={QueryCount}",
+            parsedIntent!.Location,
+            string.Join(", ", parsedIntent.RoleTypes),
+            parsedIntent.Field,
+            parsedIntent.SearchQueries.Count);
+
+        yield return CreateProgress(
+            GroupWatchPhase.Parsing,
+            $"Understood: {BuildIntentSummary(parsedIntent)}",
+            completedCount: 1,
+            totalCount: null);
+
+        // Phase 2: Web search (PRIMARY) + catalog supplement → LLM classification
+        yield return CreateProgress(
+            GroupWatchPhase.Searching,
+            "Searching for career portals...",
+            completedCount: 0,
+            totalCount: null);
+
+        List<DiscoveredPortal>? portals = null;
+        failureProgress = null;
+        try
+        {
+            portals = await DiscoverPortalsViaSearchAsync(parsedIntent, userInput, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Portal discovery failed for intent: {Intent}", userInput);
             failureProgress = CreateProgress(
                 GroupWatchPhase.Complete,
                 $"Failed to discover portals: {ex.Message}",
@@ -132,67 +174,15 @@ public class GroupWatchDiscoveryService(
             yield break;
         }
 
-        var parsedIntent = llmResult!.Intent;
+        logger.LogInformation("Discovery produced {Count} portal(s)", portals!.Count);
 
-        logger.LogInformation(
-            "LLM discovered {PortalCount} portals. Location={Location}, Roles={Roles}, Field={Field}",
-            llmResult.Portals.Count,
-            parsedIntent.Location,
-            string.Join(", ", parsedIntent.RoleTypes),
-            parsedIntent.Field);
+        yield return CreateProgress(
+            GroupWatchPhase.Searching,
+            $"Found {portals.Count} career portal(s).",
+            completedCount: portals.Count,
+            totalCount: portals.Count);
 
-        // Phase 2: Optionally augment with web search if providers are configured
-        var portals = llmResult.Portals;
-
-        var hasSearchProviders = multiSearch.HasAvailableProviders();
-        if (hasSearchProviders)
-        {
-            yield return CreateProgress(
-                GroupWatchPhase.Searching,
-                $"Found {portals.Count} portals from knowledge. Searching for more...",
-                completedCount: 0,
-                totalCount: null);
-
-            List<DiscoveredPortal>? additionalPortals = null;
-            try
-            {
-                var searchQueries = BuildSearchQueries(parsedIntent, userInput);
-                // Timeout web search augmentation — LLM catalog results are sufficient if search is slow
-                using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                searchCts.CancelAfter(TimeSpan.FromSeconds(20));
-                additionalPortals = await SearchForAdditionalPortalsAsync(searchQueries, searchCts.Token);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                logger.LogInformation("Web search augmentation timed out after 20s, continuing with catalog results");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Web search augmentation failed, continuing with LLM results only");
-            }
-
-            if (additionalPortals is { Count: > 0 })
-            {
-                logger.LogInformation("Web search found {Count} additional portal(s)", additionalPortals.Count);
-                portals = [.. portals, .. additionalPortals];
-            }
-
-            yield return CreateProgress(
-                GroupWatchPhase.Searching,
-                $"Search complete. {portals.Count} total portals found.",
-                completedCount: portals.Count,
-                totalCount: portals.Count);
-        }
-        else
-        {
-            yield return CreateProgress(
-                GroupWatchPhase.Searching,
-                $"Found {portals.Count} career portals from AI knowledge.",
-                completedCount: portals.Count,
-                totalCount: portals.Count);
-        }
-
-        // Phase 3: Deduplicate and validate
+        // Phase 3: Deduplicate and filter existing watches
         var deduplicatedPortals = DeduplicateByDomain(portals)
             .Take(Math.Max(1, _options.MaxPortalsPerGroup))
             .ToList();
@@ -207,21 +197,21 @@ public class GroupWatchDiscoveryService(
                 totalCount: deduplicatedPortals.Count);
         }
 
-        portals = newPortals;
+        var filteredPortals = newPortals;
         var discoverySummaryPortals = alreadyWatched.Count > 0
-            ? [.. portals, .. alreadyWatched]
-            : portals;
+            ? [.. filteredPortals, .. alreadyWatched]
+            : filteredPortals;
 
         yield return CreateProgress(
             GroupWatchPhase.Filtering,
             alreadyWatched.Count > 0
-                ? $"Selected {portals.Count} new portal(s) for watch creation. Skipped {alreadyWatched.Count} already monitored portal(s)."
-                : $"Selected {portals.Count} portal(s) for watch creation.",
-            completedCount: portals.Count,
+                ? $"Selected {filteredPortals.Count} new portal(s) for watch creation. Skipped {alreadyWatched.Count} already monitored portal(s)."
+                : $"Selected {filteredPortals.Count} portal(s) for watch creation.",
+            completedCount: filteredPortals.Count,
             totalCount: deduplicatedPortals.Count,
             portals: discoverySummaryPortals);
 
-        if (portals.Count == 0)
+        if (filteredPortals.Count == 0)
         {
             yield return CreateProgress(
                 GroupWatchPhase.Complete,
@@ -238,10 +228,10 @@ public class GroupWatchDiscoveryService(
         // after the user confirms which portals to include
         yield return CreateProgress(
             GroupWatchPhase.PortalsReady,
-            $"Found {portals.Count} portal(s). Waiting for confirmation.",
-            completedCount: portals.Count,
-            totalCount: portals.Count,
-            portals: portals);
+            $"Found {filteredPortals.Count} portal(s). Waiting for confirmation.",
+            completedCount: filteredPortals.Count,
+            totalCount: filteredPortals.Count,
+            portals: filteredPortals);
     }
 
     public async IAsyncEnumerable<GroupWatchProgress> CreateWatchesAsync(
@@ -463,52 +453,220 @@ public class GroupWatchDiscoveryService(
             needsSetupPortals: needsSetupPortals.Count > 0 ? needsSetupPortals : null);
     }
 
-    private sealed record LlmDiscoveryResult(StructuredDiscoveryIntent Intent, List<DiscoveredPortal> Portals);
-
     /// <summary>
-    /// Grounded discovery: LLM parses intent, then selects from a verified catalog of real URLs.
-    /// The LLM NEVER generates URLs - it only reasons about which catalog entries match the intent.
+    /// Parallel discovery: web search and catalog run concurrently as equal sources.
+    /// Results are merged, deduped by domain, then LLM classifies the combined set.
     /// </summary>
-    private async Task<LlmDiscoveryResult> DiscoverPortalsViaLlmAsync(string userInput, CancellationToken ct)
+    private async Task<List<DiscoveredPortal>> DiscoverPortalsViaSearchAsync(
+        StructuredDiscoveryIntent parsedIntent,
+        string userInput,
+        CancellationToken ct)
+    {
+        var searchQueries = BuildSearchQueries(parsedIntent, userInput);
+
+        // Run both sources in parallel — neither is primary
+        var webSearchTask = RunWebSearchAsync(searchQueries, ct);
+        var catalogTask = RunCatalogMatchAsync(parsedIntent, ct);
+
+        await Task.WhenAll(webSearchTask, catalogTask);
+
+        var webResults = webSearchTask.Result;
+        var catalogResults = catalogTask.Result;
+
+        logger.LogInformation(
+            "Discovery sources: {WebCount} from web search, {CatalogCount} from catalog",
+            webResults.Count, catalogResults.Count);
+
+        // Merge both sources into one flat list, dedup by domain
+        var merged = new List<SearchResultEnvelope>();
+        var seenDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var result in webResults.Concat(catalogResults))
+        {
+            var domain = NormalizeDomain(result.Result.Url);
+            if (seenDomains.Add(domain))
+                merged.Add(result);
+        }
+
+        if (merged.Count == 0)
+        {
+            logger.LogWarning("No results from any source for intent: {Intent}", userInput);
+            return [];
+        }
+
+        // LLM classification — evaluate each URL: is it a career portal?
+        var classifiedPortals = await ClassifyPortalsViaLlmAsync(parsedIntent, userInput, merged, ct);
+
+        // URL validation — HTTP HEAD check each approved portal
+        var validatedPortals = new List<DiscoveredPortal>();
+        foreach (var portal in classifiedPortals)
+        {
+            try
+            {
+                var validation = await ValidatePortalUrlAsync(portal.Url, ct);
+                if (validation.IsValid)
+                {
+                    validatedPortals.Add(portal);
+                }
+                else
+                {
+                    logger.LogInformation("Dropped portal {Url}: {Reason}", portal.Url, validation.Reason);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Validation failed for {Url}, keeping portal", portal.Url);
+                validatedPortals.Add(portal); // keep on validation error — better to include than drop
+            }
+        }
+
+        logger.LogInformation("Validated {Valid}/{Total} portals", validatedPortals.Count, classifiedPortals.Count);
+        return validatedPortals;
+    }
+
+    private async Task<List<SearchResultEnvelope>> RunWebSearchAsync(
+        List<string> searchQueries, CancellationToken ct)
+    {
+        var results = new List<SearchResultEnvelope>();
+
+        using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        searchCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        foreach (var query in searchQueries.Take(Math.Max(1, _options.MaxSearchQueries)))
+        {
+            try
+            {
+                var resultSet = await multiSearch.SearchAllAsync(
+                    new SearchQuery { Query = query, MaxResults = _options.MaxSearchResultsPerQuery },
+                    ct: searchCts.Token);
+                results.AddRange(resultSet.MergedResults
+                    .Where(r => Uri.TryCreate(r.Url, UriKind.Absolute, out _))
+                    .Select(r => new SearchResultEnvelope(query, r)));
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                logger.LogInformation("Web search timed out for query: {Query}, continuing with results so far", query);
+                break;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Web search failed for query: {Query}", query);
+            }
+        }
+
+        return results;
+    }
+
+    private async Task<List<SearchResultEnvelope>> RunCatalogMatchAsync(
+        StructuredDiscoveryIntent parsedIntent, CancellationToken ct)
     {
         var catalog = await LoadGroundedCatalogAsync(ct);
-        logger.LogInformation("Loaded grounded catalog with {Count} verified portals", catalog.Count);
+        var matches = FilterCatalogByIntent(catalog, parsedIntent);
 
-        var catalogSummary = string.Join("\n", catalog.Select((p, i) =>
-            $"[{i}] {p.Name} | {p.Url} | location: {string.Join(", ", p.LocationKeywords)} | platform: {p.PlatformId ?? "html"} | tags: {string.Join(", ", p.Tags)}"));
+        return matches.Select(entry => new SearchResultEnvelope(
+            "catalog",
+            new MergedSearchResult
+            {
+                Url = entry.Url,
+                Title = entry.Name,
+                Snippet = $"Known portal: {string.Join(", ", entry.Tags)}",
+                BestPosition = 0,
+                ProviderIds = ["catalog"]
+            })).ToList();
+    }
 
-        var prompt = $$"""
-            You are selecting career portals from a VERIFIED CATALOG for job monitoring.
+    /// <summary>
+    /// Filters catalog entries by matching location and field/tags against the parsed intent.
+    /// </summary>
+    private static List<CatalogEntry> FilterCatalogByIntent(List<CatalogEntry> catalog, StructuredDiscoveryIntent intent)
+    {
+        if (string.IsNullOrWhiteSpace(intent.Location) && string.IsNullOrWhiteSpace(intent.Field) && intent.RoleTypes.Count == 0)
+            return catalog; // no filtering criteria → return all
 
-            User request: "{{userInput}}"
+        var locationTerms = string.IsNullOrWhiteSpace(intent.Location)
+            ? []
+            : DeriveLocationFilterTerms(intent.Location);
 
-            VERIFIED PORTAL CATALOG (these URLs are confirmed real and working):
-            {{catalogSummary}}
+        return catalog.Where(entry =>
+        {
+            // If we have location terms, at least one must match
+            if (locationTerms.Count > 0)
+            {
+                var locationMatch = entry.LocationKeywords.Any(kw =>
+                    locationTerms.Any(lt => kw.Contains(lt, StringComparison.OrdinalIgnoreCase))) ||
+                    entry.Tags.Any(tag =>
+                    locationTerms.Any(lt => tag.Contains(lt, StringComparison.OrdinalIgnoreCase)));
 
-             Your tasks:
-             1. Parse the user's intent into location, roleTypes, and field
-             2. Select the catalog entries (by index number) that match the user's intent
-             3. Explain WHY each selected portal is relevant
-
-            CRITICAL RULES:
-            - You may ONLY select portals from the catalog above using their [index] number
-             - Do NOT invent, modify, or guess any URLs
-             - Select portals where the location keywords overlap with the user's requested location
-             - Prefer portals tagged for the user's field/domain
-             - Include general job boards for the region (e.g. Jobindex for Denmark, Jobs.cz for Czech Republic)
-             - Also include matching company ATS portals (especially Workday and Teamtailor) when their location keywords match; do not return only generic job boards
-             - For Denmark/Copenhagen requests, prefer a mix of Jobindex plus relevant Copenhagen/Denmark company portals from the catalog
-
-             Return JSON:
-             {
-              "location": "parsed location",
-              "roleTypes": ["parsed role 1"],
-              "field": "parsed field",
-              "searchQueries": ["web search query if catalog coverage is thin"],
-              "selectedIndices": [0, 3, 7],
-              "reasoning": { "0": "why this portal", "3": "why this portal" }
+                if (!locationMatch)
+                    return false;
             }
 
+            return true;
+        }).ToList();
+    }
+
+    /// <summary>
+    /// LLM evaluates a flat list of URLs (from search + catalog) and classifies each as career portal or not.
+    /// </summary>
+    private async Task<List<DiscoveredPortal>> ClassifyPortalsViaLlmAsync(
+        StructuredDiscoveryIntent parsedIntent,
+        string userInput,
+        IReadOnlyList<SearchResultEnvelope> results,
+        CancellationToken ct)
+    {
+        var compactResults = results
+            .GroupBy(r => NormalizeDomain(r.Result.Url), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Take(60)
+            .Select((entry, index) => new
+            {
+                index = index + 1,
+                url = entry.Result.Url,
+                title = entry.Result.Title,
+                snippet = Truncate(entry.Result.Snippet, 220),
+                source = entry.SearchQuery
+            })
+            .ToList();
+
+        var prompt = $$"""
+            You are classifying URLs to find actual career portals for job monitoring.
+
+            User intent: "{{userInput}}"
+            Location: {{parsedIntent.Location}}
+            Role types: {{string.Join(", ", parsedIntent.RoleTypes)}}
+            Field: {{parsedIntent.Field}}
+
+            Candidate URLs (from web search and known catalogs):
+            {{JsonSerializer.Serialize(compactResults)}}
+
+            For EACH URL, decide: is this an actual career portal, job board results page,
+            or company careers listing page relevant to the user's intent?
+
+            INCLUDE:
+            - Job board search/results pages (e.g., StepStone, Indeed, LinkedIn Jobs, Jobindex)
+            - Company career pages listing open positions
+            - University vacancy pages
+            - Government/public job portals
+            - Specialized industry job boards
+
+            EXCLUDE:
+            - Individual job postings (single position pages)
+            - News articles or press releases
+            - General company homepages (not the careers section)
+            - Recruiter profile pages
+            - Blog posts or guides about job searching
+            - Social media pages
+
+            Return a JSON array of APPROVED portals only:
+            [
+              {
+                "url": "https://...",
+                "title": "human-readable name",
+                "reasoning": "brief explanation of why this is a career portal"
+              }
+            ]
+
+            Return at most {{Math.Max(1, _options.MaxPortalsPerGroup)}} items, best portals first.
             Respond ONLY with JSON.
             """;
 
@@ -522,48 +680,41 @@ public class GroupWatchDiscoveryService(
         }, ct);
 
         if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
-            throw new InvalidOperationException($"LLM selection failed: {response.ErrorMessage ?? "empty response"}");
-
-        var content = StripMarkdownFences(response.Content);
-        var selection = DeserializeOrThrow<CatalogSelectionResponse>(content, "CatalogSelectionResponse");
-
-        var intent = new StructuredDiscoveryIntent
         {
-            Location = selection.Location?.Trim() ?? "",
-            RoleTypes = (selection.RoleTypes ?? []).Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim()).ToList(),
-            Field = selection.Field?.Trim() ?? "",
-            SearchQueries = (selection.SearchQueries ?? []).Where(q => !string.IsNullOrWhiteSpace(q)).Select(q => q.Trim()).ToList()
-        };
+            logger.LogWarning("LLM classification failed: {Error}, falling back to heuristic selection",
+                response.ErrorMessage ?? "empty response");
+            return FallbackPortalSelection(results);
+        }
 
-        var reasoning = selection.Reasoning ?? new Dictionary<string, string>();
-        var portals = (selection.SelectedIndices ?? [])
-            .Where(idx => idx >= 0 && idx < catalog.Count)
-            .Distinct()
-            .Select(idx =>
+        List<PortalSelection> candidates;
+        try
+        {
+            candidates = DeserializeOrThrow<List<PortalSelection>>(response.Content, nameof(PortalSelection));
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to parse LLM classification response, falling back to heuristic");
+            return FallbackPortalSelection(results);
+        }
+
+        return candidates
+            .Where(c => Uri.TryCreate(c.Url, UriKind.Absolute, out _))
+            .Select(c =>
             {
-                var entry = catalog[idx];
-                reasoning.TryGetValue(idx.ToString(), out var reason);
+                var domain = NormalizeDomain(c.Url);
+                var matchedResult = results.FirstOrDefault(r =>
+                    string.Equals(r.Result.Url, c.Url, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(NormalizeDomain(r.Result.Url), domain, StringComparison.OrdinalIgnoreCase));
+
                 return new DiscoveredPortal(
-                    entry.Url,
-                    NormalizeDomain(entry.Url),
-                    reason?.Trim() ?? $"Matched from verified catalog: {entry.Name}",
-                    entry.Name,
-                    entry.PlatformId);
+                    c.Url,
+                    domain,
+                    string.IsNullOrWhiteSpace(c.Reasoning) ? "Classified as career portal." : c.Reasoning.Trim(),
+                    c.Title ?? matchedResult?.Result.Title,
+                    SetupFlowEnhancements.DetectPlatformFromUrl(c.Url),
+                    matchedResult?.SearchQuery);
             })
             .ToList();
-
-        logger.LogInformation("LLM selected {Count}/{CatalogSize} portals from grounded catalog", portals.Count, catalog.Count);
-        return new LlmDiscoveryResult(intent, portals);
-    }
-
-    private sealed record CatalogSelectionResponse
-    {
-        public string? Location { get; init; }
-        public List<string>? RoleTypes { get; init; }
-        public string? Field { get; init; }
-        public List<string>? SearchQueries { get; init; }
-        public List<int>? SelectedIndices { get; init; }
-        public Dictionary<string, string>? Reasoning { get; init; }
     }
 
     private sealed record CatalogEntry(string Name, string Url, string? PlatformId, List<string> LocationKeywords, List<string> Tags);
@@ -750,26 +901,6 @@ public class GroupWatchDiscoveryService(
             .FirstOrDefault(File.Exists);
     }
 
-    private async Task<List<DiscoveredPortal>> SearchForAdditionalPortalsAsync(List<string> searchQueries, CancellationToken ct)
-    {
-        var collectedResults = new List<SearchResultEnvelope>();
-        foreach (var query in searchQueries.Take(_options.MaxSearchQueries))
-        {
-            try
-            {
-                var resultSet = await multiSearch.SearchAllAsync(new SearchQuery { Query = query, MaxResults = _options.MaxSearchResultsPerQuery }, ct: ct);
-                collectedResults.AddRange(resultSet.MergedResults
-                    .Where(r => Uri.TryCreate(r.Url, UriKind.Absolute, out _))
-                    .Select(r => new SearchResultEnvelope(query, r)));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Web search failed for query: {Query}", query);
-            }
-        }
-        return FallbackPortalSelection(collectedResults);
-    }
-
     private async Task<StructuredDiscoveryIntent> ParseIntentAsync(string userInput, CancellationToken ct)
     {
         var prompt = $$"""
@@ -834,92 +965,6 @@ public class GroupWatchDiscoveryService(
             Location = parsed.Location.Trim(),
             Field = parsed.Field.Trim()
         };
-    }
-
-    private async Task<List<DiscoveredPortal>> FilterAndRankPortalsAsync(
-        StructuredDiscoveryIntent parsedIntent,
-        string userInput,
-        IReadOnlyList<SearchResultEnvelope> results,
-        CancellationToken ct)
-    {
-        var compactResults = results
-            .Take(60)
-            .Select((entry, index) => new
-            {
-                index = index + 1,
-                query = entry.SearchQuery,
-                url = entry.Result.Url,
-                title = entry.Result.Title,
-                snippet = Truncate(entry.Result.Snippet, 220)
-            })
-            .ToList();
-
-        var prompt = $$"""
-            You are selecting the best career portals for an automated watch creation workflow.
-
-            User intent: {{userInput}}
-            Location: {{parsedIntent.Location}}
-            Role types: {{string.Join(", ", parsedIntent.RoleTypes)}}
-            Field: {{parsedIntent.Field}}
-
-            Search results:
-            {{JsonSerializer.Serialize(compactResults)}}
-
-            Identify URLs that are actual career portals, job-board result pages, or company career listing pages.
-
-            Exclude:
-            - individual job postings
-            - news articles
-            - press releases
-            - general company homepages unless they are clearly the careers listing page
-            - recruiter profile pages
-
-            Return ONLY a JSON array. Each item must have:
-            {
-              "url": "https://...",
-              "reasoning": "brief explanation",
-              "title": "best human-readable title if known"
-            }
-
-            Prefer the strongest portal/listing pages first. Return at most {{Math.Max(1, _options.MaxPortalsPerGroup)}} items.
-            """;
-
-        var response = await llmProviderChain.ExecuteAsync(prompt, new LlmRequestOptions
-        {
-            ExpectJson = true,
-            Temperature = 0.1f,
-            MaxTokens = 1200,
-            UsageType = LlmUsageType.ContentAnalysis,
-            PreferLargeModel = true
-        }, ct);
-
-        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
-        {
-            throw new InvalidOperationException(
-                $"Portal filtering failed: {response.ErrorMessage ?? "empty response"}");
-        }
-
-        var candidates = DeserializeOrThrow<List<PortalSelection>>(response.Content, nameof(PortalSelection))
-            ?? [];
-
-        return candidates
-            .Where(candidate => Uri.TryCreate(candidate.Url, UriKind.Absolute, out _))
-            .Select(candidate =>
-            {
-                var domain = NormalizeDomain(candidate.Url);
-                var matchedResult = results.FirstOrDefault(r =>
-                    string.Equals(r.Result.Url, candidate.Url, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(NormalizeDomain(r.Result.Url), domain, StringComparison.OrdinalIgnoreCase));
-
-                return new DiscoveredPortal(
-                    candidate.Url,
-                    domain,
-                    string.IsNullOrWhiteSpace(candidate.Reasoning) ? "Approved as a career portal." : candidate.Reasoning.Trim(),
-                    candidate.Title ?? matchedResult?.Result.Title,
-                    SetupFlowEnhancements.DetectPlatformFromUrl(candidate.Url),
-                    matchedResult?.SearchQuery);
-            })
-            .ToList();
     }
 
     private async Task<PipelineDefinition?> BuildPipelineForPortalAsync(

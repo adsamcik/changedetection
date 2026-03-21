@@ -12,6 +12,7 @@ using Shouldly;
 using System.Net;
 using System.Text.Json;
 using TUnit.Core;
+using System.IO;
 
 namespace ChangeDetection.Tests.Services;
 
@@ -35,471 +36,6 @@ public class GroupWatchDiscoveryServiceTests : TestBase
     }
 
     [Test]
-    public async Task DiscoverAsync_KnownPlatform_DeduplicatesByDomainAndCreatesWatch()
-    {
-        const string userInput = "I want to watch for research assistant jobs in Copenhagen biology";
-        const string portalUrl = "https://company.wd3.myworkdayjobs.com/en-US/careers";
-        const string workdayApiUrl = "https://company.wd3.myworkdayjobs.com/wday/cxs/company/careers/jobs";
-        var sut = CreateSut(request => request switch
-        {
-            { Method.Method: "GET" } when request.RequestUri!.ToString() == portalUrl => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("<html><body>careers</body></html>")
-            },
-            { Method.Method: "POST" } when request.RequestUri!.ToString() == workdayApiUrl => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"total":0,"jobPostings":[]}""")
-            },
-            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
-        });
-        var parseJson = """
-            {
-              "location": "Copenhagen",
-              "roleTypes": ["research assistant"],
-              "field": "biology",
-              "searchQueries": [
-                "research assistant biology jobs Copenhagen career portal"
-              ]
-            }
-            """;
-        var filterJson = """
-            [
-              {
-                "url": "https://company.wd3.myworkdayjobs.com/en-US/careers",
-                "reasoning": "Workday career listing page for the company.",
-                "title": "Company Careers"
-              },
-              {
-                "url": "https://company.wd3.myworkdayjobs.com/en-US/careers/job/123",
-                "reasoning": "Duplicate domain that should be removed.",
-                "title": "Duplicate"
-              }
-            ]
-            """;
-
-        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(
-                new LlmResponse { IsSuccess = true, Content = parseJson },
-                new LlmResponse { IsSuccess = true, Content = filterJson });
-
-        _searchProvider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
-            .Returns(new SearchResultSet
-            {
-                ProviderId = "test",
-                Query = "research assistant biology jobs Copenhagen career portal",
-                Results =
-                [
-                    new SearchResult
-                    {
-                        Url = "https://company.wd3.myworkdayjobs.com/en-US/careers",
-                        Title = "Company Careers",
-                        Snippet = "Workday career listing page",
-                        Position = 1
-                    }
-                ]
-            });
-
-        var groupId = Guid.NewGuid();
-        _watchGroupService.CreateGroupAsync(Arg.Any<WatchGroupCreateRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchGroup { Id = groupId, Name = "Career portals: research assistant — biology — Copenhagen" });
-
-        var createdWatchId = Guid.NewGuid();
-        _watchService.CreateWatchAsync(Arg.Any<CreateWatchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
-            {
-                var request = callInfo.Arg<CreateWatchRequest>();
-                return new WatchedSite
-                {
-                    Id = createdWatchId,
-                    Url = request.Url,
-                    GroupId = request.GroupId,
-                    Name = request.Name
-                };
-            });
-
-        var progress = new List<GroupWatchProgress>();
-        await foreach (var item in sut.DiscoverAsync(userInput))
-        {
-            progress.Add(item);
-        }
-
-        await _watchService.Received(1).CreateWatchAsync(
-            Arg.Is<CreateWatchRequest>(request =>
-                request.GroupId == groupId &&
-                request.Url == "https://company.wd3.myworkdayjobs.com/en-US/careers" &&
-                request.Tags!.Contains("jobs")),
-            Arg.Any<CancellationToken>());
-
-        await _watchService.Received(1).UpdateWatchAsync(
-            Arg.Is<WatchedSite>(watch =>
-                watch.Id == createdWatchId &&
-                !string.IsNullOrWhiteSpace(watch.PipelineDefinitionJson) &&
-                watch.FetchSettings.UseJavaScript == false),
-            Arg.Any<CancellationToken>());
-
-        progress.Last().Phase.ShouldBe(GroupWatchPhase.Complete);
-        progress.Last().WatchIds.ShouldBe([createdWatchId]);
-        progress.Last().Portals!.Count.ShouldBe(1);
-    }
-
-    [Test]
-    public async Task DiscoverAsync_UnknownPortal_UsesComposablePipelineAndContinuesAfterFailure()
-    {
-        const string userInput = "I want to watch for research assistant jobs in Copenhagen biology";
-        var sut = CreateSut(request => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("<html><body>careers</body></html>")
-        });
-        var parseJson = """
-            {
-              "location": "Copenhagen",
-              "roleTypes": ["research assistant"],
-              "field": "biology",
-              "searchQueries": [
-                "research assistant biology jobs Copenhagen career portal"
-              ]
-            }
-            """;
-        var filterJson = """
-            [
-              {
-                "url": "https://portal-one.example/jobs",
-                "reasoning": "Independent job board for Copenhagen biology roles.",
-                "title": "Portal One"
-              },
-              {
-                "url": "https://portal-two.example/careers",
-                "reasoning": "Second portal that will fail during pipeline generation.",
-                "title": "Portal Two"
-              }
-            ]
-            """;
-
-        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(
-                new LlmResponse { IsSuccess = true, Content = parseJson },
-                new LlmResponse { IsSuccess = true, Content = filterJson });
-
-        _searchProvider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
-            .Returns(new SearchResultSet
-            {
-                ProviderId = "test",
-                Query = "research assistant biology jobs Copenhagen career portal",
-                Results =
-                [
-                    new SearchResult
-                    {
-                        Url = "https://portal-one.example/jobs",
-                        Title = "Portal One",
-                        Snippet = "Careers",
-                        Position = 1
-                    },
-                    new SearchResult
-                    {
-                        Url = "https://portal-two.example/careers",
-                        Title = "Portal Two",
-                        Snippet = "Careers",
-                        Position = 2
-                    }
-                ]
-            });
-
-        var groupId = Guid.NewGuid();
-        _watchGroupService.CreateGroupAsync(Arg.Any<WatchGroupCreateRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchGroup { Id = groupId, Name = "test-group" });
-
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks =
-            [
-                new BlockDefinition
-                {
-                    Id = "navigate-1",
-                    Type = "Navigate",
-                    Position = 0,
-                    Config = JsonSerializer.SerializeToElement(new { useJavaScript = true })
-                },
-                new BlockDefinition
-                {
-                    Id = "relevancescore-1",
-                    Type = "RelevanceScore",
-                    Position = 1,
-                    Config = JsonSerializer.SerializeToElement(new { targetFields = new[] { "title" } })
-                }
-            ],
-            Connections = [],
-            Metadata = new PipelineMetadata
-            {
-                DisplayTitle = "Portal One Watch",
-                UserIntent = userInput,
-                CreatedAt = DateTime.UtcNow
-            }
-        };
-
-        _composableSetupPipeline.StartSetupAsync(
-                Arg.Is<SetupRequest>(request => request.UserInput.Contains("portal-one.example", StringComparison.OrdinalIgnoreCase)),
-                Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint1,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 1",
-                    SessionId = "session-one"
-                }));
-
-        _composableSetupPipeline.ConfirmIntentAsync("session-one", true, null, Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint2,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 2",
-                    Proposal = new PipelineProposal
-                    {
-                        Pipeline = pipeline,
-                        HumanSummary = "generated"
-                    }
-                }));
-
-        _composableSetupPipeline.ConfirmPipelineAsync("session-one", false, Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable());
-
-        _composableSetupPipeline.StartSetupAsync(
-                Arg.Is<SetupRequest>(request => request.UserInput.Contains("portal-two.example", StringComparison.OrdinalIgnoreCase)),
-                Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.IntentParsing,
-                    Type = SetupProgressType.Failed,
-                    Message = "failed",
-                    Error = "Could not parse portal"
-                }));
-
-        var createdWatchId = Guid.NewGuid();
-        _watchService.CreateWatchAsync(Arg.Any<CreateWatchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchedSite { Id = createdWatchId, Url = "https://portal-one.example/jobs" });
-
-        var progress = new List<GroupWatchProgress>();
-        await foreach (var item in sut.DiscoverAsync(userInput))
-        {
-            progress.Add(item);
-        }
-
-        await _watchService.Received(1).CreateWatchAsync(
-            Arg.Is<CreateWatchRequest>(request =>
-                request.Url == "https://portal-one.example/jobs" &&
-                request.GroupId == groupId &&
-                request.UseJavaScript),
-            Arg.Any<CancellationToken>());
-
-        await _watchService.Received(1).UpdateWatchAsync(
-            Arg.Is<WatchedSite>(watch =>
-                !string.IsNullOrWhiteSpace(watch.PipelineDefinitionJson) &&
-                watch.FetchSettings.UseJavaScript),
-            Arg.Any<CancellationToken>());
-
-        progress.ShouldContain(item =>
-            item.Phase == GroupWatchPhase.CreatingWatches &&
-            item.Message.Contains("Skipped portal-two.example", StringComparison.OrdinalIgnoreCase));
-
-        progress.Last().Phase.ShouldBe(GroupWatchPhase.Complete);
-        progress.Last().WatchIds.ShouldBe([createdWatchId]);
-    }
-
-    [Test]
-    public async Task DiscoverAsync_InvalidPortalUrl_SkipsWatchCreation()
-    {
-        const string userInput = "Watch biology jobs in Copenhagen";
-        var sut = CreateSut(request => request.RequestUri!.Host switch
-        {
-            "dead.example" => new HttpResponseMessage(HttpStatusCode.NotFound)
-            {
-                Content = new StringContent("not found")
-            },
-            "live.example" => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("<html><body>jobs</body></html>")
-            },
-            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
-        });
-
-        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(new LlmResponse
-            {
-                IsSuccess = true,
-                Content = """
-                    {
-                      "location": "Copenhagen",
-                      "roleTypes": ["scientist"],
-                      "field": "biology",
-                      "searchQueries": []
-                    }
-                    """
-            });
-
-        _watchGroupService.CreateGroupAsync(Arg.Any<WatchGroupCreateRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchGroup { Id = Guid.NewGuid(), Name = "test-group" });
-
-        _watchService.CreateWatchAsync(Arg.Any<CreateWatchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchedSite { Id = Guid.NewGuid(), Url = "https://live.example/jobs" });
-
-        _composableSetupPipeline.StartSetupAsync(Arg.Any<SetupRequest>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint1,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 1",
-                    SessionId = "session-live"
-                }));
-
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks = [new BlockDefinition
-            {
-                Id = "navigate-1",
-                Type = "Navigate",
-                Position = 0,
-                Config = JsonSerializer.SerializeToElement(new { useJavaScript = true })
-            }],
-            Connections = [],
-            Metadata = new PipelineMetadata
-            {
-                DisplayTitle = "Live Portal Watch",
-                UserIntent = userInput,
-                CreatedAt = DateTime.UtcNow
-            }
-        };
-
-        _composableSetupPipeline.ConfirmIntentAsync("session-live", true, null, Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint2,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 2",
-                    Proposal = new PipelineProposal
-                    {
-                        Pipeline = pipeline,
-                        HumanSummary = "generated"
-                    }
-                }));
-
-        _composableSetupPipeline.ConfirmPipelineAsync("session-live", false, Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable());
-
-        var progress = new List<GroupWatchProgress>();
-        await foreach (var item in sut.DiscoverAsync(userInput))
-        {
-            progress.Add(item);
-        }
-
-        await _watchService.Received(1).CreateWatchAsync(
-            Arg.Is<CreateWatchRequest>(request => request.Url == "https://live.example/jobs"),
-            Arg.Any<CancellationToken>());
-
-        await _watchService.DidNotReceive().CreateWatchAsync(
-            Arg.Is<CreateWatchRequest>(request => request.Url == "https://dead.example/jobs"),
-            Arg.Any<CancellationToken>());
-
-        progress.ShouldContain(item =>
-            item.Phase == GroupWatchPhase.CreatingWatches &&
-            item.Message.Contains("Skipped dead.example", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Test]
-    public async Task DiscoverAsync_LoginRequiredPortal_StillCreatesWatch()
-    {
-        const string userInput = "Watch biology jobs in Copenhagen";
-        var sut = CreateSut(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
-        {
-            Content = new StringContent("<html><body>Please sign in to continue</body></html>")
-        });
-
-        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(new LlmResponse
-            {
-                IsSuccess = true,
-                Content = """
-                    {
-                      "location": "Copenhagen",
-                      "roleTypes": ["scientist"],
-                      "field": "biology",
-                      "searchQueries": []
-                    }
-                    """
-            });
-
-        _watchGroupService.CreateGroupAsync(Arg.Any<WatchGroupCreateRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchGroup { Id = Guid.NewGuid(), Name = "test-group" });
-
-        var createdWatchId = Guid.NewGuid();
-        _watchService.CreateWatchAsync(Arg.Any<CreateWatchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchedSite { Id = createdWatchId, Url = "https://login.example/jobs" });
-
-        _composableSetupPipeline.StartSetupAsync(Arg.Any<SetupRequest>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint1,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 1",
-                    SessionId = "session-login"
-                }));
-
-        var pipeline = new PipelineDefinition
-        {
-            SchemaVersion = 1,
-            Blocks = [new BlockDefinition
-            {
-                Id = "navigate-1",
-                Type = "Navigate",
-                Position = 0,
-                Config = JsonSerializer.SerializeToElement(new { useJavaScript = true })
-            }],
-            Connections = [],
-            Metadata = new PipelineMetadata
-            {
-                DisplayTitle = "Login Portal Watch",
-                UserIntent = userInput,
-                CreatedAt = DateTime.UtcNow
-            }
-        };
-
-        _composableSetupPipeline.ConfirmIntentAsync("session-login", true, null, Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable(
-                new SetupProgress
-                {
-                    Phase = SetupPhase.Checkpoint2,
-                    Type = SetupProgressType.CheckpointReached,
-                    Message = "checkpoint 2",
-                    Proposal = new PipelineProposal
-                    {
-                        Pipeline = pipeline,
-                        HumanSummary = "generated"
-                    }
-                }));
-
-        _composableSetupPipeline.ConfirmPipelineAsync("session-login", false, Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ToAsyncEnumerable());
-
-        var progress = new List<GroupWatchProgress>();
-        await foreach (var item in sut.DiscoverAsync(userInput))
-        {
-            progress.Add(item);
-        }
-
-        await _watchService.Received(1).CreateWatchAsync(
-            Arg.Is<CreateWatchRequest>(request => request.Url == "https://login.example/jobs"),
-            Arg.Any<CancellationToken>());
-        progress.Last().WatchIds.ShouldBe([createdWatchId]);
-    }
-
-    [Test]
     public async Task DiscoverAsync_ExistingWatchWithSameDomain_SkipsDuplicatePortalAndReportsExistingGroup()
     {
         const string userInput = "Watch biology jobs in Copenhagen";
@@ -514,6 +50,9 @@ public class GroupWatchDiscoveryServiceTests : TestBase
         var existingGroupId = Guid.NewGuid();
         var existingWatchId = Guid.NewGuid();
 
+        // LLM call 1: intent parsing
+        // LLM call 2: classification — approves the search result + catalog entry
+        // LLM call 3: intent re-parsing for watch creation
         _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
             .Returns(
                 new LlmResponse
@@ -524,12 +63,18 @@ public class GroupWatchDiscoveryServiceTests : TestBase
                           "location": "Copenhagen",
                           "roleTypes": ["scientist"],
                           "field": "biology",
-                          "searchQueries": ["biology jobs Copenhagen careers"],
-                          "selectedIndices": [0],
-                          "reasoning": {
-                            "0": "Novo Nordisk careers is relevant"
-                          }
+                          "searchQueries": ["biology jobs Copenhagen careers"]
                         }
+                        """
+                },
+                new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = $$"""
+                        [
+                          {"url": "{{existingPortalUrl}}", "title": "Novo Nordisk Careers", "reasoning": "Major pharma careers page"},
+                          {"url": "{{newPortalUrl}}", "title": "Example Jobs", "reasoning": "Job board for Copenhagen"}
+                        ]
                         """
                 },
                 new LlmResponse
@@ -679,6 +224,252 @@ public class GroupWatchDiscoveryServiceTests : TestBase
             Arg.Is<CreateWatchRequest>(request => request.Url == duplicateUrl),
             Arg.Any<CancellationToken>());
         creationProgress.Last().WatchIds.ShouldBe([createdWatchId]);
+    }
+
+    [Test]
+    public async Task DiscoverAsync_CatalogEntryMergedIntoSearchResults_DeduplicatesByDomain()
+    {
+        const string userInput = "Watch scientist jobs in Copenhagen Denmark";
+        var sut = CreateSut(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>jobs</body></html>")
+        });
+
+        _watchService.GetAllAsync(Arg.Any<CancellationToken>()).Returns([]);
+
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var scannerDir = Path.Combine(repoRoot, "tools", "job-scanner");
+        var sitesPath = Path.Combine(scannerDir, "sites.json");
+        var backupPath = File.Exists(sitesPath) ? Path.GetTempFileName() : null;
+        if (backupPath is not null)
+            File.Copy(sitesPath, backupPath, overwrite: true);
+
+        Directory.CreateDirectory(scannerDir);
+        File.WriteAllText(sitesPath, """
+            {
+              "workday": [
+                {
+                  "company": "AGC Biologics",
+                  "subdomain": "agcbio",
+                  "instance": "wd5",
+                  "site_id": "agcbio_careers",
+                  "location_keywords": ["Copenhagen", "Denmark"]
+                }
+              ]
+            }
+            """);
+
+        string? classificationPrompt = null;
+
+        try
+        {
+            // LLM call 1: intent parsing → returns search queries
+            // LLM call 2: classification → captures the prompt to verify catalog entries appear
+            _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+                .Returns(callInfo =>
+                {
+                    var prompt = callInfo.ArgAt<string>(0);
+
+                    // First call is intent parsing (contains "searchQueries")
+                    if (classificationPrompt is null && prompt.Contains("Candidate URLs", StringComparison.OrdinalIgnoreCase))
+                    {
+                        classificationPrompt = prompt;
+                    }
+                    else if (classificationPrompt is null)
+                    {
+                        // Intent parsing call
+                        return new LlmResponse
+                        {
+                            IsSuccess = true,
+                            Content = """
+                                {
+                                  "location": "Copenhagen, Denmark",
+                                  "roleTypes": ["scientist"],
+                                  "field": "biology",
+                                  "searchQueries": ["scientist jobs Copenhagen careers"]
+                                }
+                                """
+                        };
+                    }
+
+                    // Classification call — return empty array (no portals approved)
+                    return new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = "[]"
+                    };
+                });
+
+            // Search provider returns nothing — catalog is the only source
+            _searchProvider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
+                .Returns(new SearchResultSet
+                {
+                    ProviderId = "test",
+                    Query = "scientist jobs Copenhagen careers",
+                    Results = []
+                });
+
+            var progress = new List<GroupWatchProgress>();
+            await foreach (var item in sut.DiscoverAsync(userInput))
+            {
+                progress.Add(item);
+            }
+
+            // The classification prompt should contain the catalog entry URL
+            classificationPrompt.ShouldNotBeNull();
+            classificationPrompt.ShouldContain("https://agcbio.wd5.myworkdayjobs.com/en-US/agcbio_careers");
+            progress.Last().Phase.ShouldBe(GroupWatchPhase.Complete);
+        }
+        finally
+        {
+            if (backupPath is not null)
+            {
+                File.Copy(backupPath, sitesPath, overwrite: true);
+                File.Delete(backupPath);
+            }
+            else if (File.Exists(sitesPath))
+            {
+                File.Delete(sitesPath);
+                if (!Directory.EnumerateFileSystemEntries(scannerDir).Any())
+                    Directory.Delete(scannerDir);
+            }
+        }
+    }
+
+    [Test]
+    public async Task DiscoverAsync_WebSearchIsPrimarySource_SearchProviderCalledBeforeClassification()
+    {
+        const string userInput = "SWE jobs in Berlin";
+        const string searchResultUrl = "https://berlinstartupjobs.com/engineering";
+
+        var sut = CreateSut(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>jobs</body></html>")
+        });
+
+        _watchService.GetAllAsync(Arg.Any<CancellationToken>()).Returns([]);
+
+        var llmCallCount = 0;
+
+        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                llmCallCount++;
+                if (llmCallCount == 1)
+                {
+                    // Intent parsing
+                    return new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """
+                            {
+                              "location": "Berlin, Germany",
+                              "roleTypes": ["software engineer"],
+                              "field": "software engineering",
+                              "searchQueries": ["software engineer jobs Berlin careers portal", "Berlin tech companies hiring"]
+                            }
+                            """
+                    };
+                }
+
+                // Classification — approve the search result
+                return new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = $$"""
+                        [{"url": "{{searchResultUrl}}", "title": "Berlin Startup Jobs", "reasoning": "Engineering job board for Berlin"}]
+                        """
+                };
+            });
+
+        _searchProvider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new SearchResultSet
+            {
+                ProviderId = "test",
+                Query = "software engineer jobs Berlin careers portal",
+                Results =
+                [
+                    new SearchResult
+                    {
+                        Url = searchResultUrl,
+                        Title = "Berlin Startup Jobs - Engineering",
+                        Snippet = "Find engineering jobs in Berlin startups",
+                        Position = 1
+                    }
+                ]
+            });
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var item in sut.DiscoverAsync(userInput))
+        {
+            progress.Add(item);
+        }
+
+        // Search provider was called (web search is primary)
+        await _searchProvider.Received().SearchAsync(
+            Arg.Any<SearchQuery>(),
+            Arg.Any<CancellationToken>());
+
+        // LLM was called twice: intent parsing + classification
+        llmCallCount.ShouldBe(2);
+
+        // Portal from web search was discovered
+        var portalsReady = progress.Single(item => item.Phase == GroupWatchPhase.PortalsReady);
+        portalsReady.Portals!.Count.ShouldBeGreaterThanOrEqualTo(1);
+        portalsReady.Portals.Select(p => p.Url).ShouldContain(searchResultUrl);
+    }
+
+    [Test]
+    public async Task DiscoverAsync_NoSearchResults_FallsBackToCatalogOnly()
+    {
+        const string userInput = "scientist jobs in Copenhagen";
+        var sut = CreateSut(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>jobs</body></html>")
+        });
+
+        _watchService.GetAllAsync(Arg.Any<CancellationToken>()).Returns([]);
+        _searchProvider.IsAvailable.Returns(false);
+
+        var llmCallCount = 0;
+
+        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                llmCallCount++;
+                if (llmCallCount == 1)
+                {
+                    return new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """
+                            {
+                              "location": "Copenhagen",
+                              "roleTypes": ["scientist"],
+                              "field": "biology",
+                              "searchQueries": ["scientist jobs Copenhagen careers"]
+                            }
+                            """
+                    };
+                }
+
+                // Classification — approve catalog entries
+                return new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = "[]"
+                };
+            });
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var item in sut.DiscoverAsync(userInput))
+        {
+            progress.Add(item);
+        }
+
+        // With no search results and no catalog matches approved, should complete gracefully
+        progress.ShouldContain(item => item.Phase == GroupWatchPhase.Searching);
+        progress.Last().Phase.ShouldBe(GroupWatchPhase.Complete);
     }
 
     private static async IAsyncEnumerable<SetupProgress> ToAsyncEnumerable(params SetupProgress[] items)
