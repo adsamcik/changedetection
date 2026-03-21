@@ -8,6 +8,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Pipeline;
 using Microsoft.Extensions.Logging;
 
@@ -23,6 +24,8 @@ public class ComposableSetupPipeline(
     IPipelineTemplateRegistry templateRegistry,
     IRepository<WatchedSite> watchRepo,
     SetupFlowEnhancements setupFlowEnhancements,
+    PipelineSecurityValidator securityValidator,
+    ContentSanitizer contentSanitizer,
     ILogger<ComposableSetupPipeline> logger) : IComposableSetupPipeline
 {
     private static readonly ConcurrentDictionary<string, SetupSession> Sessions = new();
@@ -94,7 +97,7 @@ public class ComposableSetupPipeline(
                     extractedUrl,
                     positiveKeywords,
                     negativeKeywords,
-                    ct)
+                    ct: ct)
                 : null;
             if (detectedPlatform is not null && fastTemplate is not null)
             {
@@ -319,7 +322,7 @@ public class ComposableSetupPipeline(
                     intent!.Url,
                     positiveKeywords,
                     negativeKeywords,
-                    ct);
+                    ct: ct);
                 if (deterministicTemplate is not null)
                 {
                     analysis = BuildDeterministicAnalysis(classification, intent!);
@@ -838,6 +841,190 @@ public class ComposableSetupPipeline(
         };
     }
 
+    // ── Headless pipeline building (no UI, no SignalR) ────────────────────
+
+    /// <inheritdoc/>
+    public async Task<PipelineDefinition?> BuildPipelineHeadlessAsync(
+        string url,
+        string? userIntent,
+        CancellationToken ct = default)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(60));
+        var token = cts.Token;
+
+        var input = string.IsNullOrWhiteSpace(userIntent)
+            ? url
+            : $"{url} — {userIntent}";
+        var (positiveKeywords, negativeKeywords) = ExtractKeywordsFromIntent(input);
+
+        // Fast path: platform template (no LLM needed)
+        var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(url);
+        if (detectedPlatform is not null)
+        {
+            var template = await setupFlowEnhancements.GetPlatformTemplateAsync(
+                detectedPlatform, url, positiveKeywords, negativeKeywords, ct: token);
+            if (template is not null)
+            {
+                logger.LogInformation(
+                    "[Headless] Using platform template {Platform} for {Url}", detectedPlatform, url);
+                return template with
+                {
+                    Metadata = new PipelineMetadata
+                    {
+                        DisplayTitle = userIntent ?? $"Monitor {new Uri(url).Host}",
+                        CreatedAt = DateTime.UtcNow,
+                        UserIntent = userIntent,
+                        CardType = "jobs",
+                        EstimatedLlmCallsPerRun = 0
+                    }
+                };
+            }
+        }
+
+        // Phase 1: Parse intent via LLM
+        ParsedIntent intent;
+        try
+        {
+            intent = await ParseIntentAsync(input, token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Headless] Failed to parse intent for {Url}", url);
+            return null;
+        }
+
+        // Phase 2: Fetch content
+        FetchResult? fetchResult;
+        try
+        {
+            fetchResult = await contentFetcher.FetchAsync(intent.Url, new FetchOptions
+            {
+                UseJavaScript = true,
+                TimeoutSeconds = 30
+            }, token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Headless] Failed to fetch content for {Url}", url);
+            return null;
+        }
+
+        if (!fetchResult.IsSuccess || string.IsNullOrWhiteSpace(fetchResult.Html))
+        {
+            logger.LogWarning("[Headless] No HTML content from {Url}", url);
+            return null;
+        }
+
+        // Phase 3: Analyze content (deterministic first, LLM fallback)
+        ContentAnalysisResult? analysis = null;
+
+        try
+        {
+            string? responseContentType = null;
+            if (fetchResult.ResponseHeaders is { } headers)
+            {
+                responseContentType = headers
+                    .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
+            }
+            var classification = setupFlowEnhancements.ClassifyContent(
+                fetchResult.Html, intent.Url, responseContentType);
+
+            if (classification is { Confidence: >= 0.7 }
+                && classification.Type is not (DetectedContentType.Unknown
+                    or DetectedContentType.JsShell or DetectedContentType.ErrorPage))
+            {
+                analysis = BuildDeterministicAnalysis(classification, intent);
+
+                // If platform detected, try template
+                if (classification.DetectedPlatform is not null)
+                {
+                    var deterministicTemplate = await setupFlowEnhancements.GetPlatformTemplateAsync(
+                        classification.DetectedPlatform, intent.Url, positiveKeywords, negativeKeywords, ct: token);
+                    if (deterministicTemplate is not null)
+                    {
+                        logger.LogInformation("[Headless] Using deterministic template for {Url}", url);
+                        return deterministicTemplate with
+                        {
+                            Metadata = new PipelineMetadata
+                            {
+                                DisplayTitle = intent.Summary ?? intent.Intent,
+                                CreatedAt = DateTime.UtcNow,
+                                UserIntent = intent.Intent,
+                                CardType = analysis.ContentType,
+                                EstimatedLlmCallsPerRun = 0
+                            }
+                        };
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Headless] Deterministic classification failed for {Url}", url);
+        }
+
+        // LLM content analysis fallback
+        if (analysis is null)
+        {
+            try
+            {
+                analysis = await AnalyzeContentAsync(fetchResult.Html, intent, token);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[Headless] LLM content analysis failed for {Url}", url);
+                return null;
+            }
+        }
+
+        // Auto-confirm checkpoint 1 (intent) — headless mode
+
+        // Phase 4: Build pipeline via LLM
+        PipelineDefinition pipeline;
+        try
+        {
+            pipeline = await BuildPipelineAsync(intent, analysis, fetchResult.Html, token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Headless] Failed to build pipeline for {Url}", url);
+            return null;
+        }
+
+        // Phase 5: Dry run — auto-confirm checkpoint 2 only if dry run passes
+        var session = new SetupSession
+        {
+            UserInput = input,
+            FetchedHtml = fetchResult.Html,
+            Intent = intent,
+            ContentAnalysis = analysis,
+            AssembledPipeline = pipeline
+        };
+
+        DryRunResult dryRunResult;
+        try
+        {
+            dryRunResult = await ExecuteDryRunAsync(pipeline, session, token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Headless] Dry run failed for {Url}", url);
+            return null;
+        }
+
+        if (!dryRunResult.Success)
+        {
+            logger.LogWarning("[Headless] Dry run unsuccessful for {Url}: {Error}", url, dryRunResult.Error);
+            return null;
+        }
+
+        logger.LogInformation(
+            "[Headless] Pipeline built successfully for {Url}: {BlockCount} blocks, dry run passed",
+            url, pipeline.Blocks.Count);
+        return pipeline;
+    }
+
     // ── Progress helpers ────────────────────────────────────────────────
 
     private static SetupProgress Progress(SetupPhase phase, SetupProgressType type, string message, string? detail = null) =>
@@ -955,10 +1142,14 @@ public class ComposableSetupPipeline(
     private async Task<ContentAnalysisResult> AnalyzeContentAsync(
         string html, ParsedIntent intent, CancellationToken ct)
     {
+        // Sanitize HTML to strip prompt injection before LLM processing
+        var sanitized = contentSanitizer.SanitizeHtml(html);
+        var sanitizedHtml = sanitized.Content;
+
         // Truncate HTML to avoid exceeding token limits
-        var truncatedHtml = html.Length > 15_000
-            ? html[..15_000] + "\n<!-- truncated -->"
-            : html;
+        var truncatedHtml = sanitizedHtml.Length > 15_000
+            ? sanitizedHtml[..15_000] + "\n<!-- truncated -->"
+            : sanitizedHtml;
 
         var prompt = $$"""
             You are a web page analyst. Analyze the following HTML page structure for a monitoring system.
@@ -1003,6 +1194,13 @@ public class ComposableSetupPipeline(
 
     private async Task<PipelineDefinition> BuildPipelineAsync(
         ParsedIntent intent, ContentAnalysisResult analysis, string html, CancellationToken ct)
+    {
+        return await BuildPipelineWithRetryAsync(intent, analysis, html, retryOnDomainPin: true, ct);
+    }
+
+    private async Task<PipelineDefinition> BuildPipelineWithRetryAsync(
+        ParsedIntent intent, ContentAnalysisResult analysis, string html,
+        bool retryOnDomainPin, CancellationToken ct)
     {
         var availableBlocks = string.Join(", ", blockRegistry.RegisteredBlockTypes);
 
@@ -1060,7 +1258,20 @@ public class ComposableSetupPipeline(
             - Condition: { "operator": "greaterThan", "field": "added.length", "value": 0 }
             - Notify: { "template": "New items detected" }
             
+            PORT CONNECTION RULES (critical — mismatched ports cause pipeline validation failure):
+            - Navigate outputs: "url" (Url type), "html" (HtmlContent type)
+            - ExtractSchema accepts: "html" (HtmlContent) → outputs "data" (ExtractedObjects)
+            - HashCompare accepts: "data" (ExtractedObjects) → outputs "result" (DiffResult)
+            - ListDiff accepts: "data" (ExtractedObjects) → outputs "result" (DiffResult)
+            - DataFilter accepts: "data" (ExtractedObjects) → outputs "filtered" (ExtractedObjects)
+            - Condition accepts: "signal" (BooleanSignal), optional "data" (ExtractedObjects)
+            - Output accepts: "data" (ExtractedObjects)
+            - HtmlContent is compatible with ExtractedObjects — Navigate "html" port can connect directly to HashCompare "data" port
+            - Do NOT connect Navigate "html" directly to ListDiff "data" — use ExtractSchema between them to extract structured items first
+            
             IMPORTANT RULES:
+            - Use ONLY the URL provided: {{intent.Url}}. Do NOT generate example or placeholder URLs.
+            - All URLs in block configs (Input url, Navigate url, HttpRequest url, etc.) MUST use the domain from the provided URL. Never invent URLs.
             - For JSON APIs: Use HttpRequest + JsonExtract (NOT Navigate + ExtractSchema)
             - For HTML pages: Use Navigate + ExtractSchema with listMode=true (for lists of items)
             - For pages needing login/cookies: Use Navigate with useJavaScript: true
@@ -1187,6 +1398,26 @@ public class ComposableSetupPipeline(
             var errors = string.Join("; ", validationResult.Errors.Select(e => e.Message));
             logger.LogWarning("Pipeline validation failed: {Errors}. Attempting auto-fix.", errors);
             pipeline = AutoFixPipeline(pipeline, validationResult);
+        }
+
+        // Security validation: enforce domain pinning, block allowlist, data-flow analysis
+        var domainPin = DomainPin.FromUserUrl(intent.Url);
+        var securityResult = securityValidator.Validate(pipeline, domainPin);
+        if (!securityResult.IsValid)
+        {
+            var violations = string.Join("; ", securityResult.Violations.Select(v => $"[{v.Rule}] {v.Detail}"));
+
+            // If domain pinning caught hallucinated URLs and we haven't retried yet, retry once
+            if (retryOnDomainPin)
+            {
+                logger.LogWarning(
+                    "Pipeline security validation failed (likely hallucinated URLs): {Violations}. Retrying with stronger prompt.",
+                    violations);
+                return await BuildPipelineWithRetryAsync(intent, analysis, html, retryOnDomainPin: false, ct);
+            }
+
+            logger.LogError("Pipeline security validation failed after retry: {Violations}", violations);
+            throw new InvalidOperationException($"Pipeline rejected by security policy: {violations}");
         }
 
         return pipeline;

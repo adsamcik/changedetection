@@ -24,4 +24,14 @@ public interface IComposableSetupPipeline
         bool confirmed,
         string? feedback = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Builds a pipeline headlessly (no user interaction, no SignalR).
+    /// Auto-confirms all checkpoints. Returns the pipeline if dry run passes, null if it fails.
+    /// Intended for background service use where no UI client is connected.
+    /// </summary>
+    Task<PipelineDefinition?> BuildPipelineHeadlessAsync(
+        string url,
+        string? userIntent,
+        CancellationToken ct = default);
 }

@@ -1228,12 +1228,9 @@ public class GroupWatchDiscoveryService(
         {
             createdWatch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
         }
-        else
-        {
-            // No template available — mark the watch as needing interactive pipeline setup.
-            // The background service will skip this watch until the user configures it.
-            createdWatch.NeedsPipelineSetup = true;
-        }
+        // No template available — leave NeedsPipelineSetup=false so the background
+        // service can attempt headless LLM pipeline building before falling back
+        // to interactive setup.
 
         createdWatch.FetchSettings ??= new FetchSettings();
         createdWatch.FetchSettings.UseJavaScript = useJavaScript;

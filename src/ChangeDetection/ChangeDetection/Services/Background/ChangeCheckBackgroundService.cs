@@ -4,6 +4,7 @@ using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
+using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Hubs;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.BlockExecution;
@@ -180,18 +181,23 @@ public class ChangeCheckBackgroundService : BackgroundService
                         }
                     }
 
-                    // For group watches with no detected platform, mark as needing setup
-                    // instead of attempting headless LLM pipeline building (which fails silently).
+                    // For group watches with no detected platform, attempt headless LLM pipeline building.
+                    // Only fall back to NeedsPipelineSetup if headless building fails.
                     if (pipeline is null && watch.GroupId.HasValue)
                     {
-                        _logger.LogWarning(
-                            "Watch {WatchId} ({Url}) has no pipeline and no detected platform — marking as needing setup",
-                            watch.Id, watch.Url);
-                        watch.NeedsPipelineSetup = true;
-                        var watchRepo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
-                        watch.UpdatedAt = DateTime.UtcNow;
-                        await watchRepo.UpdateAsync(watch, ct);
-                        return;
+                        pipeline = await TryBuildLlmPipelineAsync(watchScope.ServiceProvider, watch, ct);
+
+                        if (pipeline is null)
+                        {
+                            _logger.LogWarning(
+                                "Watch {WatchId} ({Url}) has no pipeline and headless LLM build failed — marking as needing setup",
+                                watch.Id, watch.Url);
+                            watch.NeedsPipelineSetup = true;
+                            var watchRepo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
+                            watch.UpdatedAt = DateTime.UtcNow;
+                            await watchRepo.UpdateAsync(watch, ct);
+                            return;
+                        }
                     }
 
                     pipeline ??= GenerateBasicPipeline(watch.Url, watch.CssSelector);
@@ -343,6 +349,66 @@ public class ChangeCheckBackgroundService : BackgroundService
                 EstimatedLlmCallsPerRun = 0
             }
         };
+    }
+
+    /// <summary>
+    /// Attempts to build a pipeline headlessly via the LLM composable setup pipeline.
+    /// Returns the pipeline if successful, or null if the LLM is unavailable or building fails.
+    /// On failure the watch should be flagged for interactive setup.
+    /// </summary>
+    private async Task<PipelineDefinition?> TryBuildLlmPipelineAsync(
+        IServiceProvider sp,
+        WatchedSite watch,
+        CancellationToken ct)
+    {
+        IComposableSetupPipeline? composable;
+        try
+        {
+            composable = sp.GetService<IComposableSetupPipeline>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "IComposableSetupPipeline not available — skipping headless build for {WatchId}", watch.Id);
+            return null;
+        }
+
+        if (composable is null)
+        {
+            _logger.LogDebug("IComposableSetupPipeline not registered — skipping headless build for {WatchId}", watch.Id);
+            return null;
+        }
+
+        try
+        {
+            _logger.LogInformation(
+                "Attempting headless LLM pipeline build for watch {WatchId} ({Url})",
+                watch.Id, watch.Url);
+
+            var pipeline = await composable.BuildPipelineHeadlessAsync(
+                watch.Url, watch.UserIntent, ct);
+
+            if (pipeline is not null)
+            {
+                _logger.LogInformation(
+                    "Headless LLM pipeline built successfully for watch {WatchId}: {BlockCount} blocks",
+                    watch.Id, pipeline.Blocks.Count);
+
+                watch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+                watch.NeedsPipelineSetup = false;
+                var watchRepo = sp.GetRequiredService<IRepository<WatchedSite>>();
+                watch.UpdatedAt = DateTime.UtcNow;
+                await watchRepo.UpdateAsync(watch, ct);
+            }
+
+            return pipeline;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Headless LLM pipeline build failed for watch {WatchId} ({Url})",
+                watch.Id, watch.Url);
+            return null;
+        }
     }
 
     /// <summary>
