@@ -239,6 +239,13 @@ public class WatchedSite : IOwnedEntity
     public string? PipelineDefinitionJson { get; set; }
 
     /// <summary>
+    /// Indicates the watch was created without a pipeline (unknown platform, no template)
+    /// and requires interactive setup via the /setup flow before it can monitor changes.
+    /// Set during GroupWatch creation for non-template portals. Cleared when a pipeline is configured.
+    /// </summary>
+    public bool NeedsPipelineSetup { get; set; }
+
+    /// <summary>
     /// Per-watch retention override in days. Null uses global default.
     /// Capped by AppSettings.MaxRetentionDays.
     /// </summary>

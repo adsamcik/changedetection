@@ -49,11 +49,34 @@ public class WatchListItemDto
     // Tags with their colors
     public List<TagDto> Tags { get; set; } = [];
 
+    /// <summary>
+    /// Number of items extracted in the latest snapshot (e.g. job listings count).
+    /// Null when no snapshot exists yet.
+    /// </summary>
+    public int? LatestItemCount { get; set; }
+
     /// <summary>How this watch acquires content.</summary>
     public SourceTypeDto SourceType { get; set; } = SourceTypeDto.Url;
 
     /// <summary>Search configuration (when SourceType is Search).</summary>
     public SearchConfigDto? SearchConfig { get; set; }
+
+    /// <summary>
+    /// Extraction quality indicator for the dashboard.
+    /// "ok" = items extracted, "empty" = 0 items after check, "failed" = pipeline failed, null = no data.
+    /// </summary>
+    public string? ExtractionQuality { get; set; }
+
+    /// <summary>
+    /// Unified health bucket computed server-side so dashboard and group views stay consistent.
+    /// Values: Healthy, Degraded, Errored, SetupNeeded.
+    /// </summary>
+    public string HealthStatus { get; set; } = "Healthy";
+
+    /// <summary>
+    /// True when the watch needs interactive pipeline setup before it can check for changes.
+    /// </summary>
+    public bool NeedsPipelineSetup { get; set; }
 }
 
 /// <summary>
@@ -181,6 +204,12 @@ public class WatchDetailDto
 
     /// <summary>Search configuration (when SourceType is Search).</summary>
     public SearchConfigDto? SearchConfig { get; set; }
+
+    /// <summary>
+    /// Health status of the most recent pipeline execution.
+    /// Null when no pipeline has been executed yet.
+    /// </summary>
+    public PipelineHealthDto? PipelineHealth { get; set; }
 }
 
 /// <summary>

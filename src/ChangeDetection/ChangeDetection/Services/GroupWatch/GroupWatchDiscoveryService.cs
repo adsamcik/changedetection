@@ -61,7 +61,16 @@ public sealed record GroupWatchProgress(
     int? TotalCount,
     List<DiscoveredPortal>? Portals,
     Guid? GroupId,
-    List<Guid>? WatchIds);
+    List<Guid>? WatchIds,
+    List<SetupNeededPortal>? NeedsSetupPortals = null);
+
+/// <summary>
+/// A portal that was created as a watch but needs interactive pipeline setup.
+/// </summary>
+public sealed record SetupNeededPortal(
+    Guid WatchId,
+    string Url,
+    string Domain);
 
 public sealed record UrlValidationResult(
     bool IsValid,
@@ -301,6 +310,7 @@ public class GroupWatchDiscoveryService(
         var positiveKeywords = BuildPositiveKeywords(parsedIntent);
         var negativeKeywords = BuildNegativeKeywords(parsedIntent);
         var watchIds = new List<Guid>();
+        var needsSetupPortals = new List<SetupNeededPortal>();
 
         yield return CreateProgress(
             GroupWatchPhase.CreatingWatches,
@@ -391,7 +401,17 @@ public class GroupWatchDiscoveryService(
 
                 watchIds.Add(watchId);
 
-                var pipelineNote = pipeline is not null ? "" : " (pipeline will build on first check)";
+                string pipelineNote;
+                if (pipeline is not null)
+                {
+                    pipelineNote = "";
+                }
+                else
+                {
+                    pipelineNote = " (needs individual setup)";
+                    needsSetupPortals.Add(new SetupNeededPortal(watchId, portal.Url, portal.Domain));
+                }
+
                 logger.LogInformation(
                     "Created watch {WatchId} for portal {PortalUrl} in group {GroupId}{Note}",
                     watchId,
@@ -423,11 +443,14 @@ public class GroupWatchDiscoveryService(
                 yield return watchProgress;
         }
 
+        var autoCount = watchIds.Count - needsSetupPortals.Count;
         logger.LogInformation(
-            "Group watch discovery completed for group {GroupId}. Created {CreatedCount}/{PortalCount} watch(es)",
+            "Group watch discovery completed for group {GroupId}. Created {CreatedCount}/{PortalCount} watch(es) ({AutoCount} auto, {SetupCount} need setup)",
             group.Id,
             watchIds.Count,
-            portals.Count);
+            portals.Count,
+            autoCount,
+            needsSetupPortals.Count);
 
         yield return CreateProgress(
             GroupWatchPhase.Complete,
@@ -436,7 +459,8 @@ public class GroupWatchDiscoveryService(
             totalCount: portals.Count,
             portals: portals,
             groupId: group.Id,
-            watchIds: [.. watchIds]);
+            watchIds: [.. watchIds],
+            needsSetupPortals: needsSetupPortals.Count > 0 ? needsSetupPortals : null);
     }
 
     private sealed record LlmDiscoveryResult(StructuredDiscoveryIntent Intent, List<DiscoveredPortal> Portals);
@@ -930,12 +954,12 @@ public class GroupWatchDiscoveryService(
             return CustomizeTemplatePipeline(template, portal, parsedIntent);
         }
 
-        // Unknown platform — use a generic job listing pipeline that extracts
-        // clickable links from any career page via CSS (no LLM, no delay).
+        // Unknown platform — no template available. The watch will be created with
+        // NeedsPipelineSetup=true and the user will need to configure it interactively.
         logger.LogInformation(
-            "Unknown platform for {Url} — using generic job listing pipeline",
+            "Unknown platform for {Url} — will mark as needing interactive pipeline setup",
             portal.Url);
-        return CreateGenericJobListingPipeline(portal.Url);
+        return null;
     }
 
     /// <summary>
@@ -1194,7 +1218,7 @@ public class GroupWatchDiscoveryService(
             CheckInterval = ParseFrequencyOrDefault(null, _options.DefaultCheckInterval),
             UseJavaScript = useJavaScript,
             Tags = BuildWatchTags(parsedIntent, portal),
-            // When no pipeline is provided, let the background service pick it up on first check
+            // When no pipeline is provided, skip initial check — the watch needs setup first
             SkipInitialCheck = pipeline is not null
         };
 
@@ -1203,6 +1227,12 @@ public class GroupWatchDiscoveryService(
         if (pipeline is not null)
         {
             createdWatch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+        }
+        else
+        {
+            // No template available — mark the watch as needing interactive pipeline setup.
+            // The background service will skip this watch until the user configures it.
+            createdWatch.NeedsPipelineSetup = true;
         }
 
         createdWatch.FetchSettings ??= new FetchSettings();
@@ -1263,31 +1293,27 @@ public class GroupWatchDiscoveryService(
     private static JsonElement ReplaceLocationConditions(JsonElement existingConfig, string location)
     {
         var config = JsonNode.Parse(existingConfig.GetRawText()) as JsonObject ?? new JsonObject();
-        var existingConditions = config["conditions"]?.AsArray();
+
+        // Determine the field name from the first existing condition (default to "locationsText")
+        var fieldName = "locationsText";
+        if (config["conditions"]?.AsArray() is { Count: > 0 } existing &&
+            existing[0] is JsonObject first &&
+            first["field"]?.GetValue<string>() is { } f)
+        {
+            fieldName = f;
+        }
+
+        // Build location terms: the raw location, its parts if comma-separated, and derived country
+        var terms = DeriveLocationFilterTerms(location);
 
         var replacementConditions = new JsonArray();
-        if (existingConditions is { Count: > 0 })
-        {
-            foreach (var node in existingConditions)
-            {
-                if (node is not JsonObject existingCondition)
-                    continue;
-
-                replacementConditions.Add(new JsonObject
-                {
-                    ["field"] = existingCondition["field"]?.GetValue<string>() ?? "location",
-                    ["operator"] = existingCondition["operator"]?.GetValue<string>() ?? existingCondition["@operator"]?.GetValue<string>() ?? "contains",
-                    ["value"] = location
-                });
-            }
-        }
-        else
+        foreach (var term in terms)
         {
             replacementConditions.Add(new JsonObject
             {
-                ["field"] = "location",
+                ["field"] = fieldName,
                 ["operator"] = "contains",
-                ["value"] = location
+                ["value"] = term
             });
         }
 
@@ -1295,6 +1321,81 @@ public class GroupWatchDiscoveryService(
         config["mode"] = "any";
         return JsonSerializer.SerializeToElement(config, JsonOptions);
     }
+
+    /// <summary>
+    /// Derives a set of location filter terms from a location string.
+    /// E.g. "Copenhagen" → ["Copenhagen", "Denmark"], "Kastrup, Denmark" → ["Kastrup", "Denmark"].
+    /// </summary>
+    internal static List<string> DeriveLocationFilterTerms(string location)
+    {
+        var terms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Split comma-separated parts (e.g. "Kastrup, Denmark")
+        var parts = location.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            if (!string.IsNullOrWhiteSpace(part))
+                terms.Add(part);
+        }
+
+        // If there was no comma, add the raw location
+        if (parts.Length <= 1)
+            terms.Add(location.Trim());
+
+        // Derive country from each part using known city → country mappings
+        foreach (var part in parts)
+        {
+            if (CityToCountry.TryGetValue(part.Trim(), out var country))
+                terms.Add(country);
+        }
+
+        // Also try the full location string as a city lookup
+        if (CityToCountry.TryGetValue(location.Trim(), out var fullCountry))
+            terms.Add(fullCountry);
+
+        return terms.ToList();
+    }
+
+    /// <summary>
+    /// Maps well-known biotech hub cities to their country names for location filtering.
+    /// </summary>
+    private static readonly Dictionary<string, string> CityToCountry = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Copenhagen"] = "Denmark", ["Kastrup"] = "Denmark", ["Lyngby"] = "Denmark",
+        ["Bagsværd"] = "Denmark", ["Hillerød"] = "Denmark", ["Kalundborg"] = "Denmark",
+        ["Munich"] = "Germany", ["Berlin"] = "Germany", ["Hamburg"] = "Germany",
+        ["Frankfurt"] = "Germany", ["Heidelberg"] = "Germany", ["Tübingen"] = "Germany",
+        ["Vienna"] = "Austria", ["Graz"] = "Austria",
+        ["Amsterdam"] = "Netherlands", ["Leiden"] = "Netherlands", ["Rotterdam"] = "Netherlands",
+        ["Brussels"] = "Belgium", ["Ghent"] = "Belgium", ["Mechelen"] = "Belgium",
+        ["Basel"] = "Switzerland", ["Zurich"] = "Switzerland",
+        ["Stockholm"] = "Sweden", ["Malmö"] = "Sweden", ["Lund"] = "Sweden", ["Gothenburg"] = "Sweden",
+        ["Paris"] = "France", ["Lyon"] = "France", ["Strasbourg"] = "France",
+        ["Helsinki"] = "Finland", ["Turku"] = "Finland",
+        ["Oslo"] = "Norway", ["Bergen"] = "Norway",
+        ["Prague"] = "Czech Republic", ["Brno"] = "Czech Republic",
+        ["London"] = "United Kingdom", ["Cambridge"] = "United Kingdom", ["Oxford"] = "United Kingdom",
+        ["Dublin"] = "Ireland",
+        ["Luxembourg"] = "Luxembourg",
+    };
+
+    private static readonly Dictionary<string, string> CountryToAbbreviation = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Denmark"] = "DK",
+        ["Germany"] = "DE",
+        ["Austria"] = "AT",
+        ["Netherlands"] = "NL",
+        ["Belgium"] = "BE",
+        ["Switzerland"] = "CH",
+        ["Sweden"] = "SE",
+        ["France"] = "FR",
+        ["Finland"] = "FI",
+        ["Norway"] = "NO",
+        ["Czech Republic"] = "CZ",
+        ["United Kingdom"] = "UK",
+        ["Ireland"] = "IE",
+        ["Luxembourg"] = "LU",
+    };
 
     private List<string> BuildSearchQueries(StructuredDiscoveryIntent parsedIntent, string userInput)
     {
@@ -1314,19 +1415,36 @@ public class GroupWatchDiscoveryService(
 
     private static List<RelevanceKeyword> BuildPositiveKeywords(StructuredDiscoveryIntent parsedIntent)
     {
-        var candidates = new List<string>();
-        candidates.AddRange(parsedIntent.RoleTypes);
+        var keywords = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        var roleWeight = 12;
+        foreach (var roleType in parsedIntent.RoleTypes.Where(role => !string.IsNullOrWhiteSpace(role)))
+        {
+            keywords[roleType] = Math.Max(keywords.GetValueOrDefault(roleType), Math.Max(6, roleWeight));
+            roleWeight--;
+        }
 
         if (!string.IsNullOrWhiteSpace(parsedIntent.Field))
-            candidates.Add(parsedIntent.Field);
+            keywords[parsedIntent.Field] = Math.Max(keywords.GetValueOrDefault(parsedIntent.Field), 8);
 
         if (!string.IsNullOrWhiteSpace(parsedIntent.Location))
-            candidates.Add(parsedIntent.Location);
+        {
+            keywords[parsedIntent.Location] = Math.Max(keywords.GetValueOrDefault(parsedIntent.Location), 20);
 
-        return candidates
-            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select((keyword, index) => new RelevanceKeyword(keyword, Math.Max(6, 12 - index)))
+            foreach (var term in DeriveLocationFilterTerms(parsedIntent.Location)
+                .Where(term => !string.Equals(term, parsedIntent.Location, StringComparison.OrdinalIgnoreCase)))
+            {
+                var weight = string.Equals(term, "Denmark", StringComparison.OrdinalIgnoreCase) ? 15 : 12;
+                keywords[term] = Math.Max(keywords.GetValueOrDefault(term), weight);
+
+                if (CountryToAbbreviation.TryGetValue(term, out var abbreviation))
+                    keywords[abbreviation] = Math.Max(keywords.GetValueOrDefault(abbreviation), 10);
+            }
+        }
+
+        return keywords
+            .Select(pair => new RelevanceKeyword(pair.Key, pair.Value))
+            .OrderByDescending(keyword => keyword.Weight)
             .ToList();
     }
 
@@ -1611,7 +1729,8 @@ public class GroupWatchDiscoveryService(
         int? totalCount,
         List<DiscoveredPortal>? portals = null,
         Guid? groupId = null,
-        List<Guid>? watchIds = null)
+        List<Guid>? watchIds = null,
+        List<SetupNeededPortal>? needsSetupPortals = null)
         => new(
             phase,
             message,
@@ -1619,7 +1738,8 @@ public class GroupWatchDiscoveryService(
             totalCount,
             portals,
             groupId,
-            watchIds);
+            watchIds,
+            needsSetupPortals);
 
     private sealed record StructuredDiscoveryIntent
     {

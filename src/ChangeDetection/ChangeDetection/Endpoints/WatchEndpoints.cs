@@ -3,6 +3,8 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.OutputCaching;
 using System.Text.Json;
@@ -136,11 +138,18 @@ public static class WatchEndpoints
     private static async Task<IResult> GetAllWatches(
         IWatchService watchService,
         IRepository<ChangeEvent> eventRepo,
+        IRepository<ChangeSnapshot> snapshotRepo,
         ICategoryService categoryService,
+        IPipelineRunSummaryStore summaryStore,
         CancellationToken ct)
     {
         var watches = await watchService.GetAllAsync(ct);
         var categories = (await categoryService.GetAllAsync(ct)).ToDictionary(c => c.Id);
+
+        // Batch-load pipeline run summaries for all watches
+        var watchIds = watches.Select(w => w.Id.ToString()).ToList();
+        var summaries = await summaryStore.GetBatchAsync(watchIds, ct);
+
         var dtos = new List<WatchListItemDto>();
 
         foreach (var watch in watches)
@@ -151,11 +160,21 @@ public static class WatchEndpoints
                 .OrderByDescending(e => e.DetectedAt)
                 .FirstOrDefault();
             
+            // Get latest snapshot item count
+            var latestSnapshot = (await snapshotRepo.FindAsync(s => s.WatchedSiteId == watch.Id, ct))
+                .OrderByDescending(s => s.CapturedAt)
+                .FirstOrDefault();
+            
             // Get category info
             Category? category = null;
             if (watch.CategoryId.HasValue && categories.TryGetValue(watch.CategoryId.Value, out var cat))
                 category = cat;
-            
+
+            // Determine extraction quality from pipeline summary
+            var itemCount = CountSnapshotItems(latestSnapshot);
+            summaries.TryGetValue(watch.Id.ToString(), out var runSummary);
+            var quality = DetermineExtractionQuality(watch, itemCount, runSummary);
+
             dtos.Add(new WatchListItemDto
             {
                 Id = watch.Id.ToString(),
@@ -173,9 +192,13 @@ public static class WatchEndpoints
                 LatestChangeSummary = latestChange?.DiffSummary,
                 LatestChangeAt = latestChange?.DetectedAt,
                 UnviewedChangeCount = unviewedChanges.Count,
+                LatestItemCount = itemCount,
                 CategoryId = category?.Id.ToString(),
                 CategoryName = category?.Name,
                 CategoryColor = category?.Color,
+                ExtractionQuality = quality,
+                HealthStatus = WatchHealthClassifier.Classify(watch, runSummary).ToString(),
+                NeedsPipelineSetup = watch.NeedsPipelineSetup,
                 Tags = watch.Tags.Select(t => new TagDto
                 {
                     Name = t,
@@ -193,6 +216,7 @@ public static class WatchEndpoints
         IWatchService watchService,
         IRepository<ChangeSnapshot> snapshotRepo,
         ICategoryService categoryService,
+        IPipelineRunSummaryStore summaryStore,
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guidId))
@@ -211,7 +235,14 @@ public static class WatchEndpoints
         if (watch.CategoryId.HasValue)
             category = await categoryService.GetByIdAsync(watch.CategoryId.Value, ct);
 
-        return Results.Ok(MapToDetailDto(watch, latestSnapshot, category));
+        var dto = MapToDetailDto(watch, latestSnapshot, category);
+
+        // Attach pipeline health from latest run summary
+        var runSummary = await summaryStore.GetAsync(guidId.ToString(), ct);
+        if (runSummary is not null)
+            dto.PipelineHealth = MapToPipelineHealthDto(runSummary);
+
+        return Results.Ok(dto);
     }
 
     private static async Task<IResult> CreateWatch(
@@ -402,6 +433,8 @@ public static class WatchEndpoints
         IWatchService watchService,
         IPipelineExecutor pipelineExecutor,
         IBlockStateStore stateStore,
+        IPipelineRunSummaryStore summaryStore,
+        IWatchExecutionLock executionLock,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -412,6 +445,12 @@ public static class WatchEndpoints
         if (watch == null)
             return Results.NotFound();
 
+        if (!executionLock.TryAcquire(guidId))
+            return Results.Conflict("Watch is already being checked.");
+
+        try
+        {
+
         // Pipeline-aware check: use pipeline executor if pipeline is defined
         if (!string.IsNullOrEmpty(watch.PipelineDefinitionJson))
         {
@@ -420,6 +459,10 @@ public static class WatchEndpoints
                 return Results.BadRequest("Invalid pipeline definition");
 
             var result = await pipelineExecutor.ExecuteAsync(definition, guidId, stateStore, null, ct);
+
+            // Persist pipeline run summary for observability
+            var summary = PipelineRunSummaryBuilder.Build(guidId.ToString(), result, definition);
+            await summaryStore.SaveAsync(summary, ct);
 
             logger.LogInformation(
                 "Pipeline check for watch {WatchId}: Success={Success}, Blocks={BlockCount}",
@@ -483,6 +526,11 @@ public static class WatchEndpoints
             IsViewed = changeEvent.IsViewed,
             IsNotified = changeEvent.IsNotified
         });
+        }
+        finally
+        {
+            executionLock.Release(guidId);
+        }
     }
 
     private static async Task<IResult> EnableWatch(
@@ -854,7 +902,7 @@ public static class WatchEndpoints
                 WaitTimeMs = watch.FetchSettings.WaitAfterLoadMs,
                 CaptureScreenshot = watch.FetchSettings.Screenshot.IsEnabled,
                 TimeoutSeconds = watch.FetchSettings.TimeoutSeconds,
-                CustomHeaders = watch.FetchSettings.Headers,
+                CustomHeaders = watch.FetchSettings.Headers.ToDictionary(h => h.Key, h => "***"),
                 ProxyUrl = watch.FetchSettings.ProxyUrl,
                 UserAgent = watch.FetchSettings.UserAgent,
                 ViewportWidth = watch.FetchSettings.ViewportWidth,
@@ -1523,6 +1571,7 @@ public static class WatchEndpoints
         IWatchService watchService,
         IPipelineExecutor pipelineExecutor,
         IBlockStateStore stateStore,
+        IPipelineRunSummaryStore summaryStore,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -1544,6 +1593,10 @@ public static class WatchEndpoints
             guidId, watch.Name);
 
         var result = await pipelineExecutor.ExecuteAsync(definition, guidId, stateStore, null, ct);
+
+        // Persist pipeline run summary for observability
+        var summary = PipelineRunSummaryBuilder.Build(guidId.ToString(), result, definition);
+        await summaryStore.SaveAsync(summary, ct);
 
         logger.LogInformation("Pipeline execution finished for watch {WatchId}: Success={Success}, Blocks={BlockCount}",
             guidId, result.Success, result.BlockResults?.Count ?? 0);
@@ -1585,6 +1638,90 @@ public static class WatchEndpoints
     {
         var json = element.GetRawText();
         return json.Length <= maxChars ? json : json[..maxChars] + "...";
+    }
+
+    private static PipelineHealthDto MapToPipelineHealthDto(PipelineRunSummaryEntity summary)
+    {
+        var blocks = new List<PipelineBlockStatusDto>();
+        try
+        {
+            var blockSummaries = JsonSerializer.Deserialize<List<PipelineBlockSummary>>(summary.BlockSummariesJson);
+            if (blockSummaries is not null)
+            {
+                blocks = blockSummaries.Select(b => new PipelineBlockStatusDto
+                {
+                    BlockId = b.BlockId,
+                    BlockType = b.BlockType,
+                    Status = b.Status,
+                    DurationMs = b.DurationMs,
+                    OutputSizeChars = b.OutputSizeChars,
+                    Error = b.Error,
+                    CacheHit = b.CacheHit
+                }).ToList();
+            }
+        }
+        catch (JsonException) { /* ignore malformed JSON */ }
+
+        return new PipelineHealthDto
+        {
+            Success = summary.Success,
+            IsDegraded = summary.IsDegraded,
+            ExecutionDurationMs = summary.ExecutionDurationMs,
+            ExecutedAt = summary.Timestamp,
+            Error = summary.Error,
+            BlockCount = blocks.Count,
+            CompletedCount = blocks.Count(b => b.Status is "Completed" or "Baseline"),
+            FailedCount = blocks.Count(b => b.Status == "Failed"),
+            SkippedCount = blocks.Count(b => b.Status == "Skipped"),
+            Blocks = blocks
+        };
+    }
+
+    private static string? DetermineExtractionQuality(
+        WatchedSite watch, int? itemCount, PipelineRunSummaryEntity? runSummary)
+    {
+        // Pipeline failed → "failed"
+        if (runSummary is { Success: false })
+            return "failed";
+        if (watch.Status == WatchStatus.Error)
+            return "failed";
+
+        // Checked at least once
+        if (!watch.LastChecked.HasValue)
+            return null;
+
+        // Items extracted → "ok"
+        if (itemCount is > 0)
+            return "ok";
+
+        // Checked but 0 items → "empty"
+        if (itemCount is 0)
+            return "empty";
+
+        return null;
+    }
+
+    private static int? CountSnapshotItems(ChangeSnapshot? snapshot)
+    {
+        if (snapshot is null || string.IsNullOrWhiteSpace(snapshot.ExtractedObjectsJson))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(snapshot.ExtractedObjectsJson);
+            // Handle both direct arrays and ListDiff wrapper objects {"items":[...]}
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                return doc.RootElement.GetArrayLength();
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("items", out var items) &&
+                items.ValueKind == JsonValueKind.Array)
+                return items.GetArrayLength();
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<BlockDefinition> OrderBlocks(PipelineDefinition definition)

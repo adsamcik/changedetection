@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,7 +6,9 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Hubs;
 using ChangeDetection.Services.Authentication;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.GroupWatch;
+using ChangeDetection.Services.Pipeline;
 using Microsoft.AspNetCore.SignalR;
 
 namespace ChangeDetection.Services.Background;
@@ -20,18 +21,20 @@ namespace ChangeDetection.Services.Background;
 public class ChangeCheckBackgroundService : BackgroundService
 {
     private const int DefaultMaxConcurrentChecks = 5;
-    private static readonly ConcurrentDictionary<Guid, byte> _runningWatches = new();
     
     private readonly IBackgroundServiceScopeFactory _scopeFactory;
     private readonly ILogger<ChangeCheckBackgroundService> _logger;
+    private readonly IWatchExecutionLock _executionLock;
     private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(1);
 
     public ChangeCheckBackgroundService(
         IBackgroundServiceScopeFactory scopeFactory,
-        ILogger<ChangeCheckBackgroundService> logger)
+        ILogger<ChangeCheckBackgroundService> logger,
+        IWatchExecutionLock executionLock)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _executionLock = executionLock;
     }
     
     /// <summary>
@@ -120,7 +123,7 @@ public class ChangeCheckBackgroundService : BackgroundService
         IHubContext<ChangeDetectionHub> hubContext,
         CancellationToken ct)
     {
-        if (!_runningWatches.TryAdd(watch.Id, 0))
+        if (!_executionLock.TryAcquire(watch.Id))
         {
             _logger.LogDebug("Skipping watch {WatchId} — already being checked", watch.Id);
             return;
@@ -148,15 +151,55 @@ public class ChangeCheckBackgroundService : BackgroundService
                     LastCheck = watch.LastChecked
                 }, ct);
 
-                // Auto-generate basic pipeline for legacy watches without a pipeline definition
+                // Skip watches that need interactive pipeline setup — they can't be checked
+                // until the user configures them via the /setup flow.
+                if (watch.NeedsPipelineSetup)
+                {
+                    _logger.LogDebug(
+                        "Skipping watch {WatchId} ({Url}) — needs interactive pipeline setup",
+                        watch.Id, watch.Url);
+                    return;
+                }
+
+                // Auto-generate pipeline for watches without a pipeline definition.
+                // Use platform-specific template when the URL matches a known platform (e.g. Workday),
+                // otherwise fall back to a basic Navigate+Hash pipeline.
                 if (string.IsNullOrEmpty(watch.PipelineDefinitionJson))
                 {
-                    var basicPipeline = GenerateBasicPipeline(watch.Url, watch.CssSelector);
-                    watch.PipelineDefinitionJson = PipelineSerializer.Serialize(basicPipeline);
-                    var watchRepo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
+                    PipelineDefinition? pipeline = null;
+                    var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(watch.Url);
+                    if (detectedPlatform is not null)
+                    {
+                        var setupFlow = watchScope.ServiceProvider.GetRequiredService<SetupFlowEnhancements>();
+                        pipeline = await setupFlow.GetPlatformTemplateAsync(detectedPlatform, watch.Url, ct: ct);
+                        if (pipeline is not null)
+                        {
+                            _logger.LogInformation(
+                                "Auto-generated {Platform} platform pipeline for watch {WatchId}",
+                                detectedPlatform, watch.Id);
+                        }
+                    }
+
+                    // For group watches with no detected platform, mark as needing setup
+                    // instead of attempting headless LLM pipeline building (which fails silently).
+                    if (pipeline is null && watch.GroupId.HasValue)
+                    {
+                        _logger.LogWarning(
+                            "Watch {WatchId} ({Url}) has no pipeline and no detected platform — marking as needing setup",
+                            watch.Id, watch.Url);
+                        watch.NeedsPipelineSetup = true;
+                        var watchRepo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
+                        watch.UpdatedAt = DateTime.UtcNow;
+                        await watchRepo.UpdateAsync(watch, ct);
+                        return;
+                    }
+
+                    pipeline ??= GenerateBasicPipeline(watch.Url, watch.CssSelector);
+
+                    watch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+                    var repo = watchScope.ServiceProvider.GetRequiredService<IRepository<WatchedSite>>();
                     watch.UpdatedAt = DateTime.UtcNow;
-                    await watchRepo.UpdateAsync(watch, ct);
-                    _logger.LogInformation("Auto-generated basic pipeline for legacy watch {WatchId}", watch.Id);
+                    await repo.UpdateAsync(watch, ct);
                 }
 
                 await CheckWithPipelineExecutorAsync(watchScope.ServiceProvider, watch, hubContext, dashboardGroup, ct);
@@ -196,7 +239,7 @@ public class ChangeCheckBackgroundService : BackgroundService
         }
         finally
         {
-            _runningWatches.TryRemove(watch.Id, out _);
+            _executionLock.Release(watch.Id);
         }
     }
 
@@ -337,6 +380,11 @@ public class ChangeCheckBackgroundService : BackgroundService
         _logger.LogDebug("Executing composable pipeline for watch {WatchId}", watch.Id);
         var result = await pipelineExecutor.ExecuteAsync(definition, watch.Id, stateStore, page: null, timeoutCts.Token);
 
+        // Persist pipeline run summary for observability
+        var summaryStore = sp.GetRequiredService<IPipelineRunSummaryStore>();
+        var runSummary = BlockExecution.PipelineRunSummaryBuilder.Build(watch.Id.ToString(), result, definition);
+        await summaryStore.SaveAsync(runSummary, ct);
+
         // Update watch status
         watch.LastChecked = DateTime.UtcNow;
         watch.LastError = result.Success ? null : result.Error;
@@ -361,7 +409,44 @@ public class ChangeCheckBackgroundService : BackgroundService
             var eventRepo = sp.GetRequiredService<IRepository<ChangeEvent>>();
             var diffService = sp.GetRequiredService<IDiffService>();
 
-            var content = result.OutputData.Value.ToString();
+            // Validate extraction quality for list-mode pipelines (group watches extracting job listings).
+            // Filters out navigation items, metadata fragments, and other garbage that generic CSS selectors pick up.
+            // Skip validation for known platform templates — their output format is verified by design
+            // (e.g., Workday API returns structured JSON that doesn't match HTML-scrape heuristics).
+            var outputData = result.OutputData.Value;
+            var isKnownPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(watch.Url) is not null;
+            if (watch.GroupId.HasValue && outputData.ValueKind == JsonValueKind.Array && !isKnownPlatform)
+            {
+                var (filteredOutput, totalItems, rejectedCount) = ValidateExtractionQuality(outputData, _logger, watch.Id);
+
+                if (filteredOutput.HasValue)
+                    outputData = filteredOutput.Value;
+
+                // If ALL items were rejected, the pipeline is extracting garbage — mark as degraded
+                // so the next check can try to rebuild the pipeline via LLM
+                if (totalItems > 0 && rejectedCount == totalItems)
+                {
+                    _logger.LogWarning(
+                        "Watch {WatchId} extraction produced only garbage ({Total} items rejected) — marking as NeedsPipelineRebuild",
+                        watch.Id, totalItems);
+                    watch.ConsecutiveSuccessfulChecks = 0;
+                    watch.CatalogStatus = CatalogVerificationStatus.Degraded;
+                    watch.PipelineDefinitionJson = null; // Clear pipeline so it gets rebuilt on next check
+                    await watchRepo.UpdateAsync(watch, ct);
+
+                    await hubContext.Clients.Group(dashboardGroup).SendAsync("WatchStatusChanged", new
+                    {
+                        WatchId = watch.Id,
+                        WatchName = watch.Name ?? watch.Url,
+                        Status = "Degraded",
+                        LastError = $"Extraction quality check failed: all {totalItems} extracted items were navigation/metadata, not job listings. Pipeline will be rebuilt on next check.",
+                        LastCheck = DateTime.UtcNow
+                    }, ct);
+                    return;
+                }
+            }
+
+            var content = outputData.ToString();
             var contentHash = ComputeSha256Hash(content);
 
             var snapshot = new ChangeSnapshot
@@ -462,6 +547,9 @@ public class ChangeCheckBackgroundService : BackgroundService
             watch.ConsecutiveFailures = 0;
             watch.Status = WatchStatus.Active;
 
+            // Reset check interval to base (undo any failure backoff)
+            watch.CheckInterval = watch.ScheduleSettings.BaseInterval;
+
             if (watch.GroupId.HasValue)
             {
                 var portalDiscoveryAnalyzer = sp.GetRequiredService<IPortalDiscoveryAnalyzer>();
@@ -489,17 +577,27 @@ public class ChangeCheckBackgroundService : BackgroundService
             }
 
             // --- Catalog verification tracking ---
-            watch.ConsecutiveSuccessfulChecks++;
-            watch.TotalSuccessfulChecks++;
-            watch.LastSuccessfulCheckAt = DateTime.UtcNow;
 
-            // Count extracted items from output (arrays contribute their length, anything else counts as 1)
-            if (result.OutputData.HasValue)
+            // Count extracted items, treating empty results ({} or {"items":[],...}) as zero
+            var extractedItemCount = result.OutputData.HasValue
+                ? CountExtractedItems(result.OutputData.Value)
+                : 0;
+
+            if (extractedItemCount > 0)
             {
-                var itemCount = result.OutputData.Value.ValueKind == System.Text.Json.JsonValueKind.Array
-                    ? result.OutputData.Value.GetArrayLength()
-                    : 1;
-                watch.TotalItemsExtracted += itemCount;
+                watch.ConsecutiveSuccessfulChecks++;
+                watch.TotalSuccessfulChecks++;
+                watch.LastSuccessfulCheckAt = DateTime.UtcNow;
+                watch.TotalItemsExtracted += extractedItemCount;
+            }
+            else
+            {
+                // Pipeline succeeded but returned no real data — don't count as verified success.
+                // This catches cases like empty {} or {"items":[],"changed":false} appearing healthy.
+                _logger.LogWarning(
+                    "Watch {WatchId} pipeline succeeded but returned empty data, resetting consecutive success counter",
+                    watch.Id);
+                watch.ConsecutiveSuccessfulChecks = 0;
             }
 
             // Promote to Verified after 3+ consecutive successes with extracted items
@@ -520,10 +618,40 @@ public class ChangeCheckBackgroundService : BackgroundService
         }
         else if (!result.Success)
         {
+            // --- Determine failure category from block results ---
+            var failureCategory = FailureCategory.Unknown;
+            foreach (var br in result.BlockResults.Values)
+            {
+                if (!br.Success && br.Category != FailureCategory.None)
+                {
+                    failureCategory = br.Category;
+                    break;
+                }
+            }
+
             // --- Catalog verification tracking (failure path) ---
             watch.ConsecutiveSuccessfulChecks = 0;
             watch.TotalFailedChecks++;
             watch.ConsecutiveFailures++;
+
+            // --- Exponential backoff for failing watches (res-3) ---
+            // Transient failures get escalating check intervals; permanent failures skip auto-healing
+            if (failureCategory != FailureCategory.Permanent)
+            {
+                var backoffMultiplier = Math.Min(Math.Pow(2, watch.ConsecutiveFailures - 1), 32);
+                var baseCheckInterval = watch.ScheduleSettings.BaseInterval;
+                watch.CheckInterval = TimeSpan.FromTicks((long)(baseCheckInterval.Ticks * backoffMultiplier));
+
+                _logger.LogInformation(
+                    "Watch {WatchId} transient failure #{Failures} — next check in {Interval} ({Multiplier}x backoff)",
+                    watch.Id, watch.ConsecutiveFailures, watch.CheckInterval, backoffMultiplier);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Watch {WatchId} permanent failure — skipping auto-healing backoff. Error: {Error}",
+                    watch.Id, result.Error);
+            }
 
             // Degrade previously verified watches after 3 consecutive failures
             if (watch.CatalogStatus == CatalogVerificationStatus.Verified && watch.ConsecutiveFailures >= 3)
@@ -568,6 +696,175 @@ public class ChangeCheckBackgroundService : BackgroundService
                 LinesRemoved = changeEvent.LinesRemoved
             }, ct);
         }
+    }
+
+    /// <summary>
+    /// Known navigation/boilerplate labels that should never appear as job listing titles.
+    /// Case-insensitive exact match.
+    /// </summary>
+    private static readonly HashSet<string> NavigationLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "home", "about", "about us", "contact", "contact us", "login", "log in", "sign in",
+        "register", "search", "menu", "close", "open", "back", "next", "previous",
+        "accept", "decline", "cookie", "cookies", "privacy", "terms", "legal",
+        "do business", "live & work", "news", "events", "faq", "help",
+        "submit", "apply", "cancel", "ok", "yes", "no", "more", "less",
+        "share", "print", "download", "upload", "subscribe", "unsubscribe"
+    };
+
+    /// <summary>
+    /// Validates the quality of extracted items from a pipeline run.
+    /// Returns only items that look like real job listings, filtering out navigation elements,
+    /// metadata fragments, and other garbage that generic CSS selectors pick up.
+    /// </summary>
+    /// <param name="outputData">The raw pipeline output (expected to be a JSON array of objects with title/url fields).</param>
+    /// <param name="logger">Logger for diagnostics.</param>
+    /// <param name="watchId">Watch ID for log context.</param>
+    /// <returns>
+    /// A tuple of (validItems, totalItems, rejectedCount). When all items are rejected,
+    /// the caller should mark the watch as degraded.
+    /// </returns>
+    internal static (JsonElement? filteredOutput, int totalItems, int rejectedCount) ValidateExtractionQuality(
+        JsonElement outputData, ILogger logger, Guid watchId)
+    {
+        // Only validate arrays (list-mode extraction output)
+        if (outputData.ValueKind != JsonValueKind.Array)
+            return (outputData, 0, 0);
+
+        var totalItems = outputData.GetArrayLength();
+        if (totalItems == 0)
+            return (outputData, 0, 0);
+
+        var validItems = new List<JsonElement>();
+        var rejectedCount = 0;
+
+        foreach (var item in outputData.EnumerateArray())
+        {
+            if (IsValidExtractedItem(item))
+            {
+                validItems.Add(item.Clone());
+            }
+            else
+            {
+                rejectedCount++;
+            }
+        }
+
+        if (rejectedCount > 0)
+        {
+            logger.LogInformation(
+                "Watch {WatchId} extraction quality filter: {Rejected}/{Total} items rejected as non-job-listing content",
+                watchId, rejectedCount, totalItems);
+        }
+
+        // If everything was rejected, return empty array
+        if (validItems.Count == 0)
+        {
+            logger.LogWarning(
+                "Watch {WatchId} extraction quality filter rejected ALL {Total} items — pipeline is extracting garbage (nav items, metadata, etc.)",
+                watchId, totalItems);
+
+            var emptyArray = JsonDocument.Parse("[]").RootElement.Clone();
+            return (emptyArray, totalItems, rejectedCount);
+        }
+
+        // Rebuild the JSON array with only valid items
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartArray();
+            foreach (var item in validItems)
+            {
+                item.WriteTo(writer);
+            }
+            writer.WriteEndArray();
+        }
+
+        var filteredDoc = JsonDocument.Parse(stream.ToArray());
+        return (filteredDoc.RootElement.Clone(), totalItems, rejectedCount);
+    }
+
+    /// <summary>
+    /// Checks whether a single extracted item looks like a real job listing
+    /// rather than a navigation element, metadata fragment, or other garbage.
+    /// </summary>
+    private static bool IsValidExtractedItem(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object)
+            return false;
+
+        // Extract title — the primary quality signal
+        string? title = null;
+        if (item.TryGetProperty("title", out var titleEl) && titleEl.ValueKind == JsonValueKind.String)
+            title = titleEl.GetString()?.Trim();
+
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        // Reject titles that are too short (digits, abbreviations) or too long (HTML fragments)
+        if (title.Length < 5 || title.Length > 200)
+            return false;
+
+        // Reject known navigation/boilerplate labels
+        if (NavigationLabels.Contains(title))
+            return false;
+
+        // Reject ALL CAPS single words — typically nav items like "ABOUT", "CONTACT", "NEWS"
+        if (!title.Contains(' ') && title == title.ToUpperInvariant() && title.Length < 30)
+            return false;
+
+        // Reject titles that are pure numbers or very short numeric strings (page counts, IDs)
+        if (int.TryParse(title, out _) || (title.Length <= 3 && title.All(c => char.IsDigit(c) || c == '.')))
+            return false;
+
+        // Reject titles that look like hostnames/domains (e.g. "antibiotika.ssi.dk")
+        if (title.Count(c => c == '.') >= 2 && !title.Contains(' '))
+            return false;
+
+        // Validate URL if present — should look like a job posting URL, not a category/nav page
+        if (item.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
+        {
+            var url = urlEl.GetString();
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                // Reject fragment-only URLs (e.g. "#", "#section")
+                if (url.StartsWith('#') || url == "/")
+                    return false;
+
+                // Reject javascript: pseudo-URLs
+                if (url.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Counts the number of meaningful extracted items in pipeline output.
+    /// Returns 0 for empty objects (<c>{}</c>), empty arrays, or objects whose
+    /// <c>items</c> array is empty (e.g. <c>{"items":[],"changed":false}</c>).
+    /// </summary>
+    private static int CountExtractedItems(JsonElement data)
+    {
+        if (data.ValueKind == JsonValueKind.Array)
+            return data.GetArrayLength();
+
+        if (data.ValueKind == JsonValueKind.Object)
+        {
+            // Empty object {} = no items
+            if (!data.EnumerateObject().Any())
+                return 0;
+
+            // Object with an items array: count from that array
+            if (data.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+                return items.GetArrayLength();
+
+            // Non-empty object without items array = 1 item
+            return 1;
+        }
+
+        return 0;
     }
 
     /// <summary>

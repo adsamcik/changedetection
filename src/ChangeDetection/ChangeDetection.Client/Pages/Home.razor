@@ -14,13 +14,13 @@
 @inject IJSRuntime JSRuntime
 @implements IAsyncDisposable
 
-<PageTitle>Command Center - Change Detection</PageTitle>
+<PageTitle>Sentinel — Job Monitor</PageTitle>
 
 <div class="command-center">
     <!-- Hero Add Watch Section -->
     <section class="add-watch-hero">
         <div class="hero-content">
-            <h1 class="hero-title">Add a new web page change detection watch</h1>
+            <h1 class="hero-title">What do you want to monitor?</h1>
             
             <div class="add-watch-form">
                 <SmartInput Placeholder="https://... or describe what you want to watch" />
@@ -61,11 +61,24 @@
                 <div class="health-card-count">@GetErrorCount()</div>
                 <div class="health-card-label">Errors</div>
             </button>
+            <button class="health-card health-card-degraded @(IsHealthFilterActive("Degraded") ? "active" : "")" @onclick='() => SetHealthFilter("Degraded")'>
+                <div class="health-card-icon">⚠️</div>
+                <div class="health-card-count">@GetDegradedCount()</div>
+                <div class="health-card-label">Degraded</div>
+            </button>
             <button class="health-card health-card-paused @(IsHealthFilterActive("Paused") ? "active" : "")" @onclick='() => SetHealthFilter("Paused")'>
                 <div class="health-card-icon">⏸</div>
                 <div class="health-card-count">@GetPausedCount()</div>
                 <div class="health-card-label">Paused</div>
             </button>
+            @if (GetSetupNeededCount() > 0)
+            {
+                <button class="health-card health-card-setup @(IsHealthFilterActive("SetupNeeded") ? "active" : "")" @onclick='() => SetHealthFilter("SetupNeeded")'>
+                    <div class="health-card-icon">🔧</div>
+                    <div class="health-card-count">@GetSetupNeededCount()</div>
+                    <div class="health-card-label">Setup Needed</div>
+                </button>
+            }
         </div>
     </section>
 
@@ -163,18 +176,15 @@
                         <span class="separator">|</span>
                         <span class="text-warning">@pendingSetups.Count Setting up</span>
                     }
-                    @{
-                        var checkingCount = watches.Count(w => w.Status == "Checking");
-                    }
-                    @if (checkingCount > 0)
+                    @if (GetCheckingCount() > 0)
                     {
                         <span class="separator">|</span>
-                        <span class="text-info">@checkingCount Checking</span>
+                        <span class="text-info">@GetCheckingCount() Checking</span>
                     }
                     <span class="separator">|</span>
-                    <span class="text-success">@watches.Count(w => w.Status == "Active") Active</span>
+                    <span class="text-success">@GetHealthyCount() Active</span>
                     <span class="separator">|</span>
-                    <span class="text-danger">@watches.Count(w => w.Status == "Error") Errors</span>
+                    <span class="text-danger">@GetErrorCount() Errors</span>
                 </div>
             </div>
 
@@ -198,10 +208,11 @@
                                                aria-label="Select all watches" />
                                     </th>
                                 }
-                                <th scope="col" width="40">St</th>
+                                <th scope="col" width="40"><span class="visually-hidden">Status</span></th>
                                 <th scope="col">Name / URL</th>
-                                <th scope="col" width="120">Last Check</th>
-                                <th scope="col" width="120">Last Change</th>
+                                <th scope="col" width="80" class="text-right hide-mobile">Items</th>
+                                <th scope="col" width="120" class="hide-mobile">Last Check</th>
+                                <th scope="col" width="120" class="hide-mobile">Last Change</th>
                                 <th scope="col">Tags</th>
                                 <th scope="col" width="120" class="text-right">Actions</th>
                             </tr>
@@ -240,10 +251,13 @@
                                         </div>
                                         <div class="watch-url pending-prompt">@GetSetupStatusText(setup)</div>
                                     </td>
-                                    <td class="meta-cell">
+                                    <td class="meta-cell text-right hide-mobile">
                                         <span class="text-muted">-</span>
                                     </td>
-                                    <td class="meta-cell">
+                                    <td class="meta-cell hide-mobile">
+                                        <span class="text-muted">-</span>
+                                    </td>
+                                    <td class="meta-cell hide-mobile">
                                         <span class="text-muted">-</span>
                                     </td>
                                     <td class="tags-cell">
@@ -268,13 +282,57 @@
                                         </td>
                                     }
                                     <td class="status-cell">
-                                        <div class="status-indicator @watch.Status.ToLower()" title="@watch.Status"></div>
+                                        @if (watch.NeedsPipelineSetup)
+                                        {
+                                            <div class="status-indicator status-setup-needed" title="Setup needed — configure this watch to start monitoring"></div>
+                                        }
+                                        else if (IsErrored(watch))
+                                        {
+                                            <div class="status-indicator status-error" title="@GetHealthTitle(watch)"></div>
+                                        }
+                                        else if (IsDegraded(watch))
+                                        {
+                                            <div class="status-indicator status-degraded" title="@GetHealthTitle(watch)"></div>
+                                        }
+                                        else
+                                        {
+                                            <div class="status-indicator @watch.Status.ToLower()" title="@watch.Status"></div>
+                                        }
                                     </td>
                                     <td class="name-cell">
                                         <div class="watch-title">@GetDisplayTitle(watch)</div>
                                         <div class="watch-url">@TruncateUrl(watch.Url)</div>
                                     </td>
-                                    <td class="meta-cell">
+                                    <td class="meta-cell text-right hide-mobile">
+                                        @if (watch.NeedsPipelineSetup)
+                                        {
+                                            <a href="@($"setup?input={Uri.EscapeDataString(watch.Url)}")"
+                                               class="item-count-badge badge-setup"
+                                               title="This watch needs pipeline setup before it can check for changes"
+                                               @onclick:stopPropagation>🔧 Setup</a>
+                                        }
+                                        else
+                                        {
+                                            var quality = watch.ExtractionQuality ?? (IsDegraded(watch) ? "empty" : null);
+                                            if (quality == "failed")
+                                            {
+                                                <span class="item-count-badge badge-error" title="Pipeline failed">❌ err</span>
+                                            }
+                                            else if (quality == "empty")
+                                            {
+                                                <span class="item-count-badge badge-warning" title="0 items extracted after check — may be broken">⚠️ 0</span>
+                                            }
+                                            else if (watch.LatestItemCount.HasValue)
+                                            {
+                                                <span class="item-count-badge badge-success-subtle" title="@watch.LatestItemCount items extracted">✅ @watch.LatestItemCount</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        }
+                                    </td>
+                                    <td class="meta-cell hide-mobile">
                                         @if (watch.LastCheck.HasValue)
                                         {
                                             <span title="@watch.LastCheck">@FormatTimeAgo(watch.LastCheck.Value)</span>
@@ -284,7 +342,7 @@
                                             <span class="text-muted">-</span>
                                         }
                                     </td>
-                                    <td class="meta-cell">
+                                    <td class="meta-cell hide-mobile">
                                         @if (watch.LatestChangeAt.HasValue)
                                         {
                                             <span class="change-time" title="@watch.LatestChangeAt">@FormatTimeAgo(watch.LatestChangeAt.Value)</span>
@@ -713,6 +771,8 @@
 
     // Cache fields for health counts
     private (int healthy, int checking, int error, int paused) _healthCounts;
+    private int _degradedCount;
+    private int _setupNeededCount;
     private bool _healthCountsValid;
 
     private IReadOnlyList<WatchListItemDto> FilteredWatches
@@ -749,9 +809,23 @@
             {
                 query = query.Where(w => !w.IsEnabled);
             }
+            else if (activeStatusFilter == "Degraded")
+            {
+                query = query.Where(IsDegraded);
+            }
+            else if (activeStatusFilter == "SetupNeeded")
+            {
+                query = query.Where(NeedsSetup);
+            }
+            else if (activeStatusFilter == "Error")
+            {
+                query = query.Where(IsErrored);
+            }
             else if (activeStatusFilter != null)
             {
-                query = query.Where(w => w.Status == activeStatusFilter);
+                query = activeStatusFilter == "Active"
+                    ? query.Where(IsHealthy)
+                    : query.Where(w => w.Status == activeStatusFilter);
             }
 
             _cachedFilteredWatches = query.OrderByDescending(w => w.LastCheck).ToList();
@@ -775,12 +849,16 @@
     {
         if (_healthCountsValid) return;
 
-        int healthy = 0, checking = 0, error = 0, paused = 0;
+        int healthy = 0, checking = 0, error = 0, paused = 0, degraded = 0, setupNeeded = 0;
 
         foreach (var w in watches)
         {
             // Categories are MUTUALLY EXCLUSIVE - each watch counts in exactly ONE category
-            if (!w.IsEnabled)
+            if (NeedsSetup(w))
+            {
+                setupNeeded++;
+            }
+            else if (!w.IsEnabled)
             {
                 // Disabled/Paused takes precedence
                 paused++;
@@ -790,21 +868,63 @@
                 // Currently checking
                 checking++;
             }
-            else if (w.Status == "Error")
+            else if (IsErrored(w))
             {
-                // Has error STATUS (not just LastError - LastError could be stale)
                 error++;
+            }
+            else if (IsDegraded(w))
+            {
+                degraded++;
             }
             else
             {
-                // Everything else is healthy (Active, Success, etc.)
                 healthy++;
             }
         }
 
         _healthCounts = (healthy, checking, error, paused);
+        _degradedCount = degraded;
+        _setupNeededCount = setupNeeded;
         _healthCountsValid = true;
     }
+
+    private bool IsHealthy(WatchListItemDto w)
+        => !w.NeedsPipelineSetup
+           && (string.Equals(w.HealthStatus, "Healthy", StringComparison.OrdinalIgnoreCase)
+               || (string.IsNullOrWhiteSpace(w.HealthStatus)
+                   && w.IsEnabled
+                   && w.Status == "Active"
+                   && !IsDegraded(w)
+                   && !IsErrored(w)));
+
+    private bool IsErrored(WatchListItemDto w)
+        => !w.NeedsPipelineSetup
+           && (string.Equals(w.HealthStatus, "Errored", StringComparison.OrdinalIgnoreCase)
+               || (string.IsNullOrWhiteSpace(w.HealthStatus)
+                   && (w.Status == "Error" || w.ExtractionQuality == "failed")));
+
+    private bool IsDegraded(WatchListItemDto w)
+        => !w.NeedsPipelineSetup
+           && (string.Equals(w.HealthStatus, "Degraded", StringComparison.OrdinalIgnoreCase)
+               || (string.IsNullOrWhiteSpace(w.HealthStatus)
+                   && w.IsEnabled
+                   && w.Status != "Error"
+                   && w.Status != "Checking"
+                   && w.LastCheck.HasValue
+                   && w.LatestItemCount is 0));
+
+    private static bool NeedsSetup(WatchListItemDto w)
+        => w.NeedsPipelineSetup
+           || string.Equals(w.HealthStatus, "SetupNeeded", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetHealthTitle(WatchListItemDto watch)
+        => watch.HealthStatus switch
+        {
+            "Errored" => "Errored — latest check failed",
+            "Degraded" => "Degraded — latest check needs attention",
+            "SetupNeeded" => "Setup needed — configure this watch to start monitoring",
+            _ => watch.Status
+        };
 
     private int GetHealthyCount() { UpdateHealthCounts(); return _healthCounts.healthy; }
 
@@ -813,6 +933,10 @@
     private int GetErrorCount() { UpdateHealthCounts(); return _healthCounts.error; }
 
     private int GetPausedCount() { UpdateHealthCounts(); return _healthCounts.paused; }
+
+    private int GetDegradedCount() { UpdateHealthCounts(); return _degradedCount; }
+
+    private int GetSetupNeededCount() { UpdateHealthCounts(); return _setupNeededCount; }
 
     private bool IsHealthFilterActive(string? filter)
     {
@@ -1184,14 +1308,29 @@
         try
         {
             // Trigger check for all enabled watches
-            // Note: This might be heavy if there are many watches. Ideally backend should have a "Check All" endpoint.
-            // For now, we trigger them individually in parallel.
             var tasks = watches.Where(w => w.IsEnabled).Select(w => TriggerCheck(w.Id));
             await Task.WhenAll(tasks);
+
+            // Poll for updates until all checks complete
+            const int maxPolls = 60; // 5 minutes max (60 × 5s)
+            for (var i = 0; i < maxPolls; i++)
+            {
+                await Task.Delay(5000);
+                await LoadWatches();
+                InvalidateCache();
+                StateHasChanged();
+
+                // Stop polling when no watches are still checking
+                if (!watches.Any(w => w.Status == "Checking"))
+                    break;
+            }
         }
         finally
         {
             isCheckingAll = false;
+            // Final refresh to ensure latest state
+            await LoadWatches();
+            InvalidateCache();
             StateHasChanged();
         }
     }

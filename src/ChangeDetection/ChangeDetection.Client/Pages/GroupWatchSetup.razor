@@ -5,7 +5,7 @@
 @inject NavigationManager Navigation
 @implements IAsyncDisposable
 
-<PageTitle>Group Watch Setup - Change Detection</PageTitle>
+<PageTitle>Group Setup — Sentinel</PageTitle>
 
 <div class="groupwatch-container">
     <header class="page-header">
@@ -133,6 +133,23 @@
                         </div>
                     }
                 </div>
+
+                @* ── Agent questions (inline during discovery) ── *@
+                @foreach (var aq in _agentQuestions)
+                {
+                    @if (aq.IsResearchPrompt)
+                    {
+                        <ResearchPromptCard Question="@aq.Question"
+                                            OnResponse="@(r => HandleAgentResponse(aq, r))"
+                                            OnSkip="@(() => HandleAgentSkip(aq))" />
+                    }
+                    else
+                    {
+                        <AgentQuestionCard Question="@aq.Question"
+                                           OnResponse="@(r => HandleAgentResponse(aq, r))"
+                                           OnSkip="@(() => HandleAgentSkip(aq))" />
+                    }
+                }
             </div>
         </div>
     }
@@ -189,9 +206,17 @@
 
             <div class="confirmation-actions">
                 <button class="btn btn-primary"
-                        disabled="@(!_discoveredPortals.Any(p => p.Selected))"
+                        disabled="@(_isCreating || !_discoveredPortals.Any(p => p.Selected))"
                         @onclick="CreateWatches">
-                    🚀 Create Watches (@_discoveredPortals.Count(p => p.Selected) selected)
+                    @if (_isCreating)
+                    {
+                        <span class="spinner-inline"></span>
+                        <span>Creating…</span>
+                    }
+                    else
+                    {
+                        <span>🚀 Create Watches (@_discoveredPortals.Count(p => p.Selected) selected)</span>
+                    }
                 </button>
                 <button class="btn btn-outline" @onclick="GoBackToInput">
                     ← Change query
@@ -257,14 +282,51 @@
             <div class="complete-card">
                 <div class="complete-icon" aria-hidden="true">🎉</div>
                 <h2>Group created!</h2>
-                <p class="complete-message">
-                    Monitoring @_creationCompleted portal(s). You'll be notified when matching jobs are found.
-                </p>
+
+                @{
+                    var autoMonitoring = _creationCompleted - _needsSetupPortals.Count;
+                }
+
+                @if (autoMonitoring > 0)
+                {
+                    <p class="complete-message">
+                        ✅ <strong>@autoMonitoring portal(s)</strong> are monitoring automatically.
+                        You'll be notified when matching jobs are found.
+                    </p>
+                }
+
+                @if (_needsSetupPortals.Count > 0)
+                {
+                    <div class="complete-warning">
+                        <h3>⚠️ @_needsSetupPortals.Count portal(s) need individual setup:</h3>
+                        <p class="setup-hint">These portals don't have a known template. Set each one up to start monitoring.</p>
+                        <ul class="failed-portal-list">
+                            @foreach (var portal in _needsSetupPortals)
+                            {
+                                <li>
+                                    <strong>@portal.Domain</strong>
+                                    <a href="@($"setup?input={Uri.EscapeDataString(portal.Url)}")" class="btn btn-sm btn-outline setup-link">
+                                        🔧 Set up
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
 
                 @if (_failedPortals > 0)
                 {
                     <div class="complete-warning">
-                        <span>⚠️</span> @_failedPortals portal(s) could not be set up and were skipped.
+                        <h3>❌ @_failedPortals portal(s) could not be created:</h3>
+                        <ul class="failed-portal-list">
+                            @foreach (var failure in _failedPortalDetails)
+                            {
+                                <li>
+                                    <strong>@failure.Name</strong>
+                                    <span class="failure-reason">— @failure.Reason</span>
+                                </li>
+                            }
+                        </ul>
                     </div>
                 }
 
@@ -291,7 +353,7 @@
     {
         <div class="connecting-indicator" role="status" aria-live="polite">
             <span class="spinner-sm" aria-hidden="true"></span>
-            <span>Connecting... @_connectionDebug</span>
+            <span>Connecting...</span>
         </div>
     }
     @if (_hasError)
@@ -318,12 +380,15 @@
     private bool _isDiscovering;
     private bool _hasError;
     private string? _errorMessage;
-    private string? _connectionDebug;
     private bool _hasRendered;
+    private bool _isCreating;
     private ElementReference _inputElement;
 
     // Discovery
     private List<ProgressStep> _progressSteps = [];
+
+    // Agent questions (inline during discovery)
+    private readonly List<AgentQuestionEntry> _agentQuestions = [];
 
     // Confirmation
     private List<PortalSelection> _discoveredPortals = [];
@@ -333,6 +398,8 @@
     private int _creationTotal;
     private int _failedPortals;
     private List<ProgressStep> _creationItems = [];
+    private List<FailedPortalDetail> _failedPortalDetails = [];
+    private List<SetupNeededPortalDto> _needsSetupPortals = [];
     private string? _groupId;
     private List<string> _watchIds = [];
 
@@ -366,7 +433,6 @@
     private async Task ConnectToHub()
     {
         var hubUrl = Navigation.ToAbsoluteUri("/hubs/group-watch").ToString();
-        _connectionDebug = hubUrl;
 
         _hubConnection = new HubConnectionBuilder()
             .WithUrl(hubUrl)
@@ -401,18 +467,25 @@
             await InvokeAsync(StateHasChanged);
         };
 
+        _hubConnection.On<System.Text.Json.JsonElement>("PushQuestion", async json =>
+        {
+            var question = ParseAgentQuestion(json);
+            if (question is null) return;
+            var entry = new AgentQuestionEntry(question, IsResearchPrompt: IsResearchQuestion(question));
+            _agentQuestions.Add(entry);
+            await InvokeAsync(StateHasChanged);
+        });
+
         try
         {
             using var connectionCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await _hubConnection.StartAsync(connectionCts.Token);
             _isConnected = true;
-            _connectionDebug = $"Connected to {hubUrl}";
         }
         catch (Exception ex)
         {
             _hasError = true;
             _errorMessage = $"{ex.GetType().Name}: {ex.Message}";
-            _connectionDebug = $"Failed: {ex.GetType().Name} → {hubUrl}";
         }
 
     await InvokeAsync(StateHasChanged);
@@ -502,7 +575,7 @@
 
     private async Task CreateWatches()
     {
-        if (_hubConnection is null || !_isConnected) return;
+        if (_isCreating || _hubConnection is null || !_isConnected) return;
 
         var selectedPortals = _discoveredPortals
             .Where(p => p.Selected)
@@ -511,6 +584,7 @@
 
         if (selectedPortals.Count == 0) return;
 
+        _isCreating = true;
         _phase = Phase.Creating;
         _creationTotal = selectedPortals.Count;
         _creationCompleted = 0;
@@ -535,9 +609,13 @@
                 await OnProgressReceived(progress);
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            _isCreating = false;
+        }
         catch (Exception ex)
         {
+            _isCreating = false;
             _hasError = true;
             _errorMessage = GetFriendlyErrorMessage(ex, "stream");
             await InvokeAsync(StateHasChanged);
@@ -567,6 +645,7 @@
                 break;
 
             case "PortalsReady":
+                _isDiscovering = false;
                 // All discovery steps complete — transition to confirmation
                 UpdateDiscoveryStep(2, StepStatus.Completed);
 
@@ -576,10 +655,10 @@
                     {
                         Url = p.Url,
                         Name = p.Name,
-                        Platform = p.Platform,
+                        Platform = p.PlatformId,
                         Reasoning = p.Reasoning,
                         Recommended = p.Recommended,
-                        Selected = p.Recommended
+                        Selected = true
                     }).ToList();
 
                     _phase = Phase.Confirmation;
@@ -596,26 +675,66 @@
                 if (progress is { CompletedCount: not null, TotalCount: not null })
                 {
                     _creationTotal = progress.TotalCount.Value;
+                    var prevCompleted = _creationCompleted;
                     _creationCompleted = progress.CompletedCount.Value;
+                    var isFailure = progress.Message.Contains("⚠️") ||
+                        progress.Message.StartsWith("Skipped ", StringComparison.Ordinal) ||
+                        progress.Message.StartsWith("Failed ", StringComparison.Ordinal);
 
-                    // Update individual creation items
-                    for (var i = 0; i < _creationItems.Count; i++)
+                    // A new portal just finished (completedCount advanced)
+                    if (_creationCompleted > prevCompleted && _creationCompleted > 0)
                     {
-                        if (i < _creationCompleted)
-                            _creationItems[i] = _creationItems[i] with { Status = StepStatus.Completed };
-                        else if (i == _creationCompleted)
-                            _creationItems[i] = _creationItems[i] with
+                        var justFinishedIdx = _creationCompleted - 1;
+                        if (justFinishedIdx >= 0 && justFinishedIdx < _creationItems.Count)
+                        {
+                            if (isFailure)
                             {
-                                Status = StepStatus.Active,
-                                Detail = progress.Message
-                            };
+                                _creationItems[justFinishedIdx] = _creationItems[justFinishedIdx] with
+                                {
+                                    Status = StepStatus.Failed,
+                                    Detail = progress.Message
+                                };
+                                _failedPortals++;
+                                _failedPortalDetails.Add(new FailedPortalDetail(
+                                    _creationItems[justFinishedIdx].Label, progress.Message));
+                            }
+                            else
+                            {
+                                _creationItems[justFinishedIdx] = _creationItems[justFinishedIdx] with
+                                {
+                                    Status = StepStatus.Completed,
+                                    Detail = null
+                                };
+                            }
+                        }
+                    }
+
+                    // Mark the next portal as active
+                    if (_creationCompleted < _creationItems.Count)
+                    {
+                        _creationItems[_creationCompleted] = _creationItems[_creationCompleted] with
+                        {
+                            Status = StepStatus.Active,
+                            Detail = progress.Message
+                        };
                     }
                 }
                 break;
 
             case "Complete":
+                _isDiscovering = false;
+
+                if (_phase == Phase.Discovery && progress.GroupId is null)
+                {
+                    _hasError = true;
+                    _errorMessage = progress.Message;
+                    _phase = Phase.Input;
+                    break;
+                }
+
                 _groupId = progress.GroupId;
                 _watchIds = progress.WatchIds ?? [];
+                _needsSetupPortals = progress.NeedsSetupPortals ?? [];
                 _creationCompleted = _creationItems.Count(i => i.Status == StepStatus.Completed);
 
                 // Mark any remaining as completed
@@ -631,6 +750,7 @@
                 break;
 
             case "Error":
+                _isDiscovering = false;
                 _hasError = true;
                 _errorMessage = progress.Message;
 
@@ -671,6 +791,103 @@
         };
     }
 
+    // ── Agent question handling ──
+
+    private async Task HandleAgentResponse(AgentQuestionEntry entry, AgentQuestionCard.AgentResponseDto response)
+    {
+        if (_hubConnection is null || !_isConnected) return;
+
+        try
+        {
+            await _hubConnection.InvokeAsync("SubmitResponse", response, _cts.Token);
+            _agentQuestions.Remove(entry);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _hasError = true;
+            _errorMessage = $"Failed to submit response: {ex.Message}";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task HandleAgentSkip(AgentQuestionEntry entry)
+    {
+        if (_hubConnection is null || !_isConnected) return;
+
+        try
+        {
+            var skipResponse = new AgentQuestionCard.AgentResponseDto
+            {
+                QuestionId = entry.Question.Id,
+                Skipped = true
+            };
+            await _hubConnection.InvokeAsync("SubmitResponse", skipResponse, _cts.Token);
+            _agentQuestions.Remove(entry);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* best-effort skip */ }
+    }
+
+    private static bool IsResearchQuestion(AgentQuestionCard.AgentQuestionDto question)
+        => question.InputType == AgentQuestionCard.AgentInputType.Resource
+           && question.Context is not null
+           && question.Context.Contains("external", StringComparison.OrdinalIgnoreCase);
+
+    private static AgentQuestionCard.AgentQuestionDto? ParseAgentQuestion(System.Text.Json.JsonElement json)
+    {
+        try
+        {
+            var opts = new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var id = json.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+            var message = json.TryGetProperty("message", out var msgProp) ? msgProp.GetString() ?? "" : "";
+            var context = json.TryGetProperty("context", out var ctxProp) ? ctxProp.GetString() : null;
+            var priority = json.TryGetProperty("priority", out var priProp) ? priProp.ToString() : "Optional";
+
+            var dto = new AgentQuestionCard.AgentQuestionDto
+            {
+                Id = id,
+                Message = message,
+                Context = context,
+                Priority = priority
+            };
+
+            if (json.TryGetProperty("input", out var inputEl) && inputEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                // Detect input type from properties present
+                if (inputEl.TryGetProperty("options", out var optionsProp))
+                {
+                    dto.InputType = AgentQuestionCard.AgentInputType.Choice;
+                    dto.Multiple = inputEl.TryGetProperty("multiple", out var mulProp) && mulProp.GetBoolean();
+                    dto.Options = System.Text.Json.JsonSerializer.Deserialize<List<AgentQuestionCard.AgentChoiceOptionDto>>(
+                        optionsProp.GetRawText(), opts) ?? [];
+                }
+                else if (inputEl.TryGetProperty("acceptedInputs", out _))
+                {
+                    dto.InputType = AgentQuestionCard.AgentInputType.Resource;
+                    dto.AcceptedInputs = inputEl.TryGetProperty("acceptedInputs", out var accProp)
+                        ? System.Text.Json.JsonSerializer.Deserialize<List<string>>(accProp.GetRawText(), opts) ?? []
+                        : [];
+                }
+                else
+                {
+                    dto.InputType = AgentQuestionCard.AgentInputType.Text;
+                    dto.Multiline = inputEl.TryGetProperty("multiline", out var mlProp) && mlProp.GetBoolean();
+                }
+            }
+
+            return dto;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // ── UI helpers ──
 
     private void TogglePortal(int index)
@@ -683,18 +900,24 @@
 
     private void GoBackToInput()
     {
+        _isCreating = false;
         _phase = Phase.Input;
         _discoveredPortals.Clear();
+        _agentQuestions.Clear();
         _hasError = false;
         _errorMessage = null;
     }
 
     private void CreateAnother()
     {
+        _isCreating = false;
         _phase = Phase.Input;
         _userInput = "";
         _discoveredPortals.Clear();
         _creationItems.Clear();
+        _failedPortalDetails.Clear();
+        _needsSetupPortals = [];
+        _agentQuestions.Clear();
         _groupId = null;
         _watchIds.Clear();
         _creationCompleted = 0;
@@ -774,6 +997,10 @@
 
     private record ProgressStep(string Label, StepStatus Status, string? Detail = null);
 
+    private record AgentQuestionEntry(
+        AgentQuestionCard.AgentQuestionDto Question,
+        bool IsResearchPrompt = false);
+
     private class PortalSelection
     {
         public string Url { get; init; } = "";
@@ -793,18 +1020,30 @@
         int? TotalCount,
         List<DiscoveredPortalDto>? Portals,
         string? GroupId,
-        List<string>? WatchIds);
+        List<string>? WatchIds,
+        List<SetupNeededPortalDto>? NeedsSetupPortals = null);
+
+    private record SetupNeededPortalDto(
+        string WatchId,
+        string Url,
+        string Domain);
 
     private record DiscoveredPortalDto(
         string Url,
-        string Name,
-        string? Platform,
+        string? Title,
+        string? PlatformId,
         string? Reasoning,
-        bool Recommended);
+        bool Recommended)
+    {
+        // Map Title to Name for display convenience
+        public string Name => Title ?? new Uri(Url).Host;
+    };
 
     private record ConfirmedPortalDto(
         string Url,
         string? Name,
         string? PlatformId,
         string? Reasoning);
+
+    private record FailedPortalDetail(string Name, string Reason);
 }

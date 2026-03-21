@@ -260,6 +260,29 @@
     background: var(--color-text-light);
 }
 
+.status-degraded {
+    background: var(--color-warning);
+    box-shadow: 0 0 0 2px rgba(var(--color-warning-rgb), 0.2);
+}
+
+.status-setup-needed {
+    background: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb, 99, 102, 241), 0.2);
+    animation: pulse-status 2s ease-in-out infinite;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 @keyframes pulse-status {
     0%, 100% {
         opacity: 1;
@@ -338,4 +361,123 @@
 .input-lg {
     padding: var(--spacing-3) var(--spacing-4);
     font-size: var(--font-size-lg);
+}
+
+/* ===== Pipeline Health Observability ===== */
+
+/* -- Pipeline Health Section (WatchDetail) -- */
+.pipeline-health-section .pipeline-summary {
+    margin-bottom: var(--spacing-4);
+}
+
+.pipeline-summary-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    flex-wrap: wrap;
+}
+
+.pipeline-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1);
+    padding: var(--spacing-1) var(--spacing-3);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.pipeline-status-badge.badge-success {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--color-success);
+}
+
+.pipeline-status-badge.badge-error {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--color-error);
+}
+
+.pipeline-status-badge.badge-warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--color-warning);
+}
+
+.pipeline-meta {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-light);
+}
+
+.pipeline-health-section .schema-fields-table table {
+    width: 100%;
+}
+
+.pipeline-health-section tr.row-error {
+    background: rgba(239, 68, 68, 0.06);
+}
+
+.pipeline-health-section tr.row-skipped {
+    opacity: 0.65;
+}
+
+/* -- Portal Pipeline Indicators (GroupWatchResults) -- */
+.portal-row.portal-warning {
+    border-left: 3px solid var(--color-warning);
+    background: rgba(245, 158, 11, 0.04);
+}
+
+.portal-pipeline-health {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1);
+}
+
+.pipeline-indicator {
+    font-size: var(--font-size-xs);
+    padding: 1px var(--spacing-2);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+}
+
+.pipeline-indicator-ok {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--color-success);
+}
+
+.pipeline-indicator-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--color-error);
+}
+
+/* -- Extraction Quality Badge (Dashboard) -- */
+.item-count-badge.badge-success-subtle {
+    background: rgba(16, 185, 129, 0.10);
+    color: var(--color-success);
+}
+
+.item-count-badge.badge-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--color-error);
+}
+
+.item-count-badge.badge-setup {
+    background: rgba(99, 102, 241, 0.12);
+    color: var(--color-primary);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.item-count-badge.badge-setup:hover {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.setup-link {
+    margin-left: var(--spacing-2);
+    font-size: var(--font-size-xs);
+    text-decoration: none;
+}
+
+.setup-hint {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    margin-bottom: var(--spacing-3);
 }
