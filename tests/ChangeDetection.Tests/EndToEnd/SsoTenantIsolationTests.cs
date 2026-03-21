@@ -148,7 +148,6 @@ public class SsoTenantIsolationTests : IAsyncDisposable
                         
                         // Remove hosted services to keep tests deterministic (no background checks, no seeders).
                         services.RemoveAll<IHostedService>();
-                        services.RemoveAll<IHostedService>();
 
                         // Override fetcher with a deterministic, mutable in-memory implementation.
                         services.RemoveAll<IContentFetcher>();
