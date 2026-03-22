@@ -14,8 +14,8 @@ public class CopilotKernelFactory : ILlmKernelFactory, IAsyncDisposable
 {
     private readonly ILogger<CopilotKernelFactory> _logger;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly object _clientGate = new();
     private CopilotClient? _client;
-    private readonly SemaphoreSlim _clientLock = new(1, 1);
     private bool _disposed;
 
     public LlmProviderType ProviderType => LlmProviderType.Copilot;
@@ -30,13 +30,12 @@ public class CopilotKernelFactory : ILlmKernelFactory, IAsyncDisposable
     /// Gets or creates the shared CopilotClient instance.
     /// The client manages the Copilot CLI process lifecycle.
     /// </summary>
-    private async Task<CopilotClient> GetOrCreateClientAsync()
+    private CopilotClient GetOrCreateClient()
     {
         if (_client is not null)
             return _client;
 
-        await _clientLock.WaitAsync();
-        try
+        lock (_clientGate)
         {
             if (_client is not null)
                 return _client;
@@ -54,25 +53,21 @@ public class CopilotKernelFactory : ILlmKernelFactory, IAsyncDisposable
 
             return _client;
         }
-        finally
-        {
-            _clientLock.Release();
-        }
     }
 
     public Kernel CreateKernel(LlmProviderConfig config, HttpClient httpClient)
     {
-        // Get or create the shared client (synchronously wait since interface is sync)
-        var client = GetOrCreateClientAsync().GetAwaiter().GetResult();
+        var client = GetOrCreateClient();
 
         // Determine model - use config model or default to gpt-5 (available via Copilot CLI)
         var model = !string.IsNullOrEmpty(config.Model) ? config.Model : "gpt-5";
 
-        // Create the chat completion service adapter
+        // Create the chat completion service adapter, passing the provider's timeout
         var chatService = new CopilotChatCompletionService(
             client,
             model,
-            _loggerFactory.CreateLogger<CopilotChatCompletionService>());
+            _loggerFactory.CreateLogger<CopilotChatCompletionService>(),
+            timeoutSeconds: config.TimeoutSeconds);
 
         // Build kernel with our adapter service
         var builder = Kernel.CreateBuilder();
@@ -103,8 +98,6 @@ public class CopilotKernelFactory : ILlmKernelFactory, IAsyncDisposable
                 _logger.LogWarning(ex, "Error disposing CopilotClient");
             }
         }
-
-        _clientLock.Dispose();
         GC.SuppressFinalize(this);
     }
 }

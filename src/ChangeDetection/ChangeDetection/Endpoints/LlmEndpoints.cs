@@ -81,7 +81,61 @@ public static class LlmEndpoints
             .WithName("StartSetup")
             .Produces<StartSetupResponse>(201);
 
+        group.MapPost("/copilot-test", CopilotTest)
+            .WithName("CopilotTest")
+            .WithDescription("Direct Copilot SDK test — bypasses pipeline and circuit breaker");
+
         return group;
+    }
+
+    /// <summary>
+    /// Direct test of the Copilot SDK — sends a simple prompt and waits for response.
+    /// Bypasses the LLM provider chain, circuit breaker, and pipeline.
+    /// </summary>
+    private static async Task<IResult> CopilotTest(
+        ILlmProviderChain llmProvider,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var logger = loggerFactory.CreateLogger("CopilotTest");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        logger.LogInformation("CopilotTest: Starting direct SDK test");
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(60));
+            
+            var response = await llmProvider.ExecuteAsync(
+                "Reply with exactly: COPILOT_SDK_OK",
+                new LlmRequestOptions { MaxTokens = 50, Temperature = 0 },
+                cts.Token);
+
+            sw.Stop();
+            return Results.Ok(new
+            {
+                success = response.IsSuccess,
+                content = response.Content,
+                provider = response.ProviderUsed,
+                model = response.Model,
+                durationMs = sw.ElapsedMilliseconds,
+                error = response.ErrorMessage
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            logger.LogError(ex, "CopilotTest: Failed after {Duration}ms", sw.ElapsedMilliseconds);
+            return Results.Ok(new
+            {
+                success = false,
+                content = (string?)null,
+                provider = (string?)null,
+                model = (string?)null,
+                durationMs = sw.ElapsedMilliseconds,
+                error = $"{ex.GetType().Name}: {ex.Message}"
+            });
+        }
     }
 
     /// <summary>

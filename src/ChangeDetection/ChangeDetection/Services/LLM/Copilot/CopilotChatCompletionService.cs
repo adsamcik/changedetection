@@ -13,8 +13,8 @@ public class CopilotChatCompletionService : IChatCompletionService
 {
     private readonly CopilotClient _client;
     private readonly string _model;
+    private readonly int _timeoutSeconds;
     private readonly ILogger<CopilotChatCompletionService>? _logger;
-    private bool _clientStarted;
     
     /// <summary>
     /// Model attributes exposed to Semantic Kernel.
@@ -24,11 +24,13 @@ public class CopilotChatCompletionService : IChatCompletionService
     public CopilotChatCompletionService(
         CopilotClient client,
         string model,
-        ILogger<CopilotChatCompletionService>? logger = null)
+        ILogger<CopilotChatCompletionService>? logger = null,
+        int timeoutSeconds = 60)
     {
         _client = client;
         _model = model;
         _logger = logger;
+        _timeoutSeconds = timeoutSeconds;
         Attributes = new Dictionary<string, object?>
         {
             ["ModelId"] = model,
@@ -37,14 +39,35 @@ public class CopilotChatCompletionService : IChatCompletionService
     }
 
     /// <summary>
-    /// Ensures the client is started before making requests.
+    /// Ensures the client is started and responsive before making requests.
+    /// Uses CopilotClient.State (live connection state) instead of a per-instance flag,
+    /// since a new CopilotChatCompletionService is created for each request
+    /// while the CopilotClient is a singleton.
     /// </summary>
     private async Task EnsureClientStartedAsync(CancellationToken ct)
     {
-        if (_clientStarted) return;
+        // Check the client's live connection state (not a per-instance flag)
+        if (_client.State == ConnectionState.Connected)
+        {
+            _logger?.LogDebug("Copilot client already connected (state: {State})", _client.State);
+            return;
+        }
         
-        await _client.StartAsync();
-        _clientStarted = true;
+        _logger?.LogInformation("Copilot client not connected (state: {State}), starting...", _client.State);
+        
+        using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        startCts.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            await _client.StartAsync(startCts.Token);
+        }
+        catch (OperationCanceledException) when (startCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Copilot SDK client did not start within 15 seconds (state: {_client.State})");
+        }
+        
+        _logger?.LogInformation("Copilot client started (state: {State})", _client.State);
     }
 
     /// <inheritdoc />
@@ -57,6 +80,7 @@ public class CopilotChatCompletionService : IChatCompletionService
         await EnsureClientStartedAsync(cancellationToken);
 
         // Create a session for this request (disable infinite sessions for simpler lifecycle)
+        _logger?.LogDebug("Creating non-streaming session with model {Model}", _model);
         var session = await _client.CreateSessionAsync(new SessionConfig
         {
             Model = _model,
@@ -66,6 +90,7 @@ public class CopilotChatCompletionService : IChatCompletionService
         });
 
         var sessionId = session.SessionId;
+        _logger?.LogInformation("Created non-streaming session {SessionId} (model: {Model})", sessionId, _model);
         try
         {
             // Build prompt from chat history
@@ -75,32 +100,76 @@ public class CopilotChatCompletionService : IChatCompletionService
             string responseContent = "";
             var completionSource = new TaskCompletionSource<string>();
 
-            // Subscribe to events
+            // Subscribe to events — log ALL events for diagnostics
+            var eventCount = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             using var subscription = session.On(evt =>
             {
+                eventCount++;
+                _logger?.LogDebug("Session {SessionId} event #{Count} [{Elapsed}ms]: {EventType}",
+                    sessionId, eventCount, sw.ElapsedMilliseconds, evt.GetType().Name);
+
                 switch (evt)
                 {
                     case AssistantMessageEvent msg:
+                        _logger?.LogInformation(
+                            "Session {SessionId}: AssistantMessageEvent received ({Length} chars)",
+                            sessionId, msg.Data.Content?.Length ?? 0);
                         responseContent = msg.Data.Content ?? "";
                         break;
                     case SessionIdleEvent:
+                        _logger?.LogInformation(
+                            "Session {SessionId}: SessionIdleEvent — completing with {Length} chars",
+                            sessionId, responseContent.Length);
                         completionSource.TrySetResult(responseContent);
                         break;
                     case SessionErrorEvent err:
+                        _logger?.LogError(
+                            "Session {SessionId}: SessionErrorEvent — {Message}",
+                            sessionId, err.Data.Message);
                         completionSource.TrySetException(
                             new InvalidOperationException($"Copilot session error: {err.Data.Message}"));
+                        break;
+                    default:
+                        _logger?.LogDebug(
+                            "Session {SessionId}: Unhandled event type {EventType}",
+                            sessionId, evt.GetType().Name);
                         break;
                 }
             });
 
             // Handle cancellation
-            cancellationToken.Register(() => completionSource.TrySetCanceled(cancellationToken));
+            cancellationToken.Register(() =>
+            {
+                _logger?.LogWarning(
+                    "Session {SessionId}: Cancellation requested after {Elapsed}ms, {Events} events received",
+                    sessionId, sw.ElapsedMilliseconds, eventCount);
+                completionSource.TrySetCanceled(cancellationToken);
+            });
 
             // Send the message
+            _logger?.LogDebug("Session {SessionId}: Sending prompt ({Length} chars, model: {Model})",
+                sessionId, prompt.Length, _model);
             await session.SendAsync(new MessageOptions { Prompt = prompt });
+            _logger?.LogDebug("Session {SessionId}: SendAsync completed, awaiting events", sessionId);
 
-            // Wait for completion
-            var result = await completionSource.Task;
+            // Wait for completion with configurable timeout
+            var responseTask = completionSource.Task;
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(_timeoutSeconds), cancellationToken);
+            var completed = await Task.WhenAny(responseTask, timeoutTask);
+            if (completed == timeoutTask)
+            {
+                _logger?.LogWarning(
+                    "Session {SessionId}: TIMEOUT after {Timeout}s — {Events} events received, responseContent={HasContent}",
+                    sessionId, _timeoutSeconds, eventCount, responseContent.Length > 0);
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new TimeoutException(
+                    $"Copilot SDK did not respond within {_timeoutSeconds} seconds. " +
+                    $"Events received: {eventCount}, model: {_model}, " +
+                    $"client state: {_client.State}");
+            }
+
+            var result = await responseTask;
 
             return
             [
@@ -120,7 +189,7 @@ public class CopilotChatCompletionService : IChatCompletionService
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Failed to delete Copilot session {SessionId}", sessionId);
+                _logger?.LogWarning(ex, "Failed to delete Copilot session {SessionId}", sessionId);
             }
         }
     }
@@ -135,6 +204,7 @@ public class CopilotChatCompletionService : IChatCompletionService
         await EnsureClientStartedAsync(cancellationToken);
 
         // Create a streaming session (disable infinite sessions for simpler lifecycle)
+        _logger?.LogDebug("Creating streaming session with model {Model}", _model);
         var session = await _client.CreateSessionAsync(new SessionConfig
         {
             Model = _model,
@@ -144,6 +214,7 @@ public class CopilotChatCompletionService : IChatCompletionService
         });
 
         var sessionId = session.SessionId;
+        _logger?.LogInformation("Created streaming session {SessionId} (model: {Model})", sessionId, _model);
         try
         {
             // Build prompt from chat history
@@ -153,9 +224,15 @@ public class CopilotChatCompletionService : IChatCompletionService
             var channel = System.Threading.Channels.Channel.CreateUnbounded<StreamingChatMessageContent>();
             var writer = channel.Writer;
 
-            // Subscribe to streaming events
+            // Subscribe to streaming events — log ALL events for diagnostics
+            var streamEventCount = 0;
+            var streamSw = System.Diagnostics.Stopwatch.StartNew();
             using var subscription = session.On(evt =>
             {
+                streamEventCount++;
+                _logger?.LogDebug("Streaming session {SessionId} event #{Count} [{Elapsed}ms]: {EventType}",
+                    sessionId, streamEventCount, streamSw.ElapsedMilliseconds, evt.GetType().Name);
+
                 switch (evt)
                 {
                     case AssistantMessageDeltaEvent delta:
@@ -168,17 +245,31 @@ public class CopilotChatCompletionService : IChatCompletionService
                         writer.TryWrite(content);
                         break;
                     case SessionIdleEvent:
+                        _logger?.LogInformation(
+                            "Streaming session {SessionId}: SessionIdleEvent after {Events} events",
+                            sessionId, streamEventCount);
                         writer.TryComplete();
                         break;
                     case SessionErrorEvent err:
+                        _logger?.LogError(
+                            "Streaming session {SessionId}: SessionErrorEvent — {Message}",
+                            sessionId, err.Data.Message);
                         writer.TryComplete(
                             new InvalidOperationException($"Copilot session error: {err.Data.Message}"));
+                        break;
+                    default:
+                        _logger?.LogDebug(
+                            "Streaming session {SessionId}: Unhandled event {EventType}",
+                            sessionId, evt.GetType().Name);
                         break;
                 }
             });
 
             // Send the message
+            _logger?.LogDebug("Streaming session {SessionId}: Sending prompt ({Length} chars)",
+                sessionId, prompt.Length);
             await session.SendAsync(new MessageOptions { Prompt = prompt });
+            _logger?.LogDebug("Streaming session {SessionId}: SendAsync completed, awaiting stream", sessionId);
 
             // Yield streaming content
             await foreach (var content in channel.Reader.ReadAllAsync(cancellationToken))
@@ -196,7 +287,7 @@ public class CopilotChatCompletionService : IChatCompletionService
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Failed to delete Copilot session {SessionId}", sessionId);
+                _logger?.LogWarning(ex, "Failed to delete Copilot session {SessionId}", sessionId);
             }
         }
     }
