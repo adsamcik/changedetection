@@ -2,9 +2,12 @@ using ChangeDetection.Core;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
+using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services;
+using ChangeDetection.Services.Background;
 using ChangeDetection.Services.BlockExecution;
+using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.OutputCaching;
 using System.Text.Json;
@@ -435,7 +438,10 @@ public static class WatchEndpoints
         IBlockStateStore stateStore,
         IPipelineRunSummaryStore summaryStore,
         IWatchExecutionLock executionLock,
+        SetupFlowEnhancements setupFlow,
+        IRepository<WatchedSite> watchRepo,
         ILogger<Program> logger,
+        IComposableSetupPipeline? composableSetup,
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guidId))
@@ -450,6 +456,83 @@ public static class WatchEndpoints
 
         try
         {
+
+        // Auto-generate pipeline if missing (mirrors ChangeCheckBackgroundService logic)
+        if (string.IsNullOrEmpty(watch.PipelineDefinitionJson))
+        {
+            PipelineDefinition? pipeline = null;
+
+            // Step 1: Detect platform from URL and apply template
+            var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(watch.Url);
+            if (detectedPlatform is not null)
+            {
+                pipeline = await setupFlow.GetPlatformTemplateAsync(detectedPlatform, watch.Url, ct: ct);
+                if (pipeline is not null)
+                {
+                    logger.LogInformation(
+                        "TriggerCheck: auto-generated {Platform} platform pipeline for watch {WatchId}",
+                        detectedPlatform, watch.Id);
+                }
+            }
+
+            // Step 2: For group watches, attempt headless LLM pipeline building
+            if (pipeline is null && watch.GroupId.HasValue && composableSetup is not null)
+            {
+                const int maxHeadlessBuildAttempts = 2;
+                if (watch.HeadlessBuildAttempts < maxHeadlessBuildAttempts)
+                {
+                    try
+                    {
+                        logger.LogInformation(
+                            "TriggerCheck: attempting headless LLM pipeline build for watch {WatchId} ({Url}), attempt {Attempt}",
+                            watch.Id, watch.Url, watch.HeadlessBuildAttempts + 1);
+
+                        pipeline = await composableSetup.BuildPipelineHeadlessAsync(
+                            watch.Url, watch.UserIntent, ct);
+
+                        if (pipeline is not null)
+                        {
+                            logger.LogInformation(
+                                "TriggerCheck: headless LLM pipeline built successfully for watch {WatchId}: {BlockCount} blocks",
+                                watch.Id, pipeline.Blocks.Count);
+                            watch.NeedsPipelineSetup = false;
+                            watch.HeadlessBuildAttempts = 0;
+                            watch.LastError = null;
+                        }
+                        else
+                        {
+                            watch.HeadlessBuildAttempts++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex,
+                            "TriggerCheck: headless LLM pipeline build failed for watch {WatchId}, attempt {Attempt}",
+                            watch.Id, watch.HeadlessBuildAttempts + 1);
+                        watch.HeadlessBuildAttempts++;
+                    }
+                }
+
+                if (pipeline is null)
+                {
+                    watch.NeedsPipelineSetup = true;
+                    watch.LastError = watch.HeadlessBuildAttempts >= maxHeadlessBuildAttempts
+                        ? "Manual setup required — could not automatically identify listings on this page after multiple attempts"
+                        : "Could not automatically identify job listings on this page";
+                    watch.UpdatedAt = DateTime.UtcNow;
+                    await watchRepo.UpdateAsync(watch, ct);
+                    return Results.UnprocessableEntity(new { error = watch.LastError, needsSetup = true });
+                }
+            }
+
+            // Step 3: Fall back to basic pipeline
+            pipeline ??= ChangeCheckBackgroundService.GenerateBasicPipeline(watch.Url, watch.CssSelector);
+
+            // Persist generated pipeline
+            watch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+            watch.UpdatedAt = DateTime.UtcNow;
+            await watchRepo.UpdateAsync(watch, ct);
+        }
 
         // Pipeline-aware check: use pipeline executor if pipeline is defined
         if (!string.IsNullOrEmpty(watch.PipelineDefinitionJson))

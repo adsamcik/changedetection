@@ -285,7 +285,7 @@ public class ChangeCheckBackgroundService : BackgroundService
     /// Generates a basic pipeline definition for legacy watches that don't have one.
     /// Creates: Input → Navigate → ExtractSchema/HashCompare → Output
     /// </summary>
-    private static PipelineDefinition GenerateBasicPipeline(string url, string? cssSelector)
+    internal static PipelineDefinition GenerateBasicPipeline(string url, string? cssSelector)
     {
         var blocks = new List<BlockDefinition>
         {
@@ -732,6 +732,16 @@ public class ChangeCheckBackgroundService : BackgroundService
                     "Watch {WatchId} pipeline succeeded but returned empty data, resetting consecutive success counter",
                     watch.Id);
                 watch.ConsecutiveSuccessfulChecks = 0;
+
+                // After the first successful baseline, a 0-item result is suspicious — mark as
+                // degraded so the dashboard shows ⚠️ instead of ✅. This catches known-platform
+                // watches (e.g. Workday) that pass quality validation by design but return no items
+                // due to bad API parameters, changed site IDs, etc.
+                var isFirstRun = watch.TotalSuccessfulChecks == 0 && watch.TotalFailedChecks == 0;
+                if (!isFirstRun)
+                {
+                    watch.LastError = "Pipeline succeeded but extracted 0 items";
+                }
             }
 
             // Promote to Verified after 3+ consecutive successes with extracted items

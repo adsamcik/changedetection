@@ -414,6 +414,9 @@
         {
             _hasRendered = true;
 
+            // Connect eagerly so the "Connecting..." indicator resolves
+            await ConnectToHub();
+
             // If input was passed from SmartInput (unified entry point), pre-fill and auto-start
             if (!string.IsNullOrWhiteSpace(Input))
             {
