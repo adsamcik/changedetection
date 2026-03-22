@@ -6,6 +6,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Endpoints;
 using ChangeDetection.Hubs;
 using ChangeDetection.Services;
+using ChangeDetection.Services.AgentInteraction;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Background;
 using ChangeDetection.Services.BlockExecution;
@@ -26,6 +27,7 @@ using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.Search;
 using ChangeDetection.Services.Startup;
+using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Options;
 using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Services.Persistence.Migrations;
@@ -316,6 +318,11 @@ builder.Services.AddScoped<IPortalSuggestionService, PortalSuggestionService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
 builder.Services.AddScoped<IInputProcessor, InputProcessor>();
+builder.Services.AddScoped<IAgentInteractionContext, AgentInteractionContext>();
+builder.Services.AddScoped<AskUserService>();
+builder.Services.AddScoped<IAskUserService>(sp => sp.GetRequiredService<AskUserService>());
+builder.Services.AddScoped<IAgentResponseSink>(sp => sp.GetRequiredService<AskUserService>());
+builder.Services.AddScoped<IDelegateResearchService, DelegateResearchService>();
 
 // Notification outbox for reliable delivery
 builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepository>();
@@ -349,7 +356,6 @@ builder.Services.AddSingleton<IConversationSessionManager, ConversationSessionMa
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
 builder.Services.AddSingleton<DomainPinValidator>();
 builder.Services.AddSingleton<PipelineSecurityValidator>();
-builder.Services.AddSingleton<PipelineAuditService>();
 builder.Services.AddScoped<ExecutionBudget>();
 
 // Search provider configuration
@@ -398,6 +404,22 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
 });
 builder.Services.AddScoped<ISearchDiscoveryService, SearchDiscoveryService>();
 builder.Services.AddSingleton<MultiProviderSearchService>();
+// Copilot SDK-backed search — uses tool calling for grounded web search results.
+// Registered after MultiProviderSearchService so it can use other providers as fallback.
+builder.Services.AddSingleton<ISearchProvider>(sp =>
+{
+    var clientOptions = new CopilotClientOptions
+    {
+        AutoStart = true,
+        AutoRestart = true,
+        UseLoggedInUser = true,
+        Logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<CopilotClient>()
+    };
+    var client = new CopilotClient(clientOptions);
+    var multiProvider = sp.GetRequiredService<MultiProviderSearchService>();
+    var logger = sp.GetRequiredService<ILogger<CopilotSearchProvider>>();
+    return new CopilotSearchProvider(client, multiProvider, logger);
+});
 
 
 // Group Watch discovery service
@@ -417,6 +439,7 @@ builder.Services.AddSingleton<IPipelineTemplateRegistry, PipelineTemplateRegistr
 builder.Services.AddScoped<IPipelineValidator, PipelineValidator>();
 builder.Services.AddScoped<IPipelineExecutor, PipelineExecutor>();
 builder.Services.AddScoped<IBlockStateStore, LiteDbBlockStateStore>();
+builder.Services.AddScoped<IPipelineRunSummaryStore, LiteDbPipelineRunSummaryStore>();
 builder.Services.AddSingleton<PipelineReliabilityService>();
 builder.Services.AddScoped<ILlmCostTracker, LlmCostTracker>();
 builder.Services.AddSingleton<PipelineDegradationService>();

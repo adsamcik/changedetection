@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChangeDetection.Services.Search;
@@ -19,6 +20,7 @@ namespace ChangeDetection.Services.Search;
 public class LlmSearchProvider(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
+    IUrlValidator urlValidator,
     ILogger<LlmSearchProvider> logger) : ISearchProvider
 {
     private const int MaxSuggestions = 15;
@@ -105,11 +107,28 @@ public class LlmSearchProvider(
             Query: "{{query}}"
 
             Suggest up to {{MaxSuggestions}} URLs of real, existing websites that match this query.
-            Focus on well-known, established sites — career portals, job boards, company career pages, 
-            university vacancy pages, government job sites.
+            
+            Prioritize these types of sources (in order):
+            1. **Company career pages** — direct employer career/jobs pages (e.g. https://careers.novonordisk.com, https://jobs.takeda.com)
+            2. **Major job boards** — StepStone, Indeed, LinkedIn Jobs, Glassdoor, Monster, CareerBuilder, ZipRecruiter
+            3. **ATS platforms** — Workday, Greenhouse, Lever, SmartRecruiters, iCIMS career portals
+            4. **Regional/country-specific job boards** — based on the query's geographic context:
+               - Czech Republic: Jobs.cz, Prace.cz, StartupJobs.cz
+               - Germany: StepStone.de, Xing.com, Arbeitsagentur.de
+               - Denmark: Jobindex.dk, AcademicPositions.dk, JobsinCopenhagen.com
+               - Netherlands: Academictransfer.com, Indeed.nl, NationaleVacaturebank.nl
+               - Austria: Karriere.at, StepStone.at, AMS.at
+               - Belgium: StepStone.be, VDAB.be, Jobat.be
+               - Switzerland: Jobs.ch, SwissDevJobs.ch
+               - Scandinavia: Finn.no, AcademicPositions.com, NordicJobBoard.com
+               - France: Apec.fr, Indeed.fr, PoleEmploi.fr
+            5. **Specialized portals** — NatureJobs, Science Careers, BioSpace, MedJobsCafe, LifeSciencesHub
+            6. **University/research vacancy pages** — direct links to university job boards
+            7. **Government employment agencies** — national job services with vacancy listings
 
             For each suggestion, provide:
-            - url: the EXACT full URL (https://...) of the relevant page (not just the homepage)
+            - url: the EXACT full URL (https://...) of the relevant SEARCH RESULTS page or job listings page
+              (not just the homepage — include search parameters if possible, e.g. ?q=scientist&location=copenhagen)
             - title: the page/site name
             - reasoning: one sentence explaining why this matches the query
 
@@ -258,6 +277,14 @@ public class LlmSearchProvider(
         CancellationToken validationCt,
         CancellationToken callerCt)
     {
+        // SSRF protection: block private/internal URLs before making HTTP requests
+        var ssrfError = urlValidator.Validate(suggestion.Url);
+        if (ssrfError is not null)
+        {
+            logger.LogDebug("LLM suggestion URL blocked by SSRF validator: {Url} — {Error}", suggestion.Url, ssrfError);
+            return ValidationStatus.NotLive;
+        }
+
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(validationCt);

@@ -532,16 +532,38 @@ public class ChangeCheckBackgroundService : BackgroundService
                 if (filteredOutput.HasValue)
                     outputData = filteredOutput.Value;
 
-                // If ALL items were rejected, the pipeline is extracting garbage — mark as degraded
-                // so the next check can try to rebuild the pipeline via LLM
+                // If ALL items were rejected, the pipeline is extracting garbage.
+                // Don't immediately nuke the pipeline — a single bad extraction could be
+                // a transient page state. Only clear the pipeline after consecutive garbage
+                // to avoid the Active → Setup Needed regression (the headless rebuild path
+                // increments HeadlessBuildAttempts and eventually flags NeedsPipelineSetup).
                 if (totalItems > 0 && rejectedCount == totalItems)
                 {
-                    _logger.LogWarning(
-                        "Watch {WatchId} extraction produced only garbage ({Total} items rejected) — marking as NeedsPipelineRebuild",
-                        watch.Id, totalItems);
                     watch.ConsecutiveSuccessfulChecks = 0;
-                    watch.CatalogStatus = CatalogVerificationStatus.Degraded;
-                    watch.PipelineDefinitionJson = null; // Clear pipeline so it gets rebuilt on next check
+
+                    if (watch.CatalogStatus == CatalogVerificationStatus.Degraded)
+                    {
+                        // Already degraded from a previous check — persistent garbage.
+                        // NOW clear the pipeline for rebuild, and reset HeadlessBuildAttempts
+                        // so the LLM rebuilder gets fresh attempts instead of immediately
+                        // falling through to NeedsPipelineSetup.
+                        _logger.LogWarning(
+                            "Watch {WatchId} extraction produced only garbage for consecutive checks ({Total} items rejected) — clearing pipeline for rebuild",
+                            watch.Id, totalItems);
+                        watch.PipelineDefinitionJson = null;
+                        watch.HeadlessBuildAttempts = 0;
+                    }
+                    else
+                    {
+                        // First garbage extraction — mark as degraded but keep the pipeline.
+                        // The next check will retry with the same pipeline; if it produces
+                        // garbage again, the Degraded status will trigger a rebuild.
+                        _logger.LogWarning(
+                            "Watch {WatchId} extraction produced only garbage ({Total} items rejected) — marking as Degraded, will retry on next check",
+                            watch.Id, totalItems);
+                        watch.CatalogStatus = CatalogVerificationStatus.Degraded;
+                    }
+
                     await watchRepo.UpdateAsync(watch, ct);
 
                     await hubContext.Clients.Group(dashboardGroup).SendAsync("WatchStatusChanged", new
@@ -549,7 +571,9 @@ public class ChangeCheckBackgroundService : BackgroundService
                         WatchId = watch.Id,
                         WatchName = watch.Name ?? watch.Url,
                         Status = "Degraded",
-                        LastError = $"Extraction quality check failed: all {totalItems} extracted items were navigation/metadata, not job listings. Pipeline will be rebuilt on next check.",
+                        LastError = watch.PipelineDefinitionJson is null
+                            ? $"Extraction quality check failed repeatedly: all {totalItems} extracted items were navigation/metadata. Pipeline will be rebuilt on next check."
+                            : $"Extraction quality check failed: all {totalItems} extracted items were navigation/metadata. Retrying with current pipeline on next check.",
                         LastCheck = DateTime.UtcNow
                     }, ct);
                     return;
