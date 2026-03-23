@@ -79,14 +79,19 @@ public class CopilotChatCompletionService : IChatCompletionService
     {
         await EnsureClientStartedAsync(cancellationToken);
 
-        // Create a session for this request (disable infinite sessions for simpler lifecycle)
+        // Create a session for this request (disable infinite sessions for simpler lifecycle).
+        // AvailableTools = [] disables all tool invocation — this is a pure text-completion
+        // service and the model must not invoke web_search, file tools, etc.  Without this
+        // restriction gpt-5 attempts tool calls on complex prompts, causing the session to
+        // hang (AssistantMessageEvent / SessionIdleEvent never fire).
         _logger?.LogDebug("Creating non-streaming session with model {Model}", _model);
         var session = await _client.CreateSessionAsync(new SessionConfig
         {
             Model = _model,
             Streaming = false,
             InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
-            OnPermissionRequest = PermissionHandler.ApproveAll
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            AvailableTools = []
         });
 
         var sessionId = session.SessionId;
@@ -117,6 +122,11 @@ public class CopilotChatCompletionService : IChatCompletionService
                             sessionId, msg.Data.Content?.Length ?? 0);
                         responseContent = msg.Data.Content ?? "";
                         break;
+                    case AssistantReasoningEvent reasoning:
+                        _logger?.LogDebug(
+                            "Session {SessionId}: AssistantReasoningEvent ({Length} chars)",
+                            sessionId, reasoning.Data.Content?.Length ?? 0);
+                        break;
                     case SessionIdleEvent:
                         _logger?.LogInformation(
                             "Session {SessionId}: SessionIdleEvent — completing with {Length} chars",
@@ -130,9 +140,20 @@ public class CopilotChatCompletionService : IChatCompletionService
                         completionSource.TrySetException(
                             new InvalidOperationException($"Copilot session error: {err.Data.Message}"));
                         break;
-                    default:
+                    case ToolExecutionStartEvent:
                         _logger?.LogDebug(
-                            "Session {SessionId}: Unhandled event type {EventType}",
+                            "Session {SessionId}: Tool execution started",
+                            sessionId);
+                        break;
+                    case ToolExecutionCompleteEvent:
+                        _logger?.LogDebug(
+                            "Session {SessionId}: Tool execution completed",
+                            sessionId);
+                        break;
+                    default:
+                        // Log but don't treat as error — SDK adds new event types regularly
+                        _logger?.LogTrace(
+                            "Session {SessionId}: Event type {EventType} (not handled explicitly)",
                             sessionId, evt.GetType().Name);
                         break;
                 }
@@ -203,14 +224,16 @@ public class CopilotChatCompletionService : IChatCompletionService
     {
         await EnsureClientStartedAsync(cancellationToken);
 
-        // Create a streaming session (disable infinite sessions for simpler lifecycle)
+        // Create a streaming session (disable infinite sessions for simpler lifecycle).
+        // AvailableTools = [] — same rationale as the non-streaming path above.
         _logger?.LogDebug("Creating streaming session with model {Model}", _model);
         var session = await _client.CreateSessionAsync(new SessionConfig
         {
             Model = _model,
             Streaming = true,
             InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
-            OnPermissionRequest = PermissionHandler.ApproveAll
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            AvailableTools = []
         });
 
         var sessionId = session.SessionId;
