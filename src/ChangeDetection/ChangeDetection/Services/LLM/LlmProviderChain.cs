@@ -50,7 +50,11 @@ public class LlmProviderChain : ILlmProviderChain
         var failedProviders = 0;
 
         // Get providers ordered by priority
+        _logger.LogWarning("LlmProviderChain.ExecuteAsync: entering GetProvidersToTryAsync (thread {ThreadId})",
+            Environment.CurrentManagedThreadId);
         var providers = await GetProvidersToTryAsync(options.ProviderName, ct, options.PreferLargeModel);
+        _logger.LogWarning("LlmProviderChain.ExecuteAsync: got {Count} providers in {Elapsed}ms",
+            providers.Count(), stopwatch.ElapsedMilliseconds);
         
         if (!providers.Any())
         {

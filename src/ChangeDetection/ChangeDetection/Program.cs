@@ -44,7 +44,7 @@ if (builder.Environment.IsDevelopment())
     Directory.CreateDirectory(logsPath);
     
     // Create a file logging provider for OpenTelemetry
-    var logFilePath = Path.Combine(logsPath, $"log-{DateTime.Now:yyyy-MM-dd}.txt");
+    var logFilePath = Path.Combine(logsPath, $"log-{DateTime.UtcNow:yyyy-MM-dd}.txt");
     var fileLogProcessor = new FileLogProcessor(logFilePath);
     
     builder.Logging.ClearProviders();
@@ -206,6 +206,9 @@ builder.Services.AddScoped(sp =>
 // Configure LiteDB
 var dbPath = builder.Configuration.GetValue<string>("LiteDb:Path") ?? "changedetection.db";
 builder.Services.AddSingleton(new LiteDbContext($"Filename={dbPath};Connection=shared"));
+builder.Services.AddSingleton(sp => new ThreadSafeLiteDbContext(
+    sp.GetRequiredService<LiteDbContext>(),
+    sp.GetRequiredService<ILogger<ThreadSafeLiteDbContext>>()));
 
 // Configure authentication and authorization
 builder.Services.AddChangeDetectionAuthentication(builder.Configuration);
@@ -217,23 +220,23 @@ var authSettings = builder.Configuration
 
 // Register base repositories (used directly for global entities and as inner repos for tenant-scoped)
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<WatchedSite>(sp.GetRequiredService<LiteDbContext>(), "watches"));
+    new LiteDbRepository<WatchedSite>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "watches"));
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<ChangeSnapshot>(sp.GetRequiredService<LiteDbContext>(), "snapshots"));
+    new LiteDbRepository<ChangeSnapshot>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "snapshots"));
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<ChangeEvent>(sp.GetRequiredService<LiteDbContext>(), "events"));
+    new LiteDbRepository<ChangeEvent>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "events"));
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<Category>(sp.GetRequiredService<LiteDbContext>(), "categories"));
+    new LiteDbRepository<Category>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "categories"));
 builder.Services.AddScoped(sp =>
-    new LiteDbRepository<WatchGroup>(sp.GetRequiredService<LiteDbContext>(), "watch_groups"));
+    new LiteDbRepository<WatchGroup>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "watch_groups"));
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<View>(sp.GetRequiredService<LiteDbContext>(), "views"));
+    new LiteDbRepository<View>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "views"));
 builder.Services.AddScoped(sp => 
-    new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<LiteDbContext>(), "notification_outbox"));
+    new LiteDbRepository<NotificationOutboxEntry>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "notification_outbox"));
 builder.Services.AddScoped(sp =>
-    new LiteDbRepository<TrackedItem>(sp.GetRequiredService<LiteDbContext>(), "tracked_listings"));
+    new LiteDbRepository<TrackedItem>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "tracked_listings"));
 builder.Services.AddScoped(sp =>
-    new LiteDbRepository<PortalSuggestionEntity>(sp.GetRequiredService<LiteDbContext>(), "portal_suggestions"));
+    new LiteDbRepository<PortalSuggestionEntity>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "portal_suggestions"));
 
 // Register tenant-scoped repository wrappers for owned entities
 builder.Services.AddScoped<IRepository<WatchedSite>>(sp => 
@@ -275,19 +278,19 @@ builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp =>
 
 // Register global repositories (not tenant-scoped)
 builder.Services.AddScoped<IRepository<LlmProviderConfig>>(sp => 
-    new LiteDbRepository<LlmProviderConfig>(sp.GetRequiredService<LiteDbContext>(), "llm_providers"));
+    new LiteDbRepository<LlmProviderConfig>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "llm_providers"));
 builder.Services.AddScoped<IRepository<LlmUsageRecord>>(sp => 
-    new LiteDbRepository<LlmUsageRecord>(sp.GetRequiredService<LiteDbContext>(), "llm_usage"));
+    new LiteDbRepository<LlmUsageRecord>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "llm_usage"));
 builder.Services.AddScoped<IRepository<AppSettings>>(sp => 
-    new LiteDbRepository<AppSettings>(sp.GetRequiredService<LiteDbContext>(), "settings"));
+    new LiteDbRepository<AppSettings>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "settings"));
 builder.Services.AddScoped<IRepository<NotificationTemplate>>(sp => 
-    new LiteDbRepository<NotificationTemplate>(sp.GetRequiredService<LiteDbContext>(), "notification_templates"));
+    new LiteDbRepository<NotificationTemplate>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "notification_templates"));
 builder.Services.AddScoped<IRepository<PriceHistoryEntry>>(sp => 
-    new LiteDbRepository<PriceHistoryEntry>(sp.GetRequiredService<LiteDbContext>(), "price_history"));
+    new LiteDbRepository<PriceHistoryEntry>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "price_history"));
 builder.Services.AddScoped<IRepository<FieldValueHistory>>(sp => 
-    new LiteDbRepository<FieldValueHistory>(sp.GetRequiredService<LiteDbContext>(), "field_history"));
+    new LiteDbRepository<FieldValueHistory>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "field_history"));
 builder.Services.AddScoped<IRepository<BlockExecutionSnapshotEntity>>(sp => 
-    new LiteDbRepository<BlockExecutionSnapshotEntity>(sp.GetRequiredService<LiteDbContext>(), "blockexecutionsnapshots"));
+    new LiteDbRepository<BlockExecutionSnapshotEntity>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "blockexecutionsnapshots"));
 
 // Register services
 builder.Services.AddSingleton<PlaywrightFetcher>();
@@ -341,7 +344,10 @@ builder.Services.AddScoped<IJobDeduplicationService, JobDeduplicationService>();
 builder.Services.AddSingleton<SetupFlowEnhancements>();
 
 // Pipeline queue for persistent, concurrent pipeline execution
-builder.Services.AddSingleton<IPipelineQueueRepository, PipelineQueueRepository>();
+builder.Services.AddSingleton<IPipelineQueueRepository>(sp =>
+    new PipelineQueueRepository(
+        sp.GetRequiredService<ThreadSafeLiteDbContext>(),
+        sp.GetRequiredService<ILogger<PipelineQueueRepository>>()));
 builder.Services.AddSingleton<PipelineQueueService>();
 builder.Services.AddSingleton<IPipelineQueueService>(sp => sp.GetRequiredService<PipelineQueueService>());
 builder.Services.AddHostedService<PipelineWorkerService>();
@@ -350,7 +356,9 @@ builder.Services.AddHostedService<PipelineWorkerService>();
 builder.Services.AddScoped<IPipelineEventService, PipelineEventService>();
 
 // Pipeline support services
-builder.Services.AddSingleton<IConversationSessionManager, ConversationSessionManager>();
+builder.Services.AddSingleton<ConversationSessionManager>();
+builder.Services.AddSingleton<IConversationSessionManager>(sp => sp.GetRequiredService<ConversationSessionManager>());
+builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<ConversationSessionManager>());
 
 // URL validation for SSRF protection
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
