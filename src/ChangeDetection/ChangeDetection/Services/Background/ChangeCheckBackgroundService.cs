@@ -22,6 +22,7 @@ namespace ChangeDetection.Services.Background;
 public class ChangeCheckBackgroundService : BackgroundService
 {
     private const int DefaultMaxConcurrentChecks = 5;
+    private static readonly TimeSpan MaxFailureBackoffInterval = TimeSpan.FromHours(24);
     
     private readonly IBackgroundServiceScopeFactory _scopeFactory;
     private readonly ILogger<ChangeCheckBackgroundService> _logger;
@@ -52,6 +53,15 @@ public class ChangeCheckBackgroundService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Change check background service starting...");
+
+        try
+        {
+            await RunOverdueWatchesAsync(stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error running overdue watches at startup");
+        }
 
         using var timer = new PeriodicTimer(_checkInterval);
 
@@ -115,6 +125,53 @@ public class ChangeCheckBackgroundService : BackgroundService
         }).ToList();
 
         // Wait for all checks to complete (or cancel)
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task RunOverdueWatchesAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateBackgroundScope();
+
+        var watchService = scope.ServiceProvider.GetRequiredService<IWatchService>();
+        var settingsRepo = scope.ServiceProvider.GetRequiredService<IRepository<AppSettings>>();
+        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<ChangeDetectionHub>>();
+
+        var now = DateTime.UtcNow;
+        var overdueWatches = (await watchService.GetAllAsync(ct))
+            .Where(w =>
+                w.IsEnabled &&
+                w.Status != WatchStatus.Checking &&
+                w.LastChecked is { } lastChecked &&
+                lastChecked.Add(w.CheckInterval) < now)
+            .ToList();
+
+        if (overdueWatches.Count == 0)
+            return;
+
+        var allSettings = await settingsRepo.GetAllAsync(ct);
+        var settings = allSettings.FirstOrDefault();
+        var maxConcurrent = settings?.MaxConcurrentChecks ?? DefaultMaxConcurrentChecks;
+        maxConcurrent = Math.Max(1, Math.Min(maxConcurrent, 50));
+
+        _logger.LogInformation(
+            "Running {Count} overdue watches missed during downtime (max concurrent: {MaxConcurrent})",
+            overdueWatches.Count,
+            maxConcurrent);
+
+        using var semaphore = new SemaphoreSlim(maxConcurrent, maxConcurrent);
+        var tasks = overdueWatches.Select(async watch =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                await CheckSingleWatchAsync(scope.ServiceProvider, watch, hubContext, ct);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToList();
+
         await Task.WhenAll(tasks);
     }
 
@@ -708,6 +765,36 @@ public class ChangeCheckBackgroundService : BackgroundService
                             watch.Id);
                     }
                 }
+
+                // --- Outreach signal detection ---
+                // Scan for outreach-friendly signals (general application, talent community, etc.)
+                // Only rescan at most once per week to keep the check lightweight.
+                var outreachStale = watch.OutreachLastScannedAt is null
+                    || (DateTime.UtcNow - watch.OutreachLastScannedAt.Value).TotalDays >= 7;
+
+                if (outreachStale && !string.IsNullOrWhiteSpace(content))
+                {
+                    try
+                    {
+                        var detector = new OutreachSignalDetector();
+                        var assessment = detector.Analyze(content, watch.Name);
+                        watch.OutreachAssessmentJson = OutreachSignalDetector.Serialize(assessment);
+                        watch.OutreachLastScannedAt = DateTime.UtcNow;
+
+                        if (assessment.IsOutreachFriendly)
+                        {
+                            _logger.LogInformation(
+                                "Watch {WatchId} detected as outreach-friendly (score {Score}, {SignalCount} signals)",
+                                watch.Id, assessment.OverallScore, assessment.Signals.Count);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Outreach signal detection failed for watch {WatchId}, skipping",
+                            watch.Id);
+                    }
+                }
             }
 
             // --- Catalog verification tracking ---
@@ -762,16 +849,7 @@ public class ChangeCheckBackgroundService : BackgroundService
         }
         else if (!result.Success)
         {
-            // --- Determine failure category from block results ---
-            var failureCategory = FailureCategory.Unknown;
-            foreach (var br in result.BlockResults.Values)
-            {
-                if (!br.Success && br.Category != FailureCategory.None)
-                {
-                    failureCategory = br.Category;
-                    break;
-                }
-            }
+            var isPermanent = ClassifyFailureAsPermanent(result.Error);
 
             // --- Catalog verification tracking (failure path) ---
             watch.ConsecutiveSuccessfulChecks = 0;
@@ -780,11 +858,14 @@ public class ChangeCheckBackgroundService : BackgroundService
 
             // --- Exponential backoff for failing watches (res-3) ---
             // Transient failures get escalating check intervals; permanent failures skip auto-healing
-            if (failureCategory != FailureCategory.Permanent)
+            if (!isPermanent)
             {
                 var backoffMultiplier = Math.Min(Math.Pow(2, watch.ConsecutiveFailures - 1), 32);
                 var baseCheckInterval = watch.ScheduleSettings.BaseInterval;
-                watch.CheckInterval = TimeSpan.FromTicks((long)(baseCheckInterval.Ticks * backoffMultiplier));
+                var computedInterval = TimeSpan.FromTicks((long)(baseCheckInterval.Ticks * backoffMultiplier));
+                watch.CheckInterval = TimeSpan.FromTicks(Math.Min(
+                    computedInterval.Ticks,
+                    MaxFailureBackoffInterval.Ticks));
 
                 _logger.LogInformation(
                     "Watch {WatchId} transient failure #{Failures} — next check in {Interval} ({Multiplier}x backoff)",
@@ -1036,10 +1117,33 @@ public class ChangeCheckBackgroundService : BackgroundService
     }
 
     /// <summary>
+    /// Classifies whether an error message indicates a permanent failure (e.g. 404, DNS, domain gone)
+    /// versus a transient one (timeout, 5xx, etc.). This is a heuristic — new patterns should be added
+    /// as they're discovered.
+    /// </summary>
+    private static bool ClassifyFailureAsPermanent(string? error)
+    {
+        if (error is null) return false;
+
+        // HTTP status codes indicating the resource is gone
+        if (error.Contains("404", StringComparison.Ordinal)) return true;
+        if (error.Contains("410", StringComparison.Ordinal)) return true;
+
+        // DNS / domain resolution failures
+        if (error.Contains("DNS", StringComparison.OrdinalIgnoreCase)) return true;
+        if (error.Contains("domain", StringComparison.OrdinalIgnoreCase)) return true;
+
+        // Generic "not found" messages from various sources
+        if (error.Contains("not found", StringComparison.OrdinalIgnoreCase)) return true;
+
+        return false;
+    }
+
+    /// <summary>
     /// Determines change importance for pipeline results.
     /// Uses text diff percentage as base, upgrades to High if ListDiff shows object additions/removals.
     /// </summary>
-    private static ChangeImportance DetermineImportanceForPipeline(DiffResult diff, JsonElement? listDiffOutput)
+    private ChangeImportance DetermineImportanceForPipeline(DiffResult diff, JsonElement? listDiffOutput)
     {
         // Check for object-level additions/removals from ListDiff block
         if (listDiffOutput.HasValue)
@@ -1051,9 +1155,10 @@ public class ChangeCheckBackgroundService : BackgroundService
                 if (listDiffOutput.Value.TryGetProperty("removed", out var removed) && removed.GetArrayLength() > 0)
                     return ChangeImportance.High;
             }
-            catch
+                        catch (Exception ex)
             {
                 // Malformed output — fall through to text-based heuristic
+                _logger.LogDebug(ex, "Error reading ListDiff output in DetermineImportanceForPipeline");
             }
         }
 

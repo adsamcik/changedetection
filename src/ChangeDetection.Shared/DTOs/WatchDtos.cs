@@ -210,6 +210,12 @@ public class WatchDetailDto
     /// Null when no pipeline has been executed yet.
     /// </summary>
     public PipelineHealthDto? PipelineHealth { get; set; }
+
+    /// <summary>
+    /// Outreach signal assessment for this watch's careers page.
+    /// Null if never scanned or not a group watch.
+    /// </summary>
+    public GroupOutreachDto? Outreach { get; set; }
 }
 
 /// <summary>

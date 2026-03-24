@@ -424,6 +424,42 @@ public static class WatchGroupEndpoints
 
         var deduped = deduplicationService.DeduplicateAcrossSources(allItems);
 
+        // Build outreach summary from members that have been scanned
+        GroupOutreachSummaryDto? outreachSummary = null;
+        var outreachWatches = new List<OutreachWatchDto>();
+        foreach (var member in members)
+        {
+            var assessment = OutreachSignalDetector.Deserialize(member.OutreachAssessmentJson);
+            if (assessment is not { IsOutreachFriendly: true }) continue;
+
+            var companyName = DeriveCompanyFromWatchName(member.Name ?? new Uri(member.Url, UriKind.RelativeOrAbsolute).Host);
+            outreachWatches.Add(new OutreachWatchDto
+            {
+                WatchId = member.Id.ToString(),
+                WatchName = member.Name ?? member.Url,
+                Company = companyName,
+                OverallScore = assessment.OverallScore,
+                Signals = assessment.Signals.Select(s => new OutreachSignalDto
+                {
+                    Type = s.Type,
+                    Evidence = s.Evidence,
+                    Confidence = s.Confidence
+                }).ToList()
+            });
+        }
+
+        if (outreachWatches.Count > 0)
+        {
+            outreachSummary = new GroupOutreachSummaryDto
+            {
+                OutreachFriendlyCount = outreachWatches.Count,
+                OutreachWatches = outreachWatches
+                    .OrderByDescending(w => w.OverallScore)
+                    .Take(5) // Cap to top 5
+                    .ToList()
+            };
+        }
+
         return Results.Ok(new GroupResultsDto
         {
             GroupId = id.ToString(),
@@ -434,7 +470,8 @@ public static class WatchGroupEndpoints
             TotalItems = deduped.Count,
             NewItems = deduped.Count(i => i.IsNew),
             LastChecked = lastChecked != default ? lastChecked : null,
-            Items = deduped
+            Items = deduped,
+            OutreachSummary = outreachSummary
         });
     }
 
@@ -500,9 +537,10 @@ public static class WatchGroupEndpoints
                 return ConvertJsonArrayToExtractedObjects(root);
             }
         }
-        catch
+                catch (Exception ex)
         {
             // Invalid JSON
+            Console.WriteLine($"[WatchGroupEndpoints] Error in ConvertJsonArrayToExtractedObjects: {ex.Message}");
         }
 
         return null;

@@ -313,6 +313,21 @@ public class WatchedSite : IOwnedEntity
     /// When the last successful pipeline check completed.
     /// </summary>
     public DateTime? LastSuccessfulCheckAt { get; set; }
+
+    // ========== Outreach Signal Detection ==========
+
+    /// <summary>
+    /// JSON-serialized OutreachAssessment from scanning the careers page for
+    /// outreach-friendly signals (general application, talent community, etc.).
+    /// Null if never scanned.
+    /// </summary>
+    public string? OutreachAssessmentJson { get; set; }
+
+    /// <summary>
+    /// When the outreach signal scan was last performed.
+    /// Rescanned at most once per week to avoid redundant work.
+    /// </summary>
+    public DateTime? OutreachLastScannedAt { get; set; }
 }
 
 /// <summary>

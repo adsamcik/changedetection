@@ -178,6 +178,45 @@
             </details>
         }
 
+        @* Outreach-Friendly Companies *@
+        @if (results.OutreachSummary is { OutreachFriendlyCount: > 0 } outreach)
+        {
+            <details class="outreach-section">
+                <summary class="outreach-toggle">📬 Outreach-friendly (@outreach.OutreachFriendlyCount)</summary>
+                <div class="outreach-content">
+                    <p class="outreach-description">
+                        These companies show signs of accepting speculative applications — consider reaching out even without a specific listing.
+                    </p>
+                    <div class="outreach-list">
+                        @foreach (var ow in outreach.OutreachWatches)
+                        {
+                            <div class="outreach-card">
+                                <div class="outreach-card-header">
+                                    <span class="outreach-badge">📬 Outreach-friendly</span>
+                                    <span class="outreach-score" title="Outreach confidence score">
+                                        @ow.OverallScore.ToString("F1")/10
+                                    </span>
+                                </div>
+                                <h4 class="outreach-company">
+                                    <a href="/watches/@ow.WatchId" class="outreach-company-link">
+                                        @(ow.Company ?? ow.WatchName)
+                                    </a>
+                                </h4>
+                                <ul class="outreach-signals">
+                                    @foreach (var signal in ow.Signals)
+                                    {
+                                        <li class="outreach-signal">
+                                            <span class="signal-type">@FormatSignalType(signal.Type)</span>
+                                        </li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </details>
+        }
+
         @if (!string.IsNullOrEmpty(errorMessage))
         {
             <div class="alert alert-error" role="alert">@errorMessage</div>
@@ -236,8 +275,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var item in filteredItems)
-                        {
+                        <Virtualize TItem="GroupResultItemDto" Items="@filteredItems" Context="item" ItemSize="48" OverscanCount="5" SpacerElement="tr">
                             <tr class="@(item.IsNew ? "row-new" : "")">
                                 <td class="col-title">
                                     <div class="title-cell">
@@ -306,7 +344,7 @@
                                     </span>
                                 </td>
                             </tr>
-                        }
+                        </Virtualize>
                     </tbody>
                 </table>
             </div>
@@ -394,7 +432,11 @@
                     if (root.TryGetProperty("profileText", out var pt) && pt.ValueKind == JsonValueKind.String)
                         profileText = pt.GetString() ?? "";
                 }
-                catch { /* ignore malformed profile JSON */ }
+                                catch (Exception ex)
+                {
+                    /* ignore malformed profile JSON */
+                    Console.WriteLine($"[GroupWatchResults] Error in OnInitializedAsync: {ex.Message}");
+                }
             }
         }
         catch (Exception ex)
@@ -497,7 +539,10 @@
                 ApplyFilters();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[GroupWatchResults] Error in RunAllChecks: {ex.Message}");
+        }
 
         if (errors > 0)
             errorMessage = $"Checks complete — {errors} portal(s) had errors";
@@ -510,6 +555,16 @@
         >= 0.7f => "score-high",
         >= 0.4f => "score-medium",
         _ => "score-low"
+    };
+
+    private static string FormatSignalType(string type) => type switch
+    {
+        "GeneralApplication" => "General application page found",
+        "TalentCommunity" => "Talent community / talent pool",
+        "SendCV" => "Invites CV/resume submissions",
+        "AlwaysHiring" => "\"We're always looking for talent\"",
+        "NamedRecruiter" => "Named recruiter or HR contact",
+        _ => type
     };
 
     private static IEnumerable<string> GetItemWatchIds(GroupResultItemDto item) =>
@@ -528,6 +583,7 @@
 
     private static string FormatRelativeDate(DateTime date)
     {
+        // Relative timestamps are displayed in the viewer's local timezone.
         var now = DateTime.Now;
         var diff = now - date;
         if (diff.TotalSeconds < 0) diff = TimeSpan.Zero;

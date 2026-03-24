@@ -7,6 +7,7 @@ using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services;
 using ChangeDetection.Services.Background;
 using ChangeDetection.Services.BlockExecution;
+using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.OutputCaching;
@@ -245,6 +246,23 @@ public static class WatchEndpoints
         if (runSummary is not null)
             dto.PipelineHealth = MapToPipelineHealthDto(runSummary);
 
+        // Attach outreach assessment if available
+        var outreachAssessment = OutreachSignalDetector.Deserialize(watch.OutreachAssessmentJson);
+        if (outreachAssessment is { IsOutreachFriendly: true })
+        {
+            dto.Outreach = new GroupOutreachDto
+            {
+                IsOutreachFriendly = true,
+                OverallScore = outreachAssessment.OverallScore,
+                Signals = outreachAssessment.Signals.Select(s => new OutreachSignalDto
+                {
+                    Type = s.Type,
+                    Evidence = s.Evidence,
+                    Confidence = s.Confidence
+                }).ToList()
+            };
+        }
+
         return Results.Ok(dto);
     }
 
@@ -252,8 +270,13 @@ public static class WatchEndpoints
         WatchCreateDto dto,
         IWatchService watchService,
         ICategoryService categoryService,
+        IUrlValidator urlValidator,
         CancellationToken ct)
     {
+        var urlValidationError = urlValidator.Validate(dto.Url);
+        if (urlValidationError is not null)
+            return Results.BadRequest(urlValidationError);
+
         var request = new CreateWatchRequest
         {
             Url = dto.Url,
@@ -1743,7 +1766,11 @@ public static class WatchEndpoints
                 }).ToList();
             }
         }
-        catch (JsonException) { /* ignore malformed JSON */ }
+                catch (JsonException ex)
+        {
+            /* ignore malformed JSON */
+            Console.WriteLine($"[WatchEndpoints] Error in MapToPipelineHealthDto: {ex.Message}");
+        }
 
         return new PipelineHealthDto
         {
