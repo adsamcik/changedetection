@@ -218,11 +218,11 @@
         }
         else
         {
-            <div class="results-grid">
-                @foreach (var item in filteredChanges)
-                {
-                    <div class="result-card @(item.Feedback == "Helpful" ? "card-liked" : "") @(item.Feedback is "FalsePositive" or "Irrelevant" ? "card-dismissed" : "")">
-                        <div class="card-header">
+            <div style="height: 600px; overflow-y: auto;">
+                <div class="results-grid">
+                    <Virtualize TItem="MatchResult" Items="@filteredChanges" Context="item" ItemSize="260" OverscanCount="5">
+                        <div class="result-card @(item.Feedback == "Helpful" ? "card-liked" : "") @(item.Feedback is "FalsePositive" or "Irrelevant" ? "card-dismissed" : "")">
+                            <div class="card-header">
                             <div class="card-title-row">
                                 <h3 class="job-title">@item.PortalName</h3>
                                 @if (!llmUnavailable)
@@ -239,7 +239,7 @@
                             }
                         </div>
 
-                        <div class="card-body">
+                            <div class="card-body">
                             @if (item.Score.HasValue && !llmUnavailable)
                             {
                                 <div class="score-row">
@@ -334,28 +334,29 @@
                             }
                         </div>
 
-                        <div class="card-footer">
-                            <span class="detected-date" title="@item.DetectedAt.ToString("yyyy-MM-dd HH:mm")">
-                                @FormatRelativeDate(item.DetectedAt)
-                            </span>
-                            <div class="feedback-buttons">
-                                <button class="feedback-btn liked @(item.Feedback == "Helpful" ? "active" : "")"
-                                        title="Helpful — good match"
-                                        disabled="@(feedbackSubmitting is not null)"
-                                        @onclick="@(() => SubmitFeedback(item.ChangeId, "Helpful"))">
-                                    👍
-                                </button>
-                                <button class="feedback-btn dismissed @(item.Feedback is "FalsePositive" or "Irrelevant" ? "active" : "")"
-                                        title="Not relevant — hide this"
-                                        disabled="@(feedbackSubmitting is not null)"
-                                        @onclick="@(() => SubmitFeedback(item.ChangeId, "Irrelevant"))">
-                                    👎
-                                </button>
+                            <div class="card-footer">
+                                <span class="detected-date" title="@item.DetectedAt.ToString("yyyy-MM-dd HH:mm")">
+                                    @FormatRelativeDate(item.DetectedAt)
+                                </span>
+                                <div class="feedback-buttons">
+                                    <button class="feedback-btn liked @(item.Feedback == "Helpful" ? "active" : "")"
+                                            title="Helpful — good match"
+                                            disabled="@(feedbackSubmitting is not null)"
+                                            @onclick="@(() => SubmitFeedback(item.ChangeId, "Helpful"))">
+                                        👍
+                                    </button>
+                                    <button class="feedback-btn dismissed @(item.Feedback is "FalsePositive" or "Irrelevant" ? "active" : "")"
+                                            title="Not relevant — hide this"
+                                            disabled="@(feedbackSubmitting is not null)"
+                                            @onclick="@(() => SubmitFeedback(item.ChangeId, "Irrelevant"))">
+                                        👎
+                                    </button>
+                                </div>
+                                <a href="/changes/@item.ChangeId" class="detail-link">View details →</a>
                             </div>
-                            <a href="/changes/@item.ChangeId" class="detail-link">View details →</a>
                         </div>
-                    </div>
-                }
+                    </Virtualize>
+                </div>
             </div>
         }
     }
@@ -448,9 +449,10 @@
                     });
                 }
             }
-            catch
+                        catch (Exception ex)
             {
                 // Skip portal if changes can't be loaded
+                Console.WriteLine($"[JobWatchResults] Error in LoadChanges: {ex.Message}");
             }
         }
 
@@ -470,9 +472,10 @@
                 hasConfiguredProviders = providers.Count > 0;
                 hasUnhealthyProviders = providers.Any(p => p.IsEnabled && !p.IsHealthy);
             }
-            catch
+                        catch (Exception ex)
             {
                 // If we can't fetch provider status, fall back to generic message
+                Console.WriteLine($"[JobWatchResults] Error in LoadChanges: {ex.Message}");
             }
         }
 
@@ -527,7 +530,10 @@
                 group = await response.Content.ReadFromJsonAsync<WatchGroupDetailDto>();
             await LoadChanges();
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[JobWatchResults] Error in LoadChanges: {ex.Message}");
+        }
 
         checkStatusMessage = errors > 0
             ? $"Checks complete — {errors} portal(s) had errors"
@@ -598,7 +604,10 @@
                 ApplyFilter();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[JobWatchResults] Error in SubmitFeedback: {ex.Message}");
+        }
         finally
         {
             feedbackSubmitting = null;

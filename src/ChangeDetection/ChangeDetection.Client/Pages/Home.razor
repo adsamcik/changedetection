@@ -270,8 +270,7 @@
                                 </tr>
                             }
                             @* Regular watches *@
-                            @foreach (var watch in FilteredWatches)
-                            {
+                            <Virtualize TItem="WatchListItemDto" Items="@(FilteredWatches.ToList())" Context="watch" ItemSize="48" OverscanCount="5" SpacerElement="tr">
                                 <tr class="grid-row @(watch.HasRecentChanges ? "highlight-change" : "") @(selectedWatchIds.Contains(watch.Id) ? "selected" : "")" @onclick="() => OnRowClick(watch.Id)">
                                     @if (isBulkMode)
                                     {
@@ -367,7 +366,7 @@
                                         <button class="btn-icon" title="Edit" aria-label="Edit" @onclick="() => NavigateToEdit(watch.Id)">✎</button>
                                     </td>
                                 </tr>
-                            }
+                            </Virtualize>
                         </tbody>
                     </table>
                 }
@@ -994,9 +993,10 @@
             {
                 await _keyboardModule.InvokeVoidAsync("focusElement", "home-search-input");
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit disconnected, ignore
+                Console.WriteLine($"[Home] Error in FocusSearchInputAsync: {ex.Message}");
             }
         }
     }
@@ -1043,9 +1043,10 @@
                 _keyboardModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
                     "import", "./js/keyboard-shortcuts.js");
             }
-            catch (InvalidOperationException)
+                        catch (InvalidOperationException ex)
             {
                 // Pre-rendering, ignore
+                Console.WriteLine($"[Home] Error in OnAfterRenderAsync: {ex.Message}");
             }
 
             // Restore persisted filter state from localStorage
@@ -1146,7 +1147,11 @@
                         InvalidateCache();
                     }
                 }
-                catch { /* Ignore load failures during SignalR events */ }
+                                catch (Exception ex)
+                {
+                    /* Ignore load failures during SignalR events */
+                    Console.WriteLine($"[Home] Error in InvokeAsync: {ex.Message}");
+                }
                 StateHasChanged();
             });
         });
@@ -1182,9 +1187,10 @@
                     }
                     StateHasChanged();
                 }
-                catch
+                                catch (Exception ex)
                 {
                     // Ignore parsing errors
+                    Console.WriteLine($"[Home] Error in InvokeAsync: {ex.Message}");
                 }
                 return Task.CompletedTask;
             });
@@ -1194,9 +1200,10 @@
         {
             await hubConnection.StartAsync();
         }
-        catch
+                catch (Exception ex)
         {
             // SignalR connection failed - page will operate without real-time updates
+            Console.WriteLine($"[Home] Error in InvokeAsync: {ex.Message}");
         }
     }
 
@@ -1284,9 +1291,10 @@
 
             StateHasChanged();
         }
-        catch
+                catch (Exception ex)
         {
             // Silent fail for group detail loading
+            Console.WriteLine($"[Home] Error in OnGroupExpanded: {ex.Message}");
         }
     }
 
@@ -1401,9 +1409,10 @@
         {
             await Http.PostAsync($"/api/watches/{id}/check", null);
         }
-        catch
+                catch (Exception ex)
         {
             // Ignore errors for bulk check
+            Console.WriteLine($"[Home] Error in TriggerCheck: {ex.Message}");
         }
     }
 
@@ -1565,9 +1574,10 @@
             }
             StateHasChanged();
         }
-        catch
+                catch (Exception ex)
         {
             // Silently fail - not critical
+            Console.WriteLine($"[Home] Error in MarkAsRead: {ex.Message}");
         }
     }
 
@@ -1584,9 +1594,10 @@
                 await Http.PostAsync($"/api/changes/{change.Id}/view", null);
                 change.IsViewed = true;
             }
-            catch
+                        catch (Exception ex)
             {
                 // Continue with next
+                Console.WriteLine($"[Home] Error in MarkGroupAsRead: {ex.Message}");
             }
         }
         StateHasChanged();
@@ -1652,7 +1663,11 @@
                 }
             }
         }
-        catch { /* Ignore corrupt data */ }
+                catch (Exception ex)
+        {
+            /* Ignore corrupt data */
+            Console.WriteLine($"[Home] Error in LoadSnoozeStateAsync: {ex.Message}");
+        }
     }
 
     private static string TruncateSummary(string text, int maxLength)
@@ -2058,9 +2073,10 @@
             {
                 await _keyboardModule.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit disconnected, ignore
+                Console.WriteLine($"[Home] Error in DisposeAsync: {ex.Message}");
             }
         }
 

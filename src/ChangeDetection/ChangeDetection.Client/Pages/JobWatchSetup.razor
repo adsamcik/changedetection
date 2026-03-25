@@ -212,9 +212,10 @@
                 await LoadExistingGroup(jobGroup.Id);
             }
         }
-        catch
+                catch (Exception ex)
         {
             // No existing group found — that's fine, show create mode
+            Console.WriteLine($"[JobWatchSetup] Error in LoadExistingGroup: {ex.Message}");
         }
     }
 

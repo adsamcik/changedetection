@@ -1055,7 +1055,10 @@
                 usageStats = await response.Content.ReadFromJsonAsync<LlmUsageStatsDto>();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[Settings] Error in LoadUsageStats: {ex.Message}");
+        }
     }
 
     private void ShowAddProvider()
@@ -1213,7 +1216,10 @@
                 llmLogs = logsResponse?.Logs ?? new();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[Settings] Error in LoadLogs: {ex.Message}");
+        }
         finally
         {
             isLoadingLogs = false;
@@ -1467,7 +1473,10 @@
                 templates = await response.Content.ReadFromJsonAsync<List<NotificationTemplateDto>>() ?? new();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[Settings] Error in LoadTemplates: {ex.Message}");
+        }
         finally
         {
             isLoadingTemplates = false;
@@ -1485,7 +1494,10 @@
                 placeholders = await response.Content.ReadFromJsonAsync<List<PlaceholderInfoDto>>() ?? new();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[Settings] Error in LoadPlaceholders: {ex.Message}");
+        }
     }
 
     private void ShowAddTemplate()
@@ -1582,7 +1594,10 @@
                 await LoadTemplates();
             }
         }
-        catch { }
+                catch (Exception ex)
+        {
+            Console.WriteLine($"[Settings] Error in LoadTemplates: {ex.Message}");
+        }
     }
 
     private static string FormatTemplateType(string type) => type switch

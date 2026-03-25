@@ -209,7 +209,11 @@
                 return domain + "/...";
             }
         }
-        catch { /* Ignore URI parsing errors */ }
+                catch (Exception ex)
+        {
+            /* Ignore URI parsing errors */
+            Console.WriteLine($"[StateTimeline] Error in TruncateUrl: {ex.Message}");
+        }
         
         return url[..maxLength] + "...";
     }

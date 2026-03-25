@@ -64,9 +64,10 @@ public sealed class KeyboardShortcutService : IAsyncDisposable
             await _module.InvokeVoidAsync("initialize", _dotNetRef);
             _isInitialized = true;
         }
-        catch (InvalidOperationException)
+                catch (InvalidOperationException ex)
         {
             // Pre-rendering or server-side without JS available
+            Console.WriteLine($"[KeyboardShortcutService] Error in InitializeAsync: {ex.Message}");
         }
     }
 
@@ -129,22 +130,25 @@ public sealed class KeyboardShortcutService : IAsyncDisposable
             {
                 await _module.InvokeVoidAsync("dispose");
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit disconnected, ignore
+                Console.WriteLine($"[KeyboardShortcutService] Error in DisposeAsync: {ex.Message}");
             }
-            catch (ObjectDisposedException)
+                        catch (ObjectDisposedException ex)
             {
                 // Already disposed, ignore
+                Console.WriteLine($"[KeyboardShortcutService] Error in DisposeAsync: {ex.Message}");
             }
             
             try
             {
                 await _module.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit disconnected, ignore
+                Console.WriteLine($"[KeyboardShortcutService] Error in DisposeAsync: {ex.Message}");
             }
         }
 

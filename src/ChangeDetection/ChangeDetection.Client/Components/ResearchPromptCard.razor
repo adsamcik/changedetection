@@ -1,0 +1,149 @@
+@using Microsoft.JSInterop
+@using static ChangeDetection.Client.Components.AgentQuestionCard
+@inject IJSRuntime JS
+
+<div class="research-prompt-card @Status.ToString().ToLowerInvariant() @(_animateIn ? "animate-in" : "")">
+    <div class="research-header">
+        <span class="research-icon" aria-hidden="true">🔬</span>
+        <div class="research-header-content">
+            <h3 class="research-title">@Question.Message</h3>
+            <span class="status-badge @Status.ToString().ToLowerInvariant()">
+                @switch (Status)
+                {
+                    case ResearchStatus.Pending:
+                        <text>⏳ Pending</text>
+                        break;
+                    case ResearchStatus.Submitted:
+                        <text>✅ Submitted</text>
+                        break;
+                    case ResearchStatus.Skipped:
+                        <text>⏭️ Skipped</text>
+                        break;
+                }
+            </span>
+        </div>
+    </div>
+
+    @if (Status == ResearchStatus.Pending)
+    {
+        @if (!string.IsNullOrEmpty(Question.Context))
+        {
+            <div class="prompt-block">
+                <div class="prompt-block-header">
+                    <span class="prompt-label">Research prompt</span>
+                    <button class="btn-copy" @onclick="CopyPrompt" title="Copy prompt to clipboard">
+                        📋 @(_copied ? "Copied!" : "Copy to clipboard")
+                    </button>
+                </div>
+                <pre class="prompt-text"><code>@Question.Context</code></pre>
+            </div>
+        }
+
+        <div class="paste-area @(_expanded ? "expanded" : "")">
+            @if (!_expanded)
+            {
+                <button class="expand-toggle" @onclick="() => _expanded = true">
+                    📥 Paste AI response here...
+                </button>
+            }
+            else
+            {
+                <textarea class="paste-input"
+                          @bind="_pastedContent"
+                          @bind:event="oninput"
+                          placeholder="Paste the AI response here..."
+                          rows="6" />
+            }
+        </div>
+
+        <div class="research-actions">
+            <button class="btn btn-primary btn-sm"
+                    @onclick="SubmitResearch"
+                    disabled="@(string.IsNullOrWhiteSpace(_pastedContent))">
+                🔬 Submit Research
+            </button>
+            <button class="btn btn-secondary btn-sm" @onclick="SkipResearch">
+                Skip
+            </button>
+        </div>
+    }
+    else if (Status == ResearchStatus.Skipped)
+    {
+        <p class="status-message">Skipped — using other discovery methods.</p>
+    }
+    else if (Status == ResearchStatus.Submitted)
+    {
+        <p class="status-message">Response submitted. Processing results...</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentQuestionDto Question { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<AgentResponseDto> OnResponse { get; set; }
+
+    [Parameter]
+    public EventCallback OnSkip { get; set; }
+
+    public ResearchStatus Status { get; private set; } = ResearchStatus.Pending;
+
+    private bool _animateIn;
+    private bool _copied;
+    private bool _expanded;
+    private string _pastedContent = "";
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _animateIn = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CopyPrompt()
+    {
+        if (string.IsNullOrEmpty(Question.Context)) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Question.Context);
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _copied = false;
+        }
+                catch (Exception ex)
+        {
+            /* clipboard may not be available */
+            Console.WriteLine($"[ResearchPromptCard] Error in CopyPrompt: {ex.Message}");
+        }
+    }
+
+    private async Task SubmitResearch()
+    {
+        if (string.IsNullOrWhiteSpace(_pastedContent)) return;
+
+        Status = ResearchStatus.Submitted;
+        await OnResponse.InvokeAsync(new AgentResponseDto
+        {
+            QuestionId = Question.Id,
+            ResourceContent = _pastedContent.Trim(),
+            ResourceType = "paste"
+        });
+    }
+
+    private async Task SkipResearch()
+    {
+        Status = ResearchStatus.Skipped;
+        await OnSkip.InvokeAsync();
+        await OnResponse.InvokeAsync(new AgentResponseDto
+        {
+            QuestionId = Question.Id,
+            Skipped = true
+        });
+    }
+
+    public enum ResearchStatus { Pending, Submitted, Skipped }
+}

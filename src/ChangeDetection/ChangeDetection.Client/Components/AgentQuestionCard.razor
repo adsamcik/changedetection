@@ -1,0 +1,233 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+<div class="agent-question-card @(_animateIn ? "animate-in" : "")">
+    <div class="question-header">
+        <span class="question-icon" aria-hidden="true">🤖</span>
+        <h3 class="question-message">@Question.Message</h3>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Question.Context))
+    {
+        <p class="question-context">@Question.Context</p>
+    }
+
+    <div class="question-input-area">
+        @if (Question.InputType == AgentInputType.Choice && Question.Options is { Count: > 0 })
+        {
+            @if (Question.Multiple)
+            {
+                @foreach (var option in Question.Options)
+                {
+                    <label class="choice-option">
+                        <input type="checkbox"
+                               checked="@_selectedValues.Contains(option.Value)"
+                               @onchange="() => ToggleChoice(option.Value)" />
+                        <span class="choice-label">@option.Label</span>
+                    </label>
+                }
+            }
+            else
+            {
+                @foreach (var option in Question.Options)
+                {
+                    <label class="choice-option">
+                        <input type="radio"
+                               name="@($"q-{Question.Id}")"
+                               checked="@(_selectedValues.Contains(option.Value))"
+                               @onchange="() => SelectSingle(option.Value)" />
+                        <span class="choice-label">@option.Label</span>
+                    </label>
+                }
+            }
+        }
+        else if (Question.InputType == AgentInputType.Text)
+        {
+            @if (Question.Multiline)
+            {
+                <textarea class="text-input multiline"
+                          @bind="_textValue"
+                          @bind:event="oninput"
+                          placeholder="Type your answer..."
+                          rows="4" />
+            }
+            else
+            {
+                <input type="text"
+                       class="text-input"
+                       @bind="_textValue"
+                       @bind:event="oninput"
+                       placeholder="Type your answer..."
+                       @onkeydown="HandleKeyDown" />
+            }
+        }
+        else if (Question.InputType == AgentInputType.Resource)
+        {
+            @if (!string.IsNullOrEmpty(Question.Context))
+            {
+                <div class="resource-prompt">
+                    <button class="btn-copy" @onclick="CopyContext" title="Copy to clipboard">
+                        📋 @(_copied ? "Copied!" : "Copy prompt")
+                    </button>
+                </div>
+            }
+            <textarea class="text-input resource-paste"
+                      @bind="_resourceContent"
+                      @bind:event="oninput"
+                      placeholder="Paste content here..."
+                      rows="5" />
+        }
+    </div>
+
+    <div class="question-actions">
+        <button class="btn btn-primary btn-sm" @onclick="Submit" disabled="@(!CanSubmit)">
+            Submit
+        </button>
+        <button class="btn btn-secondary btn-sm" @onclick="Skip">
+            Skip
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentQuestionDto Question { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<AgentResponseDto> OnResponse { get; set; }
+
+    [Parameter]
+    public EventCallback OnSkip { get; set; }
+
+    private bool _animateIn;
+    private bool _copied;
+
+    private string _textValue = "";
+    private string _resourceContent = "";
+    private readonly HashSet<string> _selectedValues = new(StringComparer.Ordinal);
+
+    protected override void OnInitialized()
+    {
+        if (Question.Options is not null)
+        {
+            foreach (var opt in Question.Options.Where(o => o.IsDefault))
+                _selectedValues.Add(opt.Value);
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _animateIn = true;
+            StateHasChanged();
+        }
+    }
+
+    private bool CanSubmit => Question.InputType switch
+    {
+        AgentInputType.Choice => _selectedValues.Count > 0,
+        AgentInputType.Text => !string.IsNullOrWhiteSpace(_textValue),
+        AgentInputType.Resource => !string.IsNullOrWhiteSpace(_resourceContent),
+        _ => false
+    };
+
+    private void ToggleChoice(string value)
+    {
+        if (!_selectedValues.Remove(value))
+            _selectedValues.Add(value);
+    }
+
+    private void SelectSingle(string value)
+    {
+        _selectedValues.Clear();
+        _selectedValues.Add(value);
+    }
+
+    private Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && CanSubmit)
+            return Submit();
+        return Task.CompletedTask;
+    }
+
+    private async Task CopyContext()
+    {
+        if (string.IsNullOrEmpty(Question.Context)) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Question.Context);
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _copied = false;
+        }
+                catch (Exception ex)
+        {
+            /* clipboard may not be available */
+            Console.WriteLine($"[AgentQuestionCard] Error in CopyContext: {ex.Message}");
+        }
+    }
+
+    private async Task Submit()
+    {
+        if (!CanSubmit) return;
+
+        var response = new AgentResponseDto
+        {
+            QuestionId = Question.Id,
+            TextValue = Question.InputType == AgentInputType.Text ? _textValue.Trim() : null,
+            SelectedValues = Question.InputType == AgentInputType.Choice ? _selectedValues.ToList() : null,
+            ResourceContent = Question.InputType == AgentInputType.Resource ? _resourceContent.Trim() : null,
+            ResourceType = Question.InputType == AgentInputType.Resource ? "paste" : null
+        };
+
+        await OnResponse.InvokeAsync(response);
+    }
+
+    private async Task Skip()
+    {
+        await OnSkip.InvokeAsync();
+        await OnResponse.InvokeAsync(new AgentResponseDto
+        {
+            QuestionId = Question.Id,
+            Skipped = true
+        });
+    }
+
+    // ── Client-side DTOs (flat — no abstract hierarchy for JSON deserialization) ──
+
+    public enum AgentInputType { Text, Choice, Resource }
+
+    public class AgentQuestionDto
+    {
+        public string Id { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string? Context { get; set; }
+        public string Priority { get; set; } = "Optional";
+
+        // Flattened input — type is determined from the Input JSON shape
+        public AgentInputType InputType { get; set; } = AgentInputType.Text;
+        public bool Multiple { get; set; }
+        public bool Multiline { get; set; }
+        public List<AgentChoiceOptionDto>? Options { get; set; }
+        public List<string>? AcceptedInputs { get; set; }
+    }
+
+    public class AgentChoiceOptionDto
+    {
+        public string Value { get; set; } = "";
+        public string Label { get; set; } = "";
+        public bool IsDefault { get; set; }
+    }
+
+    public class AgentResponseDto
+    {
+        public string QuestionId { get; set; } = "";
+        public bool Skipped { get; set; }
+        public string? TextValue { get; set; }
+        public List<string>? SelectedValues { get; set; }
+        public string? ResourceContent { get; set; }
+        public string? ResourceType { get; set; }
+    }
+}

@@ -217,9 +217,10 @@ public sealed class LocalStorageService(IJSRuntime jsRuntime) : IAsyncDisposable
             {
                 await _module.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit already disconnected, ignore
+                Console.WriteLine($"[LocalStorageService] Error in DisposeAsync: {ex.Message}");
             }
         }
 

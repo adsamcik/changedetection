@@ -233,9 +233,10 @@
                 return history;
             }
         }
-        catch
+                catch (Exception ex)
         {
             // Silently fail - history is optional
+            Console.WriteLine($"[ChangeDetail] Error in LoadFieldHistory: {ex.Message}");
         }
         
         return null;

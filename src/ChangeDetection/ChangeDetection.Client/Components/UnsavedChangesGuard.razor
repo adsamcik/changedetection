@@ -108,9 +108,10 @@
                 isRegistered = false;
             }
         }
-        catch (JSDisconnectedException)
+                catch (JSDisconnectedException ex)
         {
             // Circuit disconnected, ignore
+            Console.WriteLine($"[UnsavedChangesGuard] Error in if: {ex.Message}");
         }
     }
 
@@ -150,7 +151,10 @@
                 await jsModule.InvokeVoidAsync("unregisterBeforeUnload");
                 isRegistered = false;
             }
-            catch (JSDisconnectedException) { }
+                        catch (JSDisconnectedException ex)
+            {
+                Console.WriteLine($"[UnsavedChangesGuard] Error in HandleLeave: {ex.Message}");
+            }
         }
 
         if (!string.IsNullOrEmpty(pendingNavigationUri))
@@ -202,9 +206,10 @@
                 }
                 await jsModule.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Circuit disconnected, ignore
+                Console.WriteLine($"[UnsavedChangesGuard] Error in DisposeAsync: {ex.Message}");
             }
         }
     }

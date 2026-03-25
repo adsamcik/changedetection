@@ -105,9 +105,10 @@
                 categories = await response.Content.ReadFromJsonAsync<List<CategoryDto>>() ?? [];
             }
         }
-        catch
+                catch (Exception ex)
         {
             // Silently fail - categories are optional
+            Console.WriteLine($"[CategorySelector] Error in LoadCategories: {ex.Message}");
         }
         finally
         {
@@ -172,9 +173,10 @@
                 }
             }
         }
-        catch
+                catch (Exception ex)
         {
             // Handle error silently for now
+            Console.WriteLine($"[CategorySelector] Error in SelectCategory: {ex.Message}");
         }
 
         showCreateForm = false;

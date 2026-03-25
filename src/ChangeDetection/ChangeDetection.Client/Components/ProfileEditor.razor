@@ -288,7 +288,11 @@
                 model = ProfileModel.FromJson(ProfileJson);
                 UpdateRulesPreview();
             }
-            catch { /* Keep default model on parse failure */ }
+                        catch (Exception ex)
+            {
+                /* Keep default model on parse failure */
+                Console.WriteLine($"[ProfileEditor] Error in OnParametersSet: {ex.Message}");
+            }
         }
     }
 

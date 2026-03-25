@@ -58,9 +58,10 @@
             {
                 await InvokeAsync(() => DismissToast(toast.Id));
             }
-            catch (ObjectDisposedException)
+                        catch (ObjectDisposedException ex)
             {
                 // Component was disposed, ignore
+                Console.WriteLine($"[ToastContainer] Error in InvokeAsync: {ex.Message}");
             }
         }, null, toast.EffectiveDuration, Timeout.Infinite);
         
@@ -70,9 +71,10 @@
         {
             _ = InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException)
+                catch (ObjectDisposedException ex)
         {
             // Component was disposed, ignore
+            Console.WriteLine($"[ToastContainer] Error in InvokeAsync: {ex.Message}");
         }
     }
 

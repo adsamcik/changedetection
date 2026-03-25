@@ -251,9 +251,10 @@
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
         {
             // Expected when component is disposed during streaming
+            Console.WriteLine($"[SetupFlow] Error in InvokeAsync: {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -282,7 +283,10 @@
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch (OperationCanceledException) { }
+                catch (OperationCanceledException ex)
+        {
+            Console.WriteLine($"[SetupFlow] Error in InvokeAsync: {ex.Message}");
+        }
         catch (Exception ex)
         {
             _hasError = true;
@@ -310,7 +314,10 @@
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch (OperationCanceledException) { }
+                catch (OperationCanceledException ex)
+        {
+            Console.WriteLine($"[SetupFlow] Error in InvokeAsync: {ex.Message}");
+        }
         catch (Exception ex)
         {
             _hasError = true;
@@ -580,9 +587,18 @@
             {
                 await _streamingTask.WaitAsync(TimeSpan.FromSeconds(2));
             }
-            catch (TimeoutException) { }
-            catch (OperationCanceledException) { }
-            catch { }
+                        catch (TimeoutException ex)
+            {
+                Console.WriteLine($"[SetupFlow] Error in DisposeAsync: {ex.Message}");
+            }
+                        catch (OperationCanceledException ex)
+            {
+                Console.WriteLine($"[SetupFlow] Error in DisposeAsync: {ex.Message}");
+            }
+                        catch (Exception ex)
+            {
+                Console.WriteLine($"[SetupFlow] Error in DisposeAsync: {ex.Message}");
+            }
         }
 
         if (_hubConnection is not null)

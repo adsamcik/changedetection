@@ -1,0 +1,278 @@
+/* ResearchPromptCard — scoped styles */
+
+.research-prompt-card {
+    background: var(--color-bg, #ffffff);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-left: 3px solid var(--color-accent, #f59e0b);
+    border-radius: var(--radius-md, 10px);
+    padding: var(--spacing-4, 1rem) var(--spacing-5, 1.25rem);
+    margin: var(--spacing-3, 0.75rem) 0;
+    box-shadow: var(--shadow-md, 0 4px 12px -2px rgba(15, 23, 42, 0.08));
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity var(--transition-slow, 0.3s ease),
+                transform var(--transition-spring, 0.4s cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+.research-prompt-card.animate-in {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.research-prompt-card.submitted {
+    border-left-color: var(--color-success, #10b981);
+    opacity: 0.7;
+}
+
+.research-prompt-card.skipped {
+    border-left-color: var(--color-text-light, #94a3b8);
+    opacity: 0.5;
+}
+
+/* ── Header ── */
+
+.research-header {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-2, 0.5rem);
+    margin-bottom: var(--spacing-3, 0.75rem);
+}
+
+.research-icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    line-height: 1.5;
+}
+
+.research-header-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-2, 0.5rem);
+    flex-wrap: wrap;
+}
+
+.research-title {
+    margin: 0;
+    font-size: var(--font-size-base, 0.9375rem);
+    font-weight: 600;
+    color: var(--color-text, #0f172a);
+    line-height: 1.5;
+}
+
+/* ── Status badge ── */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px var(--spacing-2, 0.5rem);
+    border-radius: var(--radius-full, 9999px);
+    font-size: var(--font-size-xs, 0.75rem);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.status-badge.pending {
+    background: var(--color-accent-light, #fef3c7);
+    color: var(--color-accent-hover, #d97706);
+}
+
+.status-badge.submitted {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--color-success, #10b981);
+}
+
+.status-badge.skipped {
+    background: var(--color-bg-secondary, #f8fafc);
+    color: var(--color-text-muted, #475569);
+}
+
+/* ── Prompt block ── */
+
+.prompt-block {
+    margin-bottom: var(--spacing-3, 0.75rem);
+    background: var(--color-bg-secondary, #f8fafc);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-sm, 6px);
+    overflow: hidden;
+}
+
+.prompt-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-2, 0.5rem) var(--spacing-3, 0.75rem);
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
+    background: rgba(13, 148, 136, 0.03);
+}
+
+.prompt-label {
+    font-size: var(--font-size-xs, 0.75rem);
+    font-weight: 600;
+    color: var(--color-text-muted, #475569);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.btn-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-1, 0.25rem);
+    padding: 2px var(--spacing-2, 0.5rem);
+    background: transparent;
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-sm, 6px);
+    font-size: var(--font-size-xs, 0.75rem);
+    color: var(--color-primary, #0d9488);
+    cursor: pointer;
+    transition: all var(--transition-fast, 0.15s ease);
+}
+
+.btn-copy:hover {
+    background: var(--color-primary-light, #ccfbf1);
+    border-color: var(--color-primary, #0d9488);
+}
+
+.prompt-text {
+    margin: 0;
+    padding: var(--spacing-3, 0.75rem);
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: var(--font-size-xs, 0.75rem);
+    line-height: 1.6;
+    color: var(--color-text, #0f172a);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.prompt-text code {
+    font-family: inherit;
+}
+
+/* ── Paste area ── */
+
+.paste-area {
+    margin-bottom: var(--spacing-3, 0.75rem);
+}
+
+.expand-toggle {
+    width: 100%;
+    padding: var(--spacing-3, 0.75rem);
+    background: var(--color-bg-secondary, #f8fafc);
+    border: 2px dashed var(--color-border, #e2e8f0);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--color-text-muted, #475569);
+    font-size: var(--font-size-sm, 0.875rem);
+    cursor: pointer;
+    transition: all var(--transition-fast, 0.15s ease);
+}
+
+.expand-toggle:hover {
+    border-color: var(--color-accent, #f59e0b);
+    background: var(--color-accent-light, #fef3c7);
+    color: var(--color-text, #0f172a);
+}
+
+.paste-input {
+    width: 100%;
+    padding: var(--spacing-2, 0.5rem) var(--spacing-3, 0.75rem);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-sm, 6px);
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: var(--font-size-xs, 0.75rem);
+    line-height: 1.6;
+    color: var(--color-text, #0f172a);
+    background: var(--color-bg, #ffffff);
+    resize: vertical;
+    min-height: 100px;
+    box-sizing: border-box;
+    transition: border-color var(--transition-fast, 0.15s ease),
+                box-shadow var(--transition-fast, 0.15s ease);
+}
+
+.paste-input:focus {
+    outline: none;
+    border-color: var(--color-accent, #f59e0b);
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+}
+
+/* ── Actions ── */
+
+.research-actions {
+    display: flex;
+    gap: var(--spacing-2, 0.5rem);
+    justify-content: flex-end;
+}
+
+/* ── Status message ── */
+
+.status-message {
+    margin: 0;
+    font-size: var(--font-size-sm, 0.875rem);
+    color: var(--color-text-muted, #475569);
+    font-style: italic;
+}
+
+/* ── Dark mode ── */
+
+:global([data-theme="dark"]) .research-prompt-card {
+    background: var(--color-bg, #1e293b);
+    border-color: var(--color-border, #334155);
+}
+
+:global([data-theme="dark"]) .prompt-block {
+    background: var(--color-bg-secondary, #0f172a);
+    border-color: var(--color-border, #334155);
+}
+
+:global([data-theme="dark"]) .prompt-block-header {
+    border-color: var(--color-border, #334155);
+}
+
+:global([data-theme="dark"]) .prompt-text {
+    color: var(--color-text, #e2e8f0);
+}
+
+:global([data-theme="dark"]) .paste-input {
+    background: var(--color-bg-secondary, #0f172a);
+    border-color: var(--color-border, #334155);
+    color: var(--color-text, #e2e8f0);
+}
+
+:global([data-theme="dark"]) .expand-toggle {
+    background: var(--color-bg-secondary, #0f172a);
+    border-color: var(--color-border, #334155);
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 480px) {
+    .research-prompt-card {
+        padding: var(--spacing-3, 0.75rem);
+    }
+
+    .research-header-content {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .research-actions {
+        flex-direction: column;
+    }
+
+    .research-actions .btn {
+        width: 100%;
+    }
+}
+
+/* ── Reduced motion ── */
+
+@media (prefers-reduced-motion: reduce) {
+    .research-prompt-card {
+        opacity: 1;
+        transform: none;
+        transition: none;
+    }
+}

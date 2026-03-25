@@ -105,9 +105,10 @@
             {
                 await JS.InvokeVoidAsync("eval", "document.querySelector('.shortcuts-modal .shortcuts-close-btn')?.focus()");
             }
-            catch (InvalidOperationException)
+                        catch (InvalidOperationException ex)
             {
                 // Prerendering, ignore
+                Console.WriteLine($"[ShortcutsHelpModal] Error in OnAfterRenderAsync: {ex.Message}");
             }
         }
         _previousVisibility = IsVisible;

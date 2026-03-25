@@ -68,13 +68,15 @@ public sealed class ThemeService(LocalStorageService localStorage, IJSRuntime js
             // Apply the initial theme
             await ApplyThemeAsync();
         }
-        catch (JSDisconnectedException)
+                catch (JSDisconnectedException ex)
         {
             // Ignore - circuit disconnected
+            Console.WriteLine($"[ThemeService] Error in ApplyThemeAsync: {ex.Message}");
         }
-        catch (InvalidOperationException)
+                catch (InvalidOperationException ex)
         {
             // Ignore - prerendering or circuit not available
+            Console.WriteLine($"[ThemeService] Error in ApplyThemeAsync: {ex.Message}");
         }
     }
 
@@ -155,9 +157,10 @@ public sealed class ThemeService(LocalStorageService localStorage, IJSRuntime js
             EffectiveTheme = await GetEffectiveThemeAsync();
             await _module.InvokeVoidAsync("setThemeAttribute", EffectiveTheme);
         }
-        catch (JSDisconnectedException)
+                catch (JSDisconnectedException ex)
         {
             // Ignore - circuit disconnected
+            Console.WriteLine($"[ThemeService] Error in ApplyThemeAsync: {ex.Message}");
         }
     }
 
@@ -175,9 +178,10 @@ public sealed class ThemeService(LocalStorageService localStorage, IJSRuntime js
                 await _module.InvokeVoidAsync("stopWatchingSystemTheme");
                 await _module.DisposeAsync();
             }
-            catch (JSDisconnectedException)
+                        catch (JSDisconnectedException ex)
             {
                 // Ignore - circuit disconnected
+                Console.WriteLine($"[ThemeService] Error in DisposeAsync: {ex.Message}");
             }
         }
     }
