@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace ChangeDetection.Tests.Llm.Cache;
 
@@ -75,6 +76,11 @@ public class CachingWebApplicationFactory : WebApplicationFactory<Program>
         
         builder.ConfigureServices(services =>
         {
+            // Remove all hosted services to prevent background work from hanging
+            // the test process on shutdown. Tests exercise the app through HTTP
+            // endpoints, not through background service timers.
+            services.RemoveAll<IHostedService>();
+            
             // Register the caching handler as the primary handler for LlmProvider HTTP clients
             services.AddHttpClient("LlmProvider")
                 .ConfigurePrimaryHttpMessageHandler(() => _handler);

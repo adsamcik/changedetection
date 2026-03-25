@@ -24,7 +24,7 @@ public class SessionPersistenceServiceTests : TestBase
         var dbContext = Substitute.ForPartsOf<LiteDbContext>("Filename=:memory:");
         dbContext.Database.Returns(mockDatabase);
 
-        _sut = new SessionPersistenceService(dbContext);
+        _sut = new SessionPersistenceService(new ThreadSafeLiteDbContext(dbContext));
     }
 
     private static ConversationSession CreateTestSession(Guid? sessionId = null)
@@ -53,7 +53,7 @@ public class SessionPersistenceServiceTests : TestBase
     }
 
     [Test]
-    public async Task SaveSessionAsync_NewSession_InsertsIntoCollection()
+    public async Task SaveSessionAsync_NewSession_UpsertsIntoCollection()
     {
         // Arrange
         var session = CreateTestSession();
@@ -65,13 +65,14 @@ public class SessionPersistenceServiceTests : TestBase
         await _sut.SaveSessionAsync(session, ownerId);
 
         // Assert
-        _collection.Received(1).Insert(Arg.Is<PersistedSession>(p =>
+        _collection.Received(1).Upsert(Arg.Is<PersistedSession>(p =>
             p.SessionId == session.SessionId && p.OwnerId == ownerId));
         _collection.DidNotReceive().Update(Arg.Any<PersistedSession>());
+        _collection.DidNotReceive().Insert(Arg.Any<PersistedSession>());
     }
 
     [Test]
-    public async Task SaveSessionAsync_ExistingSession_UpdatesInCollection()
+    public async Task SaveSessionAsync_ExistingSession_UpsertsPreservingExistingId()
     {
         // Arrange
         var sessionId = Guid.NewGuid();
@@ -87,9 +88,10 @@ public class SessionPersistenceServiceTests : TestBase
         await _sut.SaveSessionAsync(session, ownerId);
 
         // Assert
-        _collection.Received(1).Update(Arg.Is<PersistedSession>(p =>
+        _collection.Received(1).Upsert(Arg.Is<PersistedSession>(p =>
             p.Id == existing.Id && p.SessionId == sessionId));
         _collection.DidNotReceive().Insert(Arg.Any<PersistedSession>());
+        _collection.DidNotReceive().Update(Arg.Any<PersistedSession>());
     }
 
     [Test]

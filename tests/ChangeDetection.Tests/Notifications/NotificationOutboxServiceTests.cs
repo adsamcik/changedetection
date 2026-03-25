@@ -1,6 +1,7 @@
 using System.Net;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.Notifications;
 using Microsoft.Extensions.Logging.Testing;
 using NSubstitute;
@@ -20,6 +21,7 @@ public class NotificationOutboxServiceTests : TestBase
     private readonly INotificationOutboxRepository _outboxRepo;
     private readonly IRepository<AppSettings> _settingsRepo;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IUrlValidator _urlValidator;
     private readonly FakeLogger<NotificationOutboxService> _logger;
 
     public NotificationOutboxServiceTests()
@@ -27,6 +29,7 @@ public class NotificationOutboxServiceTests : TestBase
         _outboxRepo = Substitute.For<INotificationOutboxRepository>();
         _settingsRepo = Substitute.For<IRepository<AppSettings>>();
         _httpClientFactory = Substitute.For<IHttpClientFactory>();
+        _urlValidator = Substitute.For<IUrlValidator>();
         _logger = CreateLogger<NotificationOutboxService>();
 
         // Default: return empty settings
@@ -35,7 +38,7 @@ public class NotificationOutboxServiceTests : TestBase
     }
 
     private NotificationOutboxService CreateSut() =>
-        new(_outboxRepo, _settingsRepo, _httpClientFactory, _logger);
+        new(_outboxRepo, _settingsRepo, _httpClientFactory, _urlValidator, _logger);
 
     #region Test Helpers
 

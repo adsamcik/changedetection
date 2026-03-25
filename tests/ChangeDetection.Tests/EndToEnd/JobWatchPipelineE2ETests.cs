@@ -465,10 +465,15 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
             Tags = ["e2e-test"]
         }, CancellationToken.None);
 
-        // Set TrackingConfig on the group entity directly
-        group.TrackingConfig = TrackingConfig.ForJobs();
         var groupRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchGroup>>();
-        await groupRepo.UpdateAsync(group, CancellationToken.None);
+        var persistedGroup = await groupRepo.GetByIdAsync(group.Id, CancellationToken.None);
+        persistedGroup.ShouldNotBeNull();
+        persistedGroup!.TrackingConfig = TrackingConfig.ForJobs();
+        persistedGroup.Tags = persistedGroup.Tags.ToList();
+        persistedGroup.AggregateFields = persistedGroup.AggregateFields.ToList();
+        persistedGroup.AggregateAlerts = persistedGroup.AggregateAlerts.ToList();
+        await groupRepo.UpdateAsync(persistedGroup, CancellationToken.None);
+        group = persistedGroup;
 
         var filterRules = filterGen.GenerateRules(CandidateProfile);
 
@@ -611,9 +616,15 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
             Tags = ["e2e-test"]
         }, CancellationToken.None);
 
-        group.TrackingConfig = TrackingConfig.ForJobs();
         var groupRepo = scope.ServiceProvider.GetRequiredService<IRepository<WatchGroup>>();
-        await groupRepo.UpdateAsync(group, CancellationToken.None);
+        var persistedGroup = await groupRepo.GetByIdAsync(group.Id, CancellationToken.None);
+        persistedGroup.ShouldNotBeNull();
+        persistedGroup!.TrackingConfig = TrackingConfig.ForJobs();
+        persistedGroup.Tags = persistedGroup.Tags.ToList();
+        persistedGroup.AggregateFields = persistedGroup.AggregateFields.ToList();
+        persistedGroup.AggregateAlerts = persistedGroup.AggregateAlerts.ToList();
+        await groupRepo.UpdateAsync(persistedGroup, CancellationToken.None);
+        group = persistedGroup;
 
         var filterRules = filterGen.GenerateRules(CandidateProfile);
 
@@ -695,7 +706,7 @@ public sealed class JobWatchE2EFactory : CachingWebApplicationFactory
             // Seed a Copilot SDK LLM provider. Uses GitHub authentication (gh auth login).
             // The CachingLlmHttpHandler (from base class) intercepts HTTP calls and
             // caches responses in SQLite for deterministic replay.
-            var providerRepo = new LiteDbRepository<LlmProviderConfig>(dbContext, "llm_providers");
+            var providerRepo = new LiteDbRepository<LlmProviderConfig>(new ThreadSafeLiteDbContext(dbContext), "llm_providers");
             providerRepo.InsertAsync(new LlmProviderConfig
             {
                 Name = "GitHub Copilot",

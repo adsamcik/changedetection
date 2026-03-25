@@ -18,7 +18,7 @@ public class LiteDbRepositoryTests
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.db");
         _context = new LiteDbContext(_dbPath);
-        _repository = new LiteDbRepository<WatchedSite>(_context);
+        _repository = new LiteDbRepository<WatchedSite>(new ThreadSafeLiteDbContext(_context));
         await Task.CompletedTask;
     }
 

@@ -127,4 +127,18 @@ public class SettingsEndpointTests : TestBase, IAsyncDisposable
         reloaded.WebhookEnabled.ShouldBeTrue();
         reloaded.DefaultChannelName.ShouldBe("discord");
     }
+
+    [Test]
+    public async Task UpdateNotificationSettings_PrivateWebhookUrl_ReturnsBadRequest()
+    {
+        var update = new NotificationChannelSettingsDto
+        {
+            WebhookEnabled = true,
+            WebhookUrl = "http://127.0.0.1:8080/steal"
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/settings/notifications", update);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
 }

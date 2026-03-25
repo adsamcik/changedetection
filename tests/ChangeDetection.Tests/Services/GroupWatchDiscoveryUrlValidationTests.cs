@@ -1,10 +1,13 @@
 using System.Net;
 using System.Reflection;
+using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline.Setup;
+using ChangeDetection.Services;
 using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.Search;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Shouldly;
@@ -60,20 +63,84 @@ public class GroupWatchDiscoveryUrlValidationTests : TestBase
         result.Reason.ShouldBe("Login required");
     }
 
-    private GroupWatchDiscoveryService CreateSut(Func<HttpRequestMessage, HttpResponseMessage> responder)
+    [Test]
+    public async Task DiscoverAsync_WhenPortalValidationThrows_ExcludesPortalFromResults()
+    {
+        var provider = Substitute.For<ISearchProvider>();
+        provider.ProviderId.Returns("stub");
+        provider.DisplayName.Returns("Stub");
+        provider.IsAvailable.Returns(true);
+        provider.SearchAsync(Arg.Any<SearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new SearchResultSet
+            {
+                ProviderId = "stub",
+                Query = "biotech careers prague",
+                Results =
+                [
+                    new SearchResult
+                    {
+                        Url = "https://portal.example/jobs",
+                        Title = "Portal",
+                        Position = 1
+                    }
+                ]
+            });
+
+        var llmChain = Substitute.For<ILlmProviderChain>();
+        llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = """{"location":"Prague","roleTypes":["scientist"],"field":"biotech","searchQueries":["biotech careers prague"]}"""
+                },
+                new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = """[{"url":"https://portal.example/jobs","title":"Portal","reasoning":"career portal"}]"""
+                });
+
+        var sut = CreateSut(
+            _ => throw new InvalidOperationException("boom"),
+            llmChain,
+            [provider]);
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var update in sut.DiscoverAsync("find biotech careers in Prague"))
+        {
+            progress.Add(update);
+        }
+
+        progress.ShouldNotBeEmpty();
+        progress[^1].Phase.ShouldBe(GroupWatchPhase.Complete);
+        progress[^1].Message.ShouldContain("No suitable career portals");
+        progress[^1].Portals.ShouldNotBeNull();
+        progress[^1].Portals.ShouldBeEmpty();
+    }
+
+    private GroupWatchDiscoveryService CreateSut(
+        Func<HttpRequestMessage, HttpResponseMessage> responder,
+        ILlmProviderChain? llmChain = null,
+        IEnumerable<ISearchProvider>? providers = null)
     {
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>())
             .Returns(_ => new HttpClient(new StubHttpMessageHandler(responder)));
 
+        var watchService = Substitute.For<IWatchService>();
+        watchService.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<WatchedSite>());
+
         return new GroupWatchDiscoveryService(
-            new MultiProviderSearchService([], CreateLogger<MultiProviderSearchService>()),
-            Substitute.For<ILlmProviderChain>(),
+            new MultiProviderSearchService(providers ?? [], CreateLogger<MultiProviderSearchService>()),
+            llmChain ?? Substitute.For<ILlmProviderChain>(),
             Substitute.For<IWatchGroupService>(),
-            Substitute.For<IWatchService>(),
+            watchService,
             new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
             Substitute.For<IComposableSetupPipeline>(),
             httpClientFactory,
+            Substitute.For<IServiceScopeFactory>(),
+            Substitute.For<IWatchExecutionLock>(),
             CreateLogger<GroupWatchDiscoveryService>(),
             Options.Create(new GroupWatchDiscoveryOptions()));
     }

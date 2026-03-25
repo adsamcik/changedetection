@@ -1,7 +1,10 @@
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Hubs;
+using ChangeDetection.Services.AgentInteraction;
 using ChangeDetection.Services.Authentication;
+using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +23,7 @@ file static class HubTestHelper
     {
         var context = Substitute.For<HubCallerContext>();
         context.ConnectionId.Returns(connectionId);
+        context.Items.Returns(new Dictionary<object, object?>());
 
         var groups = Substitute.For<IGroupManager>();
         var clients = Substitute.For<IHubCallerClients>();
@@ -159,6 +163,94 @@ public class ChangeDetectionHubTests
             "test-connection-id",
             $"watch-{watchId}",
             Arg.Any<CancellationToken>());
+    }
+}
+
+#endregion
+
+#region GroupWatchHub Tests
+
+[Category("Unit")]
+public class GroupWatchHubTests
+{
+    private readonly ILogger<GroupWatchHub> _logger = Substitute.For<ILogger<GroupWatchHub>>();
+    private readonly IUrlValidator _urlValidator = Substitute.For<IUrlValidator>();
+
+    private GroupWatchHub CreateHub()
+    {
+        var scopeFactory = Substitute.For<IServiceScopeFactory>();
+        var scope = Substitute.For<IServiceScope>();
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        scope.ServiceProvider.Returns(serviceProvider);
+        scopeFactory.CreateScope().Returns(scope);
+
+        var hub = new GroupWatchHub(scopeFactory, _urlValidator, _logger);
+        HubTestHelper.AssignHubContext(hub);
+        return hub;
+    }
+
+    [Test]
+    public async Task ConfirmPortals_WithoutDiscoveredUrls_RejectsConfirmation()
+    {
+        using var hub = CreateHub();
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var update in hub.ConfirmPortals(
+                           "confirm",
+                           [new ConfirmedPortalDto("https://example.com/jobs", "Example", null, null)]))
+        {
+            progress.Add(update);
+        }
+
+        progress.Count.ShouldBe(1);
+        progress[0].Phase.ShouldBe(GroupWatchPhase.Complete);
+        progress[0].Message.ShouldContain("run discovery again");
+    }
+
+    [Test]
+    public async Task StartDiscovery_WhenDiscoveryAlreadyInProgress_RejectsConcurrentRun()
+    {
+        using var hub = CreateHub();
+        hub.Context.Items["DiscoveryInProgress"] = true;
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var update in hub.StartDiscovery("biology jobs"))
+        {
+            progress.Add(update);
+        }
+
+        progress.Count.ShouldBe(1);
+        progress[0].Phase.ShouldBe(GroupWatchPhase.Complete);
+        progress[0].Message.ShouldContain("already in progress");
+    }
+
+    [Test]
+    public async Task OnDisconnectedAsync_ExpiresPendingQuestionsForConnection()
+    {
+        var hubContext = Substitute.For<IHubContext<GroupWatchHub>>();
+        var clientProxy = Substitute.For<ISingleClientProxy>();
+        hubContext.Clients.Client("test-connection-id").Returns(clientProxy);
+
+        var askUserService = new AskUserService(
+            hubContext,
+            new AgentInteractionContext { ConnectionId = "test-connection-id" },
+            Substitute.For<ILogger<AskUserService>>(),
+            TimeSpan.FromMinutes(1));
+
+        var pendingTask = askUserService.AskAsync(new AgentQuestion
+        {
+            Message = "Will disconnect",
+            Input = new TextInput()
+        });
+
+        await Task.Yield();
+
+        using var hub = CreateHub();
+        await hub.OnDisconnectedAsync(null);
+
+        var response = await pendingTask;
+        response.Skipped.ShouldBeTrue();
+        response.TextValue.ShouldBe("connection disconnected");
     }
 }
 

@@ -421,6 +421,8 @@ public class PipelineReliabilityE2ETests : TestBase
             new PipelineTemplateRegistry(),
             watchRepo,
             new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
+            null!,  // TODO: PipelineSecurityValidator - missing parameter
+            null!,  // TODO: ContentSanitizer - missing parameter
             CreateLogger<ComposableSetupPipeline>());
 
         var request = new SetupRequest { UserInput = "Watch https://example.com/page for changes" };

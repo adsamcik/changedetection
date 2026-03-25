@@ -140,6 +140,33 @@ public class PipelineValidatorTests : TestBase
     }
 
     [Test]
+    public async Task Validate_DuplicateBlockId_IgnoresCase()
+    {
+        var validator = CreateValidator();
+        var registry = CreateRegistry();
+        var pipeline = new PipelineDefinition
+        {
+            SchemaVersion = 1,
+            Blocks =
+            [
+                new BlockDefinition { Id = "BlockA", Type = "Input" },
+                new BlockDefinition { Id = "blocka", Type = "Navigate" },
+                new BlockDefinition { Id = "output-1", Type = "Output" }
+            ],
+            Connections =
+            [
+                new ConnectionDefinition { FromBlockId = "BlockA", FromPort = "url", ToBlockId = "output-1", ToPort = "data" }
+            ]
+        };
+
+        var result = validator.Validate(pipeline, registry);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.Code == "DUPLICATE_BLOCK_ID" && e.BlockId == "blocka");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task Validate_UnknownBlockType_ReturnsError()
     {
         var validator = CreateValidator();

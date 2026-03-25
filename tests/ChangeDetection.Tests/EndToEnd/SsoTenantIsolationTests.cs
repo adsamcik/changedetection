@@ -144,7 +144,7 @@ public class SsoTenantIsolationTests : IAsyncDisposable
                         
                         // Register user repository for SSO user management
                         services.AddScoped<IRepository<User>>(sp =>
-                            new LiteDbRepository<User>(sp.GetRequiredService<LiteDbContext>(), "users"));
+                            new LiteDbRepository<User>(new ThreadSafeLiteDbContext(sp.GetRequiredService<LiteDbContext>()), "users"));
                         
                         // Remove hosted services to keep tests deterministic (no background checks, no seeders).
                         services.RemoveAll<IHostedService>();

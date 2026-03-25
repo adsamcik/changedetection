@@ -3,6 +3,9 @@ using System.Reflection;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Shouldly;
 using TUnit.Core;
@@ -113,6 +116,13 @@ public class BlazorComponentRenderingTests
             {
                 // Clear all logging providers to avoid file conflicts
                 logging.ClearProviders();
+            });
+            
+            builder.ConfigureServices(services =>
+            {
+                // Remove hosted services to prevent background work from
+                // hanging the test process on shutdown
+                services.RemoveAll<IHostedService>();
             });
         }
     }

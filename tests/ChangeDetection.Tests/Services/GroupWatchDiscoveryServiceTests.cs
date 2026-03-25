@@ -2,10 +2,12 @@ using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
+using ChangeDetection.Services;
 using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.Search;
 using ChangeDetection.Services.SetupPipeline;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Shouldly;
@@ -13,6 +15,7 @@ using System.Net;
 using System.Text.Json;
 using TUnit.Core;
 using System.IO;
+using System.Reflection;
 
 namespace ChangeDetection.Tests.Services;
 
@@ -420,6 +423,72 @@ public class GroupWatchDiscoveryServiceTests : TestBase
     }
 
     [Test]
+    public async Task ExtractLocationFromIntent_UsesWholeWordMatching()
+    {
+        var method = typeof(GroupWatchDiscoveryService)
+            .GetMethod("ExtractLocationFromIntent", BindingFlags.NonPublic | BindingFlags.Static);
+
+        method.ShouldNotBeNull();
+
+        var noLocations = (List<string>)method.Invoke(null, ["development jobs"])!;
+        var berlinLocations = (List<string>)method.Invoke(null, ["SWE jobs in Berlin"])!;
+
+        noLocations.ShouldBeEmpty();
+        berlinLocations.ShouldContain("berlin");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task DiscoverAsync_BerlinIntent_UsesGermanCatalogEntries()
+    {
+        const string userInput = "SWE jobs in Berlin";
+        var sut = CreateSut(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>jobs</body></html>")
+        });
+
+        _watchService.GetAllAsync(Arg.Any<CancellationToken>()).Returns([]);
+        _searchProvider.IsAvailable.Returns(false);
+
+        string? classificationPrompt = null;
+        _llmProviderChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var prompt = callInfo.ArgAt<string>(0);
+                if (prompt.Contains("Candidate URLs", StringComparison.OrdinalIgnoreCase))
+                {
+                    classificationPrompt = prompt;
+                    return new LlmResponse { IsSuccess = true, Content = "[]" };
+                }
+
+                return new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = """
+                        {
+                          "location": "Berlin, Germany",
+                          "roleTypes": ["software engineer"],
+                          "field": "software engineering",
+                          "searchQueries": ["software engineer jobs Berlin careers portal"]
+                        }
+                        """
+                };
+            });
+
+        var progress = new List<GroupWatchProgress>();
+        await foreach (var item in sut.DiscoverAsync(userInput))
+        {
+            progress.Add(item);
+        }
+
+        classificationPrompt.ShouldNotBeNull();
+        classificationPrompt.ShouldContain("stepstone.de/jobs");
+        classificationPrompt.ShouldContain("de.indeed.com");
+        progress.Last().Phase.ShouldBe(GroupWatchPhase.Complete);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task DiscoverAsync_NoSearchResults_FallsBackToCatalogOnly()
     {
         const string userInput = "scientist jobs in Copenhagen";
@@ -495,6 +564,8 @@ public class GroupWatchDiscoveryServiceTests : TestBase
             setupFlowEnhancements,
             _composableSetupPipeline,
             _httpClientFactory,
+            Substitute.For<IServiceScopeFactory>(),
+            Substitute.For<IWatchExecutionLock>(),
             CreateLogger<GroupWatchDiscoveryService>(),
             Options.Create(new GroupWatchDiscoveryOptions
             {

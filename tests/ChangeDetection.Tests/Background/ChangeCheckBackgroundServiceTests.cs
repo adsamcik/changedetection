@@ -1,8 +1,9 @@
-using System.Collections.Concurrent;
 using System.Reflection;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Hubs;
+using ChangeDetection.Services;
 using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.Background;
 using Microsoft.AspNetCore.SignalR;
@@ -22,9 +23,14 @@ public class ChangeCheckBackgroundServiceTests
     private readonly IWatchService _watchService;
     private readonly IRepository<AppSettings> _settingsRepo;
     private readonly IRepository<ChangeEvent> _eventRepo;
+    private readonly IRepository<WatchedSite> _watchRepo;
     private readonly IHubContext<ChangeDetectionHub> _hubContext;
     private readonly IClientProxy _clientProxy;
     private readonly ILogger<ChangeCheckBackgroundService> _logger;
+    private readonly IWatchExecutionLock _executionLock;
+    private readonly IPipelineExecutor _pipelineExecutor;
+    private readonly IBlockStateStore _stateStore;
+    private readonly IPipelineRunSummaryStore _runSummaryStore;
     private readonly ChangeCheckBackgroundService _sut;
 
     public ChangeCheckBackgroundServiceTests()
@@ -33,7 +39,12 @@ public class ChangeCheckBackgroundServiceTests
         var notificationService = Substitute.For<INotificationService>();
         _settingsRepo = Substitute.For<IRepository<AppSettings>>();
         _eventRepo = Substitute.For<IRepository<ChangeEvent>>();
+        _watchRepo = Substitute.For<IRepository<WatchedSite>>();
         _logger = Substitute.For<ILogger<ChangeCheckBackgroundService>>();
+        _executionLock = new WatchExecutionLock();
+        _pipelineExecutor = Substitute.For<IPipelineExecutor>();
+        _stateStore = Substitute.For<IBlockStateStore>();
+        _runSummaryStore = Substitute.For<IPipelineRunSummaryStore>();
 
         // Hub context mock chain
         _clientProxy = Substitute.For<IClientProxy>();
@@ -56,6 +67,10 @@ public class ChangeCheckBackgroundServiceTests
         innerProvider.GetService(typeof(IWatchService)).Returns(_watchService);
         innerProvider.GetService(typeof(INotificationService)).Returns(notificationService);
         innerProvider.GetService(typeof(IRepository<ChangeEvent>)).Returns(_eventRepo);
+        innerProvider.GetService(typeof(IRepository<WatchedSite>)).Returns(_watchRepo);
+        innerProvider.GetService(typeof(IPipelineExecutor)).Returns(_pipelineExecutor);
+        innerProvider.GetService(typeof(IBlockStateStore)).Returns(_stateStore);
+        innerProvider.GetService(typeof(IPipelineRunSummaryStore)).Returns(_runSummaryStore);
         innerScope.ServiceProvider.Returns(innerProvider);
         innerScopeFactory.CreateScope().Returns(innerScope);
         outerProvider.GetService(typeof(IServiceScopeFactory)).Returns(innerScopeFactory);
@@ -67,8 +82,29 @@ public class ChangeCheckBackgroundServiceTests
         _settingsRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns([new AppSettings { MaxConcurrentChecks = 5 }]);
 
-        _sut = new ChangeCheckBackgroundService(_scopeFactory, _logger);
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(),
+                Arg.Any<Guid>(),
+                Arg.Any<IBlockStateStore>(),
+                Arg.Any<object?>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<bool>())
+            .Returns(new PipelineExecutionResult
+            {
+                Success = false,
+                Error = "Synthetic failure",
+                BlockResults = new Dictionary<string, BlockResult>(),
+                ExecutionDurationMs = 10,
+                WasBaseline = false,
+                IsDegraded = false,
+                SkippedBlockIds = []
+            });
+
+        _sut = new ChangeCheckBackgroundService(_scopeFactory, _logger, _executionLock);
     }
+
+    private static string CreatePipelineJson(string url) =>
+        PipelineSerializer.Serialize(ChangeCheckBackgroundService.GenerateBasicPipeline(url, cssSelector: null));
 
     private Task InvokeCheckPendingWatchesAsync(CancellationToken ct = default)
     {
@@ -77,11 +113,11 @@ public class ChangeCheckBackgroundServiceTests
         return (Task)method!.Invoke(_sut, [ct])!;
     }
 
-    private static ConcurrentDictionary<Guid, byte> GetRunningWatches()
+    private Task InvokeRunOverdueWatchesAsync(CancellationToken ct = default)
     {
-        var field = typeof(ChangeCheckBackgroundService)
-            .GetField("_runningWatches", BindingFlags.NonPublic | BindingFlags.Static);
-        return (ConcurrentDictionary<Guid, byte>)field!.GetValue(null)!;
+        var method = typeof(ChangeCheckBackgroundService)
+            .GetMethod("RunOverdueWatchesAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        return (Task)method!.Invoke(_sut, [ct])!;
     }
 
     [Test]
@@ -92,38 +128,42 @@ public class ChangeCheckBackgroundServiceTests
 
         await InvokeCheckPendingWatchesAsync();
 
-        await _watchService.DidNotReceive()
-            .CheckForChangesAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+        await _pipelineExecutor.DidNotReceiveWithAnyArgs()
+            .ExecuteAsync(default!, default, default!, default, default, default);
     }
 
     [Test]
     public async Task ExecuteAsync_WatchDue_ChecksForChanges()
     {
         var watchId = Guid.NewGuid();
-        var watch = new WatchedSite { Id = watchId, Url = "https://example.com" };
+        var watch = new WatchedSite
+        {
+            Id = watchId,
+            Url = "https://example.com",
+            PipelineDefinitionJson = CreatePipelineJson("https://example.com")
+        };
 
         _watchService.GetWatchesDueForCheckAsync(Arg.Any<CancellationToken>())
             .Returns([watch]);
-        _watchService.CheckForChangesAsync(watchId, Arg.Any<CancellationToken>())
-            .Returns((ChangeEvent?)null);
-        _watchService.GetByIdAsync(watchId, Arg.Any<CancellationToken>())
-            .Returns(watch);
 
         await InvokeCheckPendingWatchesAsync();
 
-        await _watchService.Received(1)
-            .CheckForChangesAsync(watchId, Arg.Any<CancellationToken>());
+        await _pipelineExecutor.Received(1)
+            .ExecuteAsync(Arg.Any<PipelineDefinition>(), watchId, _stateStore, Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Is(false));
     }
 
     [Test]
     public async Task ExecuteAsync_DuplicateWatch_SkipsAlreadyRunning()
     {
         var watchId = Guid.NewGuid();
-        var watch = new WatchedSite { Id = watchId, Url = "https://example.com" };
-        var runningWatches = GetRunningWatches();
+        var watch = new WatchedSite
+        {
+            Id = watchId,
+            Url = "https://example.com",
+            PipelineDefinitionJson = CreatePipelineJson("https://example.com")
+        };
 
-        // Pre-add the watch ID to simulate it already being checked
-        runningWatches.TryAdd(watchId, 0);
+        _executionLock.TryAcquire(watchId).ShouldBeTrue();
 
         try
         {
@@ -132,24 +172,58 @@ public class ChangeCheckBackgroundServiceTests
 
             await InvokeCheckPendingWatchesAsync();
 
-            await _watchService.DidNotReceive()
-                .CheckForChangesAsync(watchId, Arg.Any<CancellationToken>());
+            await _pipelineExecutor.DidNotReceiveWithAnyArgs()
+                .ExecuteAsync(default!, default, default!, default, default, default);
         }
         finally
         {
-            runningWatches.TryRemove(watchId, out _);
+            _executionLock.Release(watchId);
         }
+    }
+
+    [Test]
+    public async Task RunOverdueWatchesAsync_OverdueWatch_RunsImmediately()
+    {
+        var watchId = Guid.NewGuid();
+        var watch = new WatchedSite
+        {
+            Id = watchId,
+            Url = "https://example.com",
+            IsEnabled = true,
+            LastChecked = DateTime.UtcNow.AddHours(-2),
+            CheckInterval = TimeSpan.FromHours(1),
+            PipelineDefinitionJson = CreatePipelineJson("https://example.com")
+        };
+
+        _watchService.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns([watch]);
+
+        await InvokeRunOverdueWatchesAsync();
+
+        await _pipelineExecutor.Received(1)
+            .ExecuteAsync(Arg.Any<PipelineDefinition>(), watchId, _stateStore, Arg.Any<object?>(), Arg.Any<CancellationToken>(), Arg.Is(false));
     }
 
     [Test]
     public async Task ExecuteAsync_CheckFailure_BroadcastsErrorStatus()
     {
         var watchId = Guid.NewGuid();
-        var watch = new WatchedSite { Id = watchId, Url = "https://example.com" };
+        var watch = new WatchedSite
+        {
+            Id = watchId,
+            Url = "https://example.com",
+            PipelineDefinitionJson = CreatePipelineJson("https://example.com")
+        };
 
         _watchService.GetWatchesDueForCheckAsync(Arg.Any<CancellationToken>())
             .Returns([watch]);
-        _watchService.CheckForChangesAsync(watchId, Arg.Any<CancellationToken>())
+        _pipelineExecutor.ExecuteAsync(
+                Arg.Any<PipelineDefinition>(),
+                watchId,
+                _stateStore,
+                Arg.Any<object?>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Is(false))
             .ThrowsAsync(new InvalidOperationException("Test failure"));
 
         await InvokeCheckPendingWatchesAsync();

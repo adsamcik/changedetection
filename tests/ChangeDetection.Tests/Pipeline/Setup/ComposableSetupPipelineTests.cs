@@ -99,7 +99,10 @@ public class ComposableSetupPipelineTests : TestBase
         _sut = new ComposableSetupPipeline(
             _llmChain, _contentFetcher, _pipelineExecutor,
             _pipelineValidator, _blockRegistry, _platformDetector, _templateRegistry, _watchRepo,
-            setupFlowEnhancements, logger);
+            setupFlowEnhancements,
+            null!,  // TODO: PipelineSecurityValidator - missing parameter
+            null!,  // TODO: ContentSanitizer - missing parameter
+            logger);
     }
 
     [Test]

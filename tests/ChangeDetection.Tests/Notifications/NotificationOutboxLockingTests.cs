@@ -12,7 +12,7 @@ public class NotificationOutboxLockingTests : TestBase
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"test_outbox_{Guid.NewGuid()}.db");
         var context = new LiteDbContext(dbPath);
-        var repo = new NotificationOutboxRepository(context);
+        var repo = new NotificationOutboxRepository(new ThreadSafeLiteDbContext(context));
         return (dbPath, context, repo, () =>
         {
             try { context.Dispose(); } catch { }

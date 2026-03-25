@@ -1,6 +1,8 @@
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.BlockExecution;
 using Shouldly;
+using System.Net;
+using System.Reflection;
 using TUnit.Core;
 
 namespace ChangeDetection.Tests.Services.BlockExecution;
@@ -41,6 +43,37 @@ public class DomainPinTests : TestBase
     }
 
     [Test]
+    public void Validate_WildcardPattern_DoesNotAllowSuffixSpoofing()
+    {
+        var pin = new DomainPin
+        {
+            PrimaryDomain = "example.com",
+            AllowedPatterns = ["*.example.com"],
+            AllowedSchemes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "https" }
+        };
+
+        var error = CreateSut().Validate("https://attacker.example.com.evil.com/jobs", pin);
+
+        error.ShouldNotBeNull();
+        error.ShouldContain("not allowed");
+    }
+
+    [Test]
+    public void Validate_WildcardPattern_AllowsRealSubdomain()
+    {
+        var pin = new DomainPin
+        {
+            PrimaryDomain = "example.com",
+            AllowedPatterns = ["*.example.com"],
+            AllowedSchemes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "https" }
+        };
+
+        var error = CreateSut().Validate("https://sub.example.com/jobs", pin);
+
+        error.ShouldBeNull();
+    }
+
+    [Test]
     public async Task ValidateWithDnsResolution_BlocksPrivateIps()
     {
         var pin = DomainPin.FromUserUrl("https://localhost");
@@ -63,6 +96,19 @@ public class DomainPinTests : TestBase
 
         error.ShouldNotBeNull();
         error.ShouldContain("Redirect blocked");
+    }
+
+    [Test]
+    public async Task IsPrivateOrReserved_Ipv6Loopback_ReturnsTrue()
+    {
+        var method = typeof(DomainPinValidator)
+            .GetMethod("IsPrivateOrReserved", BindingFlags.NonPublic | BindingFlags.Static);
+
+        method.ShouldNotBeNull();
+        var isPrivate = (bool)method.Invoke(null, [IPAddress.Parse("::1")])!;
+
+        isPrivate.ShouldBeTrue();
+        await Task.CompletedTask;
     }
 
     private DomainPinValidator CreateSut() => new(CreateLogger<DomainPinValidator>());
