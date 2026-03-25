@@ -14,6 +14,10 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     {
         "LlmExtract", "LlmEvaluate", "LlmCraftPrompt"
     };
+    private static readonly IEqualityComparer<(string BlockId, string PortName)> BlockPortComparer =
+        new BlockPortKeyComparer();
+    private static readonly IEqualityComparer<(string FromBlockId, string FromPort, string ToBlockId, string ToPort)> ConnectionComparer =
+        new ConnectionKeyComparer();
 
     public ValidationResult Validate(PipelineDefinition definition, IBlockRegistry registry)
     {
@@ -50,8 +54,8 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     private static Dictionary<string, BlockDefinition> BuildBlockMap(
         PipelineDefinition definition, List<ValidationError> errors)
     {
-        var map = new Dictionary<string, BlockDefinition>(StringComparer.Ordinal);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var map = new Dictionary<string, BlockDefinition>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var block in definition.Blocks)
         {
@@ -119,7 +123,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     {
         foreach (var conn in definition.Connections)
         {
-            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.Ordinal))
+            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.OrdinalIgnoreCase))
             {
                 errors.Add(new ValidationError("SELF_CONNECTION",
                     $"Block '{conn.FromBlockId}' cannot connect to itself.", conn.FromBlockId));
@@ -206,18 +210,27 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     {
         if (source == target) return true;
 
-        // All JSON-carrying types are interchangeable
-        // (they all carry JsonElement data that downstream blocks can interpret)
-        if (source is PortType.PlainText or PortType.ExtractedObjects or PortType.DiffResult or PortType.SearchResults &&
-            target is PortType.PlainText or PortType.ExtractedObjects or PortType.DiffResult or PortType.SearchResults)
+        // Configuration is compatible with everything (config injection)
+        if (source == PortType.Configuration || target == PortType.Configuration)
             return true;
 
         // HtmlContent → PlainText (HTML is text)
         if (source == PortType.HtmlContent && target == PortType.PlainText)
             return true;
 
-        // Configuration is flexible (can carry any JSON payload)
-        if (source == PortType.Configuration || target == PortType.Configuration)
+        // JSON-carrying types are interchangeable — blocks internally work with JsonElement
+        // regardless of port type label. This allows template pipelines to work:
+        //   HttpRequest.response (ExtractedObjects) → Paginate.json (PlainText)
+        //   ListDiff.result (DiffResult) → Notify.data (ExtractedObjects)
+        var jsonTypes = new HashSet<PortType>
+        {
+            PortType.PlainText,
+            PortType.ExtractedObjects,
+            PortType.DiffResult,
+            PortType.SearchResults
+        };
+
+        if (jsonTypes.Contains(source) && jsonTypes.Contains(target))
             return true;
 
         return false;
@@ -234,7 +247,8 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     {
         // Build set of (blockId, portName) that have incoming connections
         var connectedInputs = new HashSet<(string BlockId, string PortName)>(
-            definition.Connections.Select(c => (c.ToBlockId, c.ToPort)));
+            definition.Connections.Select(c => (c.ToBlockId, c.ToPort)),
+            BlockPortComparer);
 
         foreach (var block in definition.Blocks)
         {
@@ -265,7 +279,8 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
         List<ValidationWarning> warnings)
     {
         var connectedInputs = new HashSet<(string BlockId, string PortName)>(
-            definition.Connections.Select(c => (c.ToBlockId, c.ToPort)));
+            definition.Connections.Select(c => (c.ToBlockId, c.ToPort)),
+            BlockPortComparer);
 
         foreach (var block in definition.Blocks)
         {
@@ -303,7 +318,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
             return; // Already reported as MISSING_INPUT_BLOCK
 
         // Build adjacency list (forward edges from connections)
-        var adjacency = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var adjacency = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var block in definition.Blocks)
             adjacency[block.Id] = [];
 
@@ -314,7 +329,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
         }
 
         // BFS from Input
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<string>();
         queue.Enqueue(inputBlock.Id);
         visited.Add(inputBlock.Id);
@@ -354,8 +369,8 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
         List<ValidationError> errors)
     {
         // Build in-degree map and adjacency list
-        var inDegree = new Dictionary<string, int>(StringComparer.Ordinal);
-        var adjacency = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var inDegree = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var adjacency = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var block in definition.Blocks)
         {
@@ -370,7 +385,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
                 continue;
 
             // Skip self-connections (already reported)
-            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.Ordinal))
+            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             adjacency[conn.FromBlockId].Add(conn.ToBlockId);
@@ -414,7 +429,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
 
     private static void CheckDuplicateConnections(PipelineDefinition definition, List<ValidationError> errors)
     {
-        var seen = new HashSet<(string, string, string, string)>();
+        var seen = new HashSet<(string FromBlockId, string FromPort, string ToBlockId, string ToPort)>(ConnectionComparer);
         foreach (var conn in definition.Connections)
         {
             if (!seen.Add((conn.FromBlockId, conn.FromPort, conn.ToBlockId, conn.ToPort)))
@@ -428,7 +443,7 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
     private static void CheckMultipleConnectionsToSameInput(
         PipelineDefinition definition, List<ValidationWarning> warnings)
     {
-        var targetCounts = new Dictionary<(string, string), int>();
+        var targetCounts = new Dictionary<(string BlockId, string PortName), int>(BlockPortComparer);
         foreach (var conn in definition.Connections)
         {
             var key = (conn.ToBlockId, conn.ToPort);
@@ -457,5 +472,35 @@ public class PipelineValidator(ILogger<PipelineValidator> logger) : IPipelineVal
             warnings.Add(new ValidationWarning("LLM_COST_WARNING",
                 $"Pipeline contains {llmBlocks.Count} LLM block(s) ({string.Join(", ", llmBlocks.Select(b => b.Type))}). Each execution will incur LLM API costs."));
         }
+    }
+
+    private sealed class BlockPortKeyComparer : IEqualityComparer<(string BlockId, string PortName)>
+    {
+        public bool Equals((string BlockId, string PortName) x, (string BlockId, string PortName) y) =>
+            string.Equals(x.BlockId, y.BlockId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.PortName, y.PortName, StringComparison.Ordinal);
+
+        public int GetHashCode((string BlockId, string PortName) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.BlockId),
+                StringComparer.Ordinal.GetHashCode(obj.PortName));
+    }
+
+    private sealed class ConnectionKeyComparer : IEqualityComparer<(string FromBlockId, string FromPort, string ToBlockId, string ToPort)>
+    {
+        public bool Equals(
+            (string FromBlockId, string FromPort, string ToBlockId, string ToPort) x,
+            (string FromBlockId, string FromPort, string ToBlockId, string ToPort) y) =>
+            string.Equals(x.FromBlockId, y.FromBlockId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.FromPort, y.FromPort, StringComparison.Ordinal) &&
+            string.Equals(x.ToBlockId, y.ToBlockId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.ToPort, y.ToPort, StringComparison.Ordinal);
+
+        public int GetHashCode((string FromBlockId, string FromPort, string ToBlockId, string ToPort) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.FromBlockId),
+                StringComparer.Ordinal.GetHashCode(obj.FromPort),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ToBlockId),
+                StringComparer.Ordinal.GetHashCode(obj.ToPort));
     }
 }

@@ -190,7 +190,7 @@ public class PipelineDegradationService(ILogger<PipelineDegradationService> logg
     {
         JsonDocument doc;
         try { doc = JsonDocument.Parse(jsonSample); }
-        catch { return; }
+        catch { return; } // Intentional: unparseable sample = nothing to analyze
 
         using (doc)
         {
@@ -304,6 +304,6 @@ public class PipelineDegradationService(ILogger<PipelineDegradationService> logg
         if (el is null) return null;
 
         try { return JsonSerializer.Deserialize<JsonStructureFingerprint>(el.Value.GetRawText()); }
-        catch { return null; }
+        catch { return null; } // Intentional: corrupted fingerprint = treat as missing
     }
 }

@@ -8,6 +8,7 @@ using ChangeDetection.Services.BlockExecution;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ChangeDetection.Services.Blocks.Acquisition;
 
@@ -170,7 +171,7 @@ public class ForEachRequestBlock : IPipelineBlock
         // d. Parse response and extract fields
         try
         {
-            ExtractAndMergeFields(responseBody, config, dict);
+            ExtractAndMergeFields(responseBody, config, dict, context.Logger);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -370,7 +371,8 @@ public class ForEachRequestBlock : IPipelineBlock
     private static void ExtractAndMergeFields(
         string responseBody,
         ForEachConfig config,
-        Dictionary<string, JsonElement> dict)
+        Dictionary<string, JsonElement> dict,
+        ILogger? logger = null)
     {
         if (config.Mappings is not { Count: > 0 })
             return;
@@ -381,7 +383,7 @@ public class ForEachRequestBlock : IPipelineBlock
         }
         else if (string.Equals(config.ExtractFormat, "html", StringComparison.OrdinalIgnoreCase))
         {
-            ExtractFromHtml(responseBody, config.Mappings, dict);
+            ExtractFromHtml(responseBody, config.Mappings, dict, logger);
         }
     }
 
@@ -448,7 +450,8 @@ public class ForEachRequestBlock : IPipelineBlock
     private static void ExtractFromHtml(
         string responseBody,
         IReadOnlyList<ExtractionMapping> mappings,
-        Dictionary<string, JsonElement> dict)
+        Dictionary<string, JsonElement> dict,
+        ILogger? logger = null)
     {
         var htmlDoc = new HtmlDocument();
         htmlDoc.LoadHtml(responseBody);
@@ -467,9 +470,10 @@ public class ForEachRequestBlock : IPipelineBlock
                     dict[mapping.Target] = JsonSerializer.SerializeToElement(text);
                 }
             }
-            catch
+                        catch (Exception ex)
             {
                 // Invalid CSS selector — skip this mapping
+                logger?.LogDebug(ex, "Invalid CSS selector in ForEachRequestBlock HTML extraction: {Selector}", mapping.Source);
             }
         }
     }

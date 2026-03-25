@@ -35,7 +35,7 @@ public class PipelineExecutor(
         bool isDryRun = false)
     {
         var stopwatch = Stopwatch.StartNew();
-        var blockResults = new Dictionary<string, BlockResult>();
+        var blockResults = new Dictionary<string, BlockResult>(StringComparer.OrdinalIgnoreCase);
         var skippedBlockIds = new List<string>();
 
         logger.LogInformation("═══ Pipeline execution starting for watch {WatchId} with {BlockCount} blocks ═══", watchId, definition.Blocks.Count);
@@ -60,7 +60,26 @@ public class PipelineExecutor(
         }
 
         // 2. Topological sort
-        var sortedBlockIds = TopologicalSort(definition);
+        List<string> sortedBlockIds;
+        try
+        {
+            sortedBlockIds = TopologicalSort(definition);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("cycle", StringComparison.OrdinalIgnoreCase))
+        {
+            stopwatch.Stop();
+            logger.LogError("Pipeline contains a cycle: {Error}", ex.Message);
+            return new PipelineExecutionResult
+            {
+                Success = false,
+                BlockResults = blockResults,
+                Error = ex.Message,
+                ExecutionDurationMs = stopwatch.ElapsedMilliseconds,
+                WasBaseline = false,
+                IsDegraded = false,
+                SkippedBlockIds = skippedBlockIds
+            };
+        }
         var pipelineHash = ComputePipelineSemanticHash(definition);
 
         // 3. Determine first run
@@ -68,8 +87,8 @@ public class PipelineExecutor(
 
         // 4. Build adjacency structures for skip propagation
         var downstreamMap = BuildDownstreamMap(definition);
-        var skippedSet = new HashSet<string>(StringComparer.Ordinal);
-        var blockOutputs = new Dictionary<string, JsonElement?>(StringComparer.Ordinal);
+        var skippedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var blockOutputs = new Dictionary<string, JsonElement?>(StringComparer.OrdinalIgnoreCase);
         var isDegraded = false;
         var runTimestamp = DateTime.UtcNow;
         var loggerFactory = services.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
@@ -405,8 +424,8 @@ public class PipelineExecutor(
     /// </summary>
     private static List<string> TopologicalSort(PipelineDefinition definition)
     {
-        var inDegree = new Dictionary<string, int>(StringComparer.Ordinal);
-        var adjacency = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var inDegree = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var adjacency = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var block in definition.Blocks)
         {
@@ -418,7 +437,7 @@ public class PipelineExecutor(
         {
             if (!inDegree.ContainsKey(conn.FromBlockId) || !inDegree.ContainsKey(conn.ToBlockId))
                 continue;
-            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.Ordinal))
+            if (string.Equals(conn.FromBlockId, conn.ToBlockId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             adjacency[conn.FromBlockId].Add(conn.ToBlockId);
@@ -478,9 +497,9 @@ public class PipelineExecutor(
     /// </summary>
     private static Dictionary<string, HashSet<string>> BuildDownstreamMap(PipelineDefinition definition)
     {
-        var map = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var map = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var block in definition.Blocks)
-            map[block.Id] = [];
+            map[block.Id] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var conn in definition.Connections)
         {
@@ -532,7 +551,7 @@ public class PipelineExecutor(
 
         foreach (var conn in definition.Connections)
         {
-            if (!string.Equals(conn.ToBlockId, blockId, StringComparison.Ordinal))
+            if (!string.Equals(conn.ToBlockId, blockId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (blockOutputs.TryGetValue(conn.FromBlockId, out var output) && output.HasValue)

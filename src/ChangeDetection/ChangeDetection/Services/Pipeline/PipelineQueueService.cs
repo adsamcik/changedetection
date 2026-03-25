@@ -51,14 +51,16 @@ public sealed class PipelineQueueService : IPipelineQueueService, IDisposable
     {
         get
         {
-            // Note: This is a synchronous approximation. For accurate count, use GetQueueDepthAsync.
-            // We avoid blocking here by using a simple synchronous count.
+            // Synchronous approximation for interface compatibility.
+            // Prefer GetQueueDepthAsync for accurate counts.
             try
             {
-                return _repository.GetCountByStatusAsync(PipelineQueueStatus.Pending).GetAwaiter().GetResult();
+                return Task.Run(() => _repository.GetCountByStatusAsync(PipelineQueueStatus.Pending))
+                    .GetAwaiter().GetResult();
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogDebug(ex, "Failed to get queue depth synchronously");
                 return 0;
             }
         }

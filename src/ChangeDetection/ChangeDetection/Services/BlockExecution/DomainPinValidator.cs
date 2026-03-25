@@ -162,9 +162,27 @@ public class DomainPinValidator(ILogger<DomainPinValidator> logger)
             if (pattern.StartsWith("*."))
             {
                 // Wildcard match: *.example.com matches sub.example.com and example.com
-                var suffix = pattern[1..]; // ".example.com"
-                if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(normalized, pattern[2..], StringComparison.OrdinalIgnoreCase))
+                // Uses segment comparison to prevent bypass via attacker.example.com.evil.com
+                var patternSegments = pattern.TrimStart('*', '.').Split('.');
+                var domainSegments = normalized.Split('.');
+
+                if (domainSegments.Length < patternSegments.Length)
+                    continue;
+
+                var match = true;
+                for (var i = 0; i < patternSegments.Length; i++)
+                {
+                    if (!string.Equals(
+                            domainSegments[domainSegments.Length - 1 - i],
+                            patternSegments[patternSegments.Length - 1 - i],
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
                     return true;
             }
             else

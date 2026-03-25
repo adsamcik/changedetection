@@ -1,5 +1,6 @@
 using System.Text.Json;
 using HtmlAgilityPack;
+using Microsoft.Extensions.Logging;
 
 namespace ChangeDetection.Services;
 
@@ -24,7 +25,7 @@ public interface IStructuredDataExtractor
     (string? Value, string? Source) TryExtractFieldWithSource(string html, string fieldName);
 }
 
-public sealed class StructuredDataExtractor : IStructuredDataExtractor
+public sealed class StructuredDataExtractor(ILogger<StructuredDataExtractor> logger) : IStructuredDataExtractor
 {
     private static readonly Dictionary<string, string[]> FieldAliases = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -75,9 +76,10 @@ public sealed class StructuredDataExtractor : IStructuredDataExtractor
                 using var jsonDoc = JsonDocument.Parse(json);
                 CollectJsonLdObjects(jsonDoc.RootElement, results);
             }
-            catch (JsonException)
+                        catch (JsonException ex)
             {
-                // Ignore malformed structured data blocks and continue.
+                // Malformed structured data block — skip and continue
+                logger.LogDebug(ex, "Malformed JSON-LD block in ExtractJsonLd");
             }
         }
 
