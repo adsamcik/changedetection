@@ -272,9 +272,10 @@ public static class ChangeEndpoints
                     });
                 }
             }
-            catch
+                        catch (Exception ex)
             {
                 // Skip snapshots with invalid JSON
+                Console.WriteLine($"[ChangeEndpoints] Error in ParseElementBoundingBox: {ex.Message}");
             }
         }
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using MailKit.Net.Smtp;
 using MimeKit;
 
@@ -14,6 +15,7 @@ public class NotificationOutboxService(
     INotificationOutboxRepository outboxRepo,
     IRepository<AppSettings> settingsRepo,
     IHttpClientFactory httpClientFactory,
+    IUrlValidator urlValidator,
     ILogger<NotificationOutboxService> logger) : INotificationOutboxService
 {
     private static readonly TimeSpan ProcessingTimeout = TimeSpan.FromMinutes(5);
@@ -319,6 +321,13 @@ public class NotificationOutboxService(
 
     private async Task SendWebhookAsync(NotificationOutboxEntry entry, CancellationToken ct)
     {
+        var validationError = urlValidator.Validate(entry.Destination);
+        if (validationError is not null)
+        {
+            logger.LogWarning("Webhook URL failed validation at send time: {Url} — {Error}", entry.Destination, validationError);
+            throw new InvalidOperationException($"Webhook URL blocked: {validationError}");
+        }
+
         var payload = ChangeNotificationPayload.FromJson(entry.PayloadJson);
         if (payload == null)
             throw new InvalidOperationException("Invalid notification payload");
@@ -347,6 +356,13 @@ public class NotificationOutboxService(
 
     private async Task SendDiscordAsync(NotificationOutboxEntry entry, CancellationToken ct)
     {
+        var validationError = urlValidator.Validate(entry.Destination);
+        if (validationError is not null)
+        {
+            logger.LogWarning("Discord webhook URL failed validation at send time: {Url} — {Error}", entry.Destination, validationError);
+            throw new InvalidOperationException($"Discord webhook URL blocked: {validationError}");
+        }
+
         var payload = ChangeNotificationPayload.FromJson(entry.PayloadJson);
         if (payload == null)
             throw new InvalidOperationException("Invalid notification payload");
@@ -423,6 +439,13 @@ public class NotificationOutboxService(
 
     private async Task SendAlertWebhookAsync(NotificationOutboxEntry entry, CancellationToken ct)
     {
+        var validationError = urlValidator.Validate(entry.Destination);
+        if (validationError is not null)
+        {
+            logger.LogWarning("Alert webhook URL failed validation at send time: {Url} — {Error}", entry.Destination, validationError);
+            throw new InvalidOperationException($"Alert webhook URL blocked: {validationError}");
+        }
+
         var payload = AlertNotificationPayload.FromJson(entry.PayloadJson);
         if (payload == null)
             throw new InvalidOperationException("Invalid alert payload");
@@ -455,6 +478,13 @@ public class NotificationOutboxService(
 
     private async Task SendAlertDiscordAsync(NotificationOutboxEntry entry, CancellationToken ct)
     {
+        var validationError = urlValidator.Validate(entry.Destination);
+        if (validationError is not null)
+        {
+            logger.LogWarning("Alert Discord webhook URL failed validation at send time: {Url} — {Error}", entry.Destination, validationError);
+            throw new InvalidOperationException($"Alert Discord webhook URL blocked: {validationError}");
+        }
+
         var payload = AlertNotificationPayload.FromJson(entry.PayloadJson);
         if (payload == null)
             throw new InvalidOperationException("Invalid alert payload");

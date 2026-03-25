@@ -1,5 +1,6 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.Extensions.Options;
 
@@ -158,8 +159,13 @@ public static class SettingsEndpoints
     private static async Task<IResult> UpdateNotificationSettings(
         NotificationChannelSettingsDto update,
         IRepository<AppSettings> settingsRepo,
+        IUrlValidator urlValidator,
         CancellationToken ct)
     {
+        var webhookValidationError = ValidateNotificationWebhookUrls(update, urlValidator);
+        if (webhookValidationError is not null)
+            return Results.BadRequest(webhookValidationError);
+
         var allSettings = await settingsRepo.GetAllAsync(ct);
         var settings = allSettings.FirstOrDefault();
         var isNew = settings is null;
@@ -360,6 +366,27 @@ public static class SettingsEndpoints
         }
 
         return settings;
+    }
+
+    private static string? ValidateNotificationWebhookUrls(
+        NotificationChannelSettingsDto dto,
+        IUrlValidator urlValidator)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.WebhookUrl))
+        {
+            var validationError = urlValidator.Validate(dto.WebhookUrl);
+            if (validationError is not null)
+                return $"Webhook URL is invalid: {validationError}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.DiscordWebhookUrl))
+        {
+            var validationError = urlValidator.Validate(dto.DiscordWebhookUrl);
+            if (validationError is not null)
+                return $"Discord webhook URL is invalid: {validationError}";
+        }
+
+        return null;
     }
 }
 

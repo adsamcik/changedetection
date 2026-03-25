@@ -418,15 +418,14 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
 {
     var clientOptions = new CopilotClientOptions
     {
-        AutoStart = true,
+        AutoStart = false,
         AutoRestart = true,
         UseLoggedInUser = true,
         Logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<CopilotClient>()
     };
     var client = new CopilotClient(clientOptions);
-    var multiProvider = sp.GetRequiredService<MultiProviderSearchService>();
     var logger = sp.GetRequiredService<ILogger<CopilotSearchProvider>>();
-    return new CopilotSearchProvider(client, multiProvider, logger);
+    return new CopilotSearchProvider(client, logger);
 });
 
 
@@ -625,6 +624,83 @@ app.MapHub<ComposableSetupHub>("/hubs/composable-setup")
     .RequireAuthenticationInSsoMode(builder.Configuration);
 app.MapHub<GroupWatchHub>("/hubs/group-watch")
     .RequireAuthenticationInSsoMode(builder.Configuration);  // Group watch discovery
+
+app.MapGet("/api/diag/di-trace", async (IServiceScopeFactory scopeFactory) =>
+{
+    var results = new List<object>();
+
+    var deps = new (string Name, Type Type)[]
+    {
+        ("MultiProviderSearchService", typeof(MultiProviderSearchService)),
+        ("ILlmProviderChain", typeof(ILlmProviderChain)),
+        ("IWatchGroupService", typeof(IWatchGroupService)),
+        ("IWatchService", typeof(IWatchService)),
+        ("SetupFlowEnhancements", typeof(SetupFlowEnhancements)),
+        ("IComposableSetupPipeline", typeof(IComposableSetupPipeline)),
+        ("IHttpClientFactory", typeof(IHttpClientFactory)),
+        ("IServiceScopeFactory", typeof(IServiceScopeFactory)),
+        ("IWatchExecutionLock", typeof(IWatchExecutionLock)),
+        ("IOptions<GroupWatchDiscoveryOptions>", typeof(IOptions<GroupWatchDiscoveryOptions>)),
+    };
+
+    using var httpScope = scopeFactory.CreateScope();
+    foreach (var (name, type) in deps)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            _ = httpScope.ServiceProvider.GetRequiredService(type);
+            results.Add(new { name, status = "OK", ms = sw.ElapsedMilliseconds, context = "http" });
+        }
+        catch (Exception ex)
+        {
+            results.Add(new { name, status = "FAILED", error = ex.Message, ms = sw.ElapsedMilliseconds, context = "http" });
+        }
+    }
+
+    foreach (var (name, type) in deps)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            _ = await Task.Run(() =>
+            {
+                using var scope = scopeFactory.CreateScope();
+                return scope.ServiceProvider.GetRequiredService(type);
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            results.Add(new { name, status = "OK", ms = sw.ElapsedMilliseconds, context = "taskrun" });
+        }
+        catch (TimeoutException)
+        {
+            results.Add(new { name, status = "DEADLOCK", ms = sw.ElapsedMilliseconds, context = "taskrun" });
+        }
+        catch (Exception ex)
+        {
+            results.Add(new { name, status = "FAILED", error = ex.Message, ms = sw.ElapsedMilliseconds, context = "taskrun" });
+        }
+    }
+
+    var fullSw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        _ = await Task.Run(() =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            return scope.ServiceProvider.GetRequiredService<IGroupWatchDiscoveryService>();
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+        results.Add(new { name = "IGroupWatchDiscoveryService", status = "OK", ms = fullSw.ElapsedMilliseconds, context = "taskrun" });
+    }
+    catch (TimeoutException)
+    {
+        results.Add(new { name = "IGroupWatchDiscoveryService", status = "DEADLOCK", ms = fullSw.ElapsedMilliseconds, context = "taskrun" });
+    }
+    catch (Exception ex)
+    {
+        results.Add(new { name = "IGroupWatchDiscoveryService", status = "FAILED", error = ex.Message, ms = fullSw.ElapsedMilliseconds, context = "taskrun" });
+    }
+
+    return Results.Json(results);
+});
 
 // Configure static files with aggressive caching (assets are fingerprinted for cache-busting)
 app.UseStaticFiles(new StaticFileOptions

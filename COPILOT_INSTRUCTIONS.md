@@ -34,23 +34,22 @@ or technical details.
    entry. Over time, the system knows more portals and can suggest better matches. A 
    fresh install starts empty — the catalog bootstraps from web search + user input.
 
-5. **Search infrastructure is always available.** The `LlmSearchProvider` implements 
-   `ISearchProvider` using the LLM to suggest URLs, then validates each via HTTP HEAD — 
-   hallucinated URLs silently 404 and get dropped. This is always available (only needs 
-   CopilotSDK). Dedicated search engines (SearXNG, Brave, Google) provide better coverage 
-   and are recommended for production, but the system works without them.
+5. **Search infrastructure is always available.** `CopilotSearchProvider` can use CopilotSDK's
+   native grounded `web_search` tool when Copilot is configured. Dedicated search engines
+   (SearXNG, Brave, Google) still provide valuable breadth and redundancy, but the system
+   no longer depends on LLM-invented URL suggestions as its always-on fallback.
 
 ### Search Provider Hierarchy:
 ```
 MultiProviderSearchService runs ALL available providers in parallel:
+  ├── CopilotSearchProvider ← grounded CopilotSDK native web_search
   ├── SearXNG              (if configured — best: free, self-hosted, no API key)
   ├── BraveSearchProvider  (if API key configured)
   ├── GoogleCseProvider    (if API key configured)
-  ├── LlmSearchProvider   ← ALWAYS available (LLM suggests + HTTP validates)
   └── NewsDataProvider    (if API key configured — news only)
 
 Results merged + deduped across all providers.
-Fresh install with zero config → LlmSearchProvider still provides discovery.
+Fresh install with Copilot configured → CopilotSearchProvider provides grounded discovery.
 ```
 
 ## Core Principle: LLM-First, No Silent Fallbacks
@@ -111,7 +110,7 @@ The LLM reasons, classifies, selects, and composes. It NEVER generates factual d
 ### Grounded Data Sources (priority order):
 ```
 1. Existing watches        — Every successful watch is a verified portal (self-growing catalog)
-2. Web search results      — SearXNG (default, self-hosted) / Brave / Google (if API keys configured)
+2. Web search results      — Copilot native `web_search` / SearXNG / Brave / Google
 3. Static seed catalogs    — job-watch-portals.json, sites.json (bootstrap for fresh installs)
 4. User-provided URLs      — Directly pasted by the user
 ```
@@ -136,7 +135,7 @@ Failed watches get flagged → removed from catalog suggestions
 - ❌ Skip the HTTP liveness check to save time
 
 ### Acceptable Patterns:
-- ✅ LLM suggests URLs → HTTP HEAD validates each → only live ones returned (LlmSearchProvider)
+- ✅ Copilot native `web_search` returns grounded results that the app can further validate/filter
 - ✅ LLM selects from a verified catalog by index number
 - ✅ LLM classifies/filters web search results (real URLs from real search engines)
 - ✅ LLM builds pipelines for validated URLs (its core strength)
@@ -196,10 +195,16 @@ The legacy DI registrations (individual pipeline stages, `IWatchSetupPipeline`) 
 - **Known platforms** (Workday, Teamtailor, Platsbanken, Workable): User pastes URL →
   platform detected from URL pattern → pipeline template generated with zero LLM calls →
   dry-run verified → watch created with full pipeline
+- **Unknown sites**: Fallback chain: template → LLM composable builder → generic scraper.
+  Pipeline is NEVER null — every portal gets at least a basic link-extraction pipeline.
 - **Pipeline execution**: 8/8 real API sources validated (Workday POST, Platsbanken GET,
   HTML sites, Playwright JS sites)
 - **All block types verified**: HttpRequest, JsonExtract, DataFilter, RelevanceScore,
   ForEachRequest, Iterate, ListDiff, ExtractSchema, Navigate+Playwright
+- **CopilotSDK native search**: Discovery uses Copilot's built-in `web_search` tool for
+  grounded results — works for any domain/country without external search engines
+- **Live Copenhagen retest**: "biology jobs in Copenhagen" created **14 watches** end-to-end
+  after catalog expansion and CopilotSDK search/tool fixes
 
 ### What Needs LLM (CopilotSDK):
 - **Unknown sites**: Pages without a pre-built template need LLM to analyze structure
@@ -208,11 +213,18 @@ The legacy DI registrations (individual pipeline stages, `IWatchSetupPipeline`) 
 - **LlmExtract block**: Fallback extraction when CSS selectors fail
 
 ### Known Limitations:
-- Search provider required for Group Watch discovery (SearXNG recommended — `docker run searxng/searxng`)
+- CopilotSDK search requires GitHub Copilot subscription (or BYOK API key)
 - LLM provider must be healthy for non-template sites
 - Profile scoring defaults are generic — user should customize keywords after creation
 - Detail page fetching (ForEachRequest) not included in default templates — available as
   a block the LLM can add
+- Single-instance only (WatchExecutionLock is in-memory ConcurrentDictionary)
+- **Berlin step-1 SignalR hang is resolved** — the `Channel<T>` producer/consumer split
+  removed the discovery-stream deadlock, so Berlin now advances into the search/analysis
+  phase instead of stalling before search starts.
+- **Remaining live issue**: non-catalog Berlin queries can still feel slow during
+  grounded search + analysis; this is now a latency problem in the search phase, not a
+  SignalR streaming deadlock.
 
 ### Infrastructure Requirements:
 ```
@@ -220,11 +232,51 @@ Required:
   - CopilotSDK (LLM)     — pipeline building, content classification, intent parsing
   - Playwright/Chromium   — JS-rendered sites (Teamtailor, Workable, SPAs)
 
-Required for Group Watch discovery:
-  - SearXNG (recommended) — self-hosted, no API key: docker run -p 8080:8080 searxng/searxng
+Search (at least one):
+  - CopilotSDK native     — now first-class and grounded (uses built-in web_search)
+  - SearXNG (recommended) — still excellent for self-hosted breadth: docker run -p 8080:8080 searxng/searxng
   - OR Brave Search API   — requires BraveApiKey in SearchSettings
   - OR Google CSE          — requires GoogleCseApiKey + GoogleCseEngineId
 
 Optional:
   - NewsData API          — for news/RSS monitoring (separate use case)
 ```
+
+### Stress Test Results / Current Score Baseline:
+- **34 issues fixed** across 7 phases (security, data integrity, core logic, reliability, UI, tooling, Phase 7)
+- **Opus 4.6 re-score**: 6/10 → 7.5/10
+- **GPT 5.4 re-score**: ~3.5/10 → **7.8/10**
+- **Remaining blocker**: non-catalog discovery is still slower than desired in the search
+  phase, even though the step-1 streaming hang is fixed
+- Key fixes: ThreadSafeLiteDbContext (DB corruption prevention), pipeline fallback chain
+  (unknown sites now get pipelines), CopilotSDK native search (real web search, not hallucination),
+  SkipInitialCheck inversion, wildcard domain bypass, prompt injection escape
+- **Current test-suite snapshot**: **2175 / 2270 passing**
+- **Current live-test snapshot**:
+  - Copenhagen: **14 watches created**
+  - Berlin: discovery now reaches **search/analysis** reliably; remaining issue is slow
+    non-catalog queries during the search phase
+- **Final GPT score**: **7.8/10**
+
+### Lessons Learned (Stress Test):
+1. **Don't shadow SDK built-in tools** — registering a custom `web_search` tool blocked Copilot's native search and routed to LLM hallucination instead
+2. **Measure product output, not plumbing** — "14 portals discovered" means nothing if 0 jobs are extracted. Metric should be "clickable job listings visible to user"
+3. **Fix product gaps before security** — security fixes don't help if the product doesn't work. Prioritize: search quality → pipeline quality → extraction quality → then harden
+4. **LiteDB Shared mode is NOT thread-safe for concurrent writers** — always wrap with SemaphoreSlim or use Exclusive mode
+5. **SemaphoreSlim.Wait() deadlocks in async ASP.NET** — always use WaitAsync() in async contexts
+6. **BoundedChannel with DropOldest silently loses data** — use Wait mode for critical persistence
+7. **Both stress-test models find different things** — GPT found SSRF/recursion/fail-open; Opus found DB corruption/wildcard bypass/double-init. Always run both.
+
+### Lessons Learned (Mar 23, 2026):
+1. **CopilotSDK tool restriction must be explicit** — `CopilotChatCompletionService` is a pure text-completion path, so it should prefer `AvailableTools = []` when the SDK honors an empty allow-list. If a future SDK ignores that, fall back to an explicit `ExcludedTools` blacklist and document that new SDK tools could still leak through. `CopilotSearchProvider` is the exception: it uses `AvailableTools = ["web_search"]` to allow search and nothing else.
+2. **CopilotSDK event handling must include reasoning + tool events** — handle `AssistantReasoningEvent`, `ToolExecutionStartEvent`, and `ToolExecutionCompleteEvent` alongside `AssistantMessageEvent` and `SessionIdleEvent`. Unknown future SDK events should be logged at **Trace** level, not Debug.
+3. **SignalR async iterator + singleton semaphore can deadlock** — streaming `IAsyncEnumerable` directly from a hub means the iterator runs on the SignalR connection pipeline. If that iterator awaits the singleton `ThreadSafeLiteDbContext` semaphore while a background service holds it, the stream can stall indefinitely. The correct fix is to decouple producer and transport with `Channel<T>`.
+4. **`#blazor-error-ui` is a red herring** — the DOM always contains the "An unhandled error has occurred" element. It only matters if it becomes visible. Check visibility / `style` before treating it as a real crash during Playwright debugging.
+5. **Blazor prerender + SignalR causes double initialization** — `InteractiveAuto` with prerender enabled triggers `OnAfterRenderAsync(firstRender: true)` during prerender and again after WASM hydration. Pages that open SignalR hub streams should use `@rendermode @(new InteractiveAutoRenderMode(prerender: false))`.
+6. **ThreadSafeLiteDbContext is a global bottleneck** — `SemaphoreSlim(1,1)` serializes all LiteDB operations across discovery, background services, hubs, and API endpoints. It prevents corruption but hurts read-heavy concurrency. Future options include `ReaderWriterLockSlim`, narrower critical sections, or timeout-based acquisition.
+7. **Tool-allowlist behavior needs re-validation on SDK upgrades** — if `AvailableTools = []` stops behaving like "disable everything," the fallback is an explicit `ExcludedTools` blacklist. Re-check this anytime the CopilotSDK version changes because new built-in tools could otherwise slip through.
+8. **SafeStream error propagation in C# async iterators is awkward but important** — `yield return` cannot appear inside a `catch`. Capture the error payload in a variable, exit the `catch`, yield once, then stop via a sentinel check.
+9. **Hosted services make tests hang** — `WebApplicationFactory<Program>` boots all `IHostedService` registrations unless explicitly removed. Tests should call `services.RemoveAll<IHostedService>()` to avoid Playwright download/setup work, background checkers, provider sync, and Ollama seeding from blocking completion.
+10. **TUnit filter syntax is easy to get wrong** — the test tree is four levels deep, so the reliable form is `--treenode-filter "/*/*/*/*TestMethodName*"`. Use `--list-tests` first when the filter does not match.
+11. **Catalog expansion matters as much as LLM quality** — the static portal catalog remains the main discovery source for known regions. Missing German / Dutch / Austrian / Swiss portals produced zero results regardless of prompt quality. Expand the catalog proactively; don't expect LLM search alone to fill regional gaps.
+12. **Pipeline port typing is now stricter** — after tightening compatibility rules, previously tolerated template pipelines can fail validation. Examples: `DiffResult → ExtractedObjects` and `PlainText → ExtractedObjects` are no longer accepted. Template graphs must use the correct port types explicitly.

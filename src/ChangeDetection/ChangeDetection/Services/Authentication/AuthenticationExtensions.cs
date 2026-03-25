@@ -47,7 +47,7 @@ public static class AuthenticationExtensions
             
             // Register user repository
             services.AddScoped<IRepository<User>>(sp => 
-                new LiteDbRepository<User>(sp.GetRequiredService<LiteDbContext>(), "users"));
+                new LiteDbRepository<User>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "users"));
         }
         else
         {
@@ -101,7 +101,6 @@ public static class AuthenticationExtensions
     /// SECURITY: This method implements defense-in-depth for header injection attacks:
     /// - By default, only loopback addresses are trusted
     /// - TrustedProxies must be explicitly configured for reverse proxy deployments
-    /// - TrustAllProxies is a dangerous option that should only be used in fully trusted networks
     /// </summary>
     private static void ConfigureForwardedHeaders(IServiceCollection services, AuthenticationSettings settings)
     {
@@ -110,16 +109,8 @@ public static class AuthenticationExtensions
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | 
                                        ForwardedHeaders.XForwardedProto |
                                        ForwardedHeaders.XForwardedHost;
-            
-            if (settings.TrustAllProxies)
-            {
-                // SECURITY WARNING: This is dangerous and allows header injection attacks!
-                // Only use in fully trusted network environments where the application
-                // is not directly accessible from untrusted networks.
-                options.KnownIPNetworks.Clear();
-                options.KnownProxies.Clear();
-            }
-            else if (settings.TrustedProxies.Count > 0)
+
+            if (settings.TrustedProxies.Count > 0)
             {
                 // Clear defaults and add only explicitly trusted proxies
                 options.KnownIPNetworks.Clear();
@@ -150,7 +141,7 @@ public static class AuthenticationExtensions
                     }
                 }
             }
-            // If neither TrustAllProxies nor TrustedProxies is configured,
+            // If no TrustedProxies are configured,
             // keep the default behavior which only trusts loopback addresses.
             // This is the most secure default.
         });

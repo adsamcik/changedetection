@@ -48,9 +48,10 @@ public partial class WatchDashboardCard
             if (blockTypes.Contains("route"))
                 return CardType.MultiSignal;
         }
-        catch
+                catch (Exception ex)
         {
             // Malformed pipeline JSON
+            Console.WriteLine($"[WatchDashboardCard.razor] Error in GetCardType: {ex.Message}");
         }
 
         return CardType.Default;

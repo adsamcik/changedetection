@@ -778,6 +778,36 @@ public class ChangeCheckBackgroundService : BackgroundService
                     {
                         var detector = new OutreachSignalDetector();
                         var assessment = detector.Analyze(content, watch.Name);
+
+                        // Optional LLM enrichment for ambiguous scores (3.0–7.0)
+                        if (assessment.OverallScore is >= 3.0f and <= 7.0f)
+                        {
+                            var llmChain = sp.GetService<ILlmProviderChain>();
+                            if (llmChain is not null)
+                            {
+                                try
+                                {
+                                    var healthStatuses = await llmChain.GetHealthStatusAsync(ct);
+                                    if (healthStatuses.Any(h => h.IsHealthy && h.IsEnabled))
+                                    {
+                                        var companyName = watch.Name ?? new Uri(watch.Url, UriKind.RelativeOrAbsolute).Host;
+                                        assessment = await detector.EnrichWithLlmAsync(
+                                            assessment, content, companyName, llmChain, ct);
+
+                                        _logger.LogDebug(
+                                            "LLM enriched outreach assessment for watch {WatchId}: score {OldScore} → {NewScore}",
+                                            watch.Id, assessment.OverallScore, assessment.OverallScore);
+                                    }
+                                }
+                                catch (Exception llmEx)
+                                {
+                                    _logger.LogDebug(llmEx,
+                                        "LLM outreach enrichment failed for watch {WatchId}, using regex-only assessment",
+                                        watch.Id);
+                                }
+                            }
+                        }
+
                         watch.OutreachAssessmentJson = OutreachSignalDetector.Serialize(assessment);
                         watch.OutreachLastScannedAt = DateTime.UtcNow;
 

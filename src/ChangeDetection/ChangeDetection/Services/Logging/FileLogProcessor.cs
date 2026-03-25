@@ -56,7 +56,7 @@ public sealed class FileLogProcessor : BaseProcessor<LogRecord>, IDisposable
 
     private void EnsureWriter()
     {
-        var today = DateTime.Now.ToString("yyyy-MM-dd");
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
         if (today == _currentDate && _writer is not null)
         {
             return;
@@ -89,15 +89,18 @@ public sealed class FileLogProcessor : BaseProcessor<LogRecord>, IDisposable
                 {
                     File.Delete(file);
                 }
-                catch
+                                catch (Exception ex)
                 {
-                    // Ignore cleanup errors
+                    // Ignore cleanup errors — this runs inside the log processor itself
+                    // so using ILogger here would risk infinite recursion
+                    Console.WriteLine($"[FileLogProcessor] Error in CleanupOldFiles: {ex.Message}");
                 }
             }
         }
-        catch
+                catch (Exception ex)
         {
-            // Ignore cleanup errors
+            // Ignore cleanup errors — cannot use ILogger inside a log processor
+            Console.WriteLine($"[FileLogProcessor] Error in CleanupOldFiles: {ex.Message}");
         }
     }
 
