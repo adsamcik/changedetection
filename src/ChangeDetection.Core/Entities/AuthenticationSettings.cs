@@ -52,21 +52,9 @@ public class AuthenticationSettings
     public List<string> TrustedProxies { get; set; } = [];
     
     /// <summary>
-    /// SECURITY WARNING: When set to true, forwarded headers are accepted from ANY source.
-    /// This is DANGEROUS and should only be used in fully trusted network environments
-    /// where the application is not directly accessible from the internet.
-    /// 
-    /// This setting allows header injection attacks where an attacker can spoof
-    /// Remote-User and other authentication headers to impersonate any user.
-    /// 
-    /// Recommended: Keep this false and configure TrustedProxies with specific addresses.
-    /// </summary>
-    public bool TrustAllProxies { get; set; } = false;
-    
-    /// <summary>
-    /// Maximum length allowed for username header values.
-    /// Values exceeding this length will be rejected.
-    /// </summary>
+     /// Maximum length allowed for username header values.
+     /// Values exceeding this length will be rejected.
+     /// </summary>
     public int MaxUsernameLength { get; set; } = 256;
     
     /// <summary>

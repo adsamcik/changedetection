@@ -87,3 +87,26 @@ public class OutreachWatchDto
     public float OverallScore { get; set; }
     public List<OutreachSignalDto> Signals { get; set; } = [];
 }
+
+/// <summary>
+/// Export format for outreach-friendly companies, suitable for LaTeX report generation.
+/// </summary>
+public class OutreachExportDto
+{
+    public string GroupId { get; set; } = "";
+    public string GroupName { get; set; } = "";
+    public DateTime ExportedAt { get; set; }
+    public List<OutreachExportCompanyDto> Companies { get; set; } = [];
+}
+
+/// <summary>
+/// A single outreach-friendly company in the export.
+/// </summary>
+public class OutreachExportCompanyDto
+{
+    public string Name { get; set; } = "";
+    public string Url { get; set; } = "";
+    public float Score { get; set; }
+    public List<string> Signals { get; set; } = [];
+    public string OutreachChannel { get; set; } = "";
+}
