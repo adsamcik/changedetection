@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.slnx') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build app
+        run: dotnet build --no-restore
+
+      - name: Build tests (ChangeDetection.Tests)
+        run: dotnet build tests/ChangeDetection.Tests/ChangeDetection.Tests.csproj --no-restore
+
+      - name: Build tests (ChangeDetection.Core.Tests)
+        run: dotnet build tests/ChangeDetection.Core.Tests/ChangeDetection.Core.Tests.csproj --no-restore
+
+      - name: Run tests (ChangeDetection.Tests)
+        shell: pwsh
+        # TUnit test projects are executables (OutputType=Exe); use the repo wrapper instead of dotnet test/direct dotnet run.
+        run: ./test.ps1 -Project tests/ChangeDetection.Tests -NoBuild -TailLines 0
+
+      - name: Run tests (ChangeDetection.Core.Tests)
+        shell: pwsh
+        run: ./test.ps1 -Project tests/ChangeDetection.Core.Tests -NoBuild -TailLines 0
+
+      - name: Check for vulnerable packages
+        run: dotnet list package --vulnerable --include-transitive
