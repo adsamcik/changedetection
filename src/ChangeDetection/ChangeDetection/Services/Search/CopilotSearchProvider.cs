@@ -1,56 +1,81 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChangeDetection.Core.Interfaces;
 using GitHub.Copilot.SDK;
-using Microsoft.Extensions.AI;
 
 namespace ChangeDetection.Services.Search;
 
 /// <summary>
-/// Search provider that uses the GitHub Copilot SDK with tool calling enabled.
-/// Registers a custom "web_search" AIFunction tool so the model can request
-/// real search results during the session. When the model invokes the tool,
-/// we dispatch to the other configured search providers via
-/// <see cref="MultiProviderSearchService"/> (the model then summarises/ranks
-/// those results in its final answer).
+/// Search provider that uses the GitHub Copilot SDK's native web search capability.
+/// The Copilot model can browse the web natively — we simply ask it to search and
+/// parse structured results from its response. No custom tool registration needed;
+/// the model's built-in search produces grounded, real URLs (not hallucinated).
 /// </summary>
 public class CopilotSearchProvider : ISearchProvider
 {
+    private static readonly TimeSpan DefaultStartTimeout = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan DefaultSearchTimeout = TimeSpan.FromSeconds(TimeoutSeconds);
+
     private readonly CopilotClient? _client;
-    private readonly MultiProviderSearchService _multiProvider;
     private readonly ILogger<CopilotSearchProvider> _logger;
-    private readonly Lock _startLock = new();
-    private bool _clientStarted;
+    private readonly SemaphoreSlim _startLock = new(1, 1);
+    private readonly TimeSpan _startTimeout;
+    private readonly TimeSpan _searchTimeout;
+    private const int TimeoutSeconds = 60;
 
     public string ProviderId => "copilot";
     public string DisplayName => "Copilot Web Search";
 
-    /// <summary>Only available if a CopilotClient was injected (Copilot is configured).</summary>
-    public bool IsAvailable => _client is not null;
+    /// <summary>Available only after the Copilot client has fully connected.</summary>
+    public bool IsAvailable => _client?.State == ConnectionState.Connected;
+    internal bool CanInitialize => _client is not null;
 
     public CopilotSearchProvider(
         CopilotClient? client,
-        MultiProviderSearchService multiProvider,
         ILogger<CopilotSearchProvider> logger)
+        : this(client, logger, DefaultSearchTimeout, DefaultStartTimeout)
     {
-        _client = client;
-        _multiProvider = multiProvider;
-        _logger = logger;
     }
 
-    private async Task EnsureClientStartedAsync()
+    internal CopilotSearchProvider(
+        CopilotClient? client,
+        ILogger<CopilotSearchProvider> logger,
+        TimeSpan searchTimeout,
+        TimeSpan startTimeout)
     {
-        if (_clientStarted || _client is null) return;
+        _client = client;
+        _logger = logger;
+        _searchTimeout = searchTimeout;
+        _startTimeout = startTimeout;
+    }
 
-        lock (_startLock)
+    private async Task EnsureClientStartedAsync(CancellationToken ct = default)
+    {
+        if (_client is null) return;
+        if (_client.State == ConnectionState.Connected) return;
+
+        await _startLock.WaitAsync(ct);
+        try
         {
-            if (_clientStarted) return;
-        }
+            if (_client.State == ConnectionState.Connected) return;
 
-        await _client.StartAsync();
-        _clientStarted = true;
+            using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            startCts.CancelAfter(_startTimeout);
+
+            try
+            {
+                await _client.StartAsync(startCts.Token);
+            }
+            catch (OperationCanceledException) when (startCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Copilot client failed to start within {_startTimeout.TotalSeconds:0} seconds");
+            }
+        }
+        finally
+        {
+            _startLock.Release();
+        }
     }
 
     public async Task<SearchResultSet> SearchAsync(SearchQuery query, CancellationToken ct = default)
@@ -71,7 +96,7 @@ public class CopilotSearchProvider : ISearchProvider
 
         try
         {
-            await EnsureClientStartedAsync();
+            await EnsureClientStartedAsync(ct);
 
             var results = await ExecuteSearchSessionAsync(query, ct);
 
@@ -116,42 +141,16 @@ public class CopilotSearchProvider : ISearchProvider
     private async Task<List<CopilotSearchResult>> ExecuteSearchSessionAsync(
         SearchQuery query, CancellationToken ct)
     {
-        // Register a web_search tool via the public AIFunction API.
-        // When the model decides to search, our delegate executes
-        // using the other configured providers (SearXNG, Brave, Google, etc.).
-        var toolResults = new List<CopilotSearchResult>();
-
-        var searchFunc = AIFunctionFactory.Create(
-            async ([Description("The search query")] string searchQuery) =>
-            {
-                var multiResult = await _multiProvider.SearchAllAsync(
-                    new SearchQuery { Query = searchQuery, MaxResults = 20 },
-                    ct: ct);
-
-                foreach (var merged in multiResult.MergedResults.Take(20))
-                {
-                    toolResults.Add(new CopilotSearchResult
-                    {
-                        Url = merged.Url,
-                        Title = merged.Title,
-                        Snippet = merged.Snippet
-                    });
-                }
-
-                return JsonSerializer.Serialize(
-                    toolResults.Select(r => new { r.Url, r.Title, r.Snippet }),
-                    JsonOptions);
-            },
-            "web_search",
-            "Search the web for current information. Returns JSON array of results with url, title, and snippet.");
-
+        // Use Copilot's NATIVE web search — the SDK enables all first-party tools
+        // by default (equivalent to --allow-all), which includes web_search.
+        // We restrict to only web_search to avoid unnecessary tool calls.
         var session = await _client!.CreateSessionAsync(new SessionConfig
         {
             Model = "gpt-5",
             Streaming = false,
             InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
             OnPermissionRequest = PermissionHandler.ApproveAll,
-            Tools = [searchFunc]
+            AvailableTools = ["web_search"]
         });
 
         var sessionId = session.SessionId;
@@ -182,25 +181,32 @@ public class CopilotSearchProvider : ISearchProvider
             ct.Register(() => completionSource.TrySetCanceled(ct));
 
             var prompt = $$"""
-                Use the web_search tool to search for: "{{query.Query}}"
+                Search the web for: "{{query.Query}}"
                 
-                After getting search results, return them as a JSON array with objects containing "url", "title", and "snippet" fields.
-                Focus on real, currently-live web pages. Return up to {{query.MaxResults}} results.
-                
-                Return ONLY the JSON array, no other text:
+                Find real, currently-live career portals and job boards for this search.
+                Return results as a JSON array with objects containing "url", "title", and "snippet" fields.
+                Return up to {{query.MaxResults}} results. Return ONLY the JSON array, no other text:
                 [{"url":"https://...","title":"...","snippet":"..."}]
                 """;
 
             await session.SendAsync(new MessageOptions { Prompt = prompt });
 
-            var result = await completionSource.Task;
+            var parsedResultsTask = completionSource.Task.ContinueWith(
+                static task => ParseResponseForResults(task.GetAwaiter().GetResult()),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
 
-            // If we got results from the tool execution, prefer those (grounded in real search).
-            // Otherwise parse the assistant's text response for URLs.
-            if (toolResults.Count > 0)
-                return toolResults;
+            var (timedOut, results) = await AwaitResultsOrTimeoutAsync(parsedResultsTask, _searchTimeout, ct);
+            if (timedOut)
+            {
+                _logger.LogWarning(
+                    "Copilot search timed out after {Timeout}s for query: {Query}",
+                    _searchTimeout.TotalSeconds, query.Query);
+                return [];
+            }
 
-            return ParseResponseForResults(result);
+            return results;
         }
         finally
         {
@@ -211,6 +217,18 @@ public class CopilotSearchProvider : ISearchProvider
                 _logger.LogDebug(ex, "Failed to delete Copilot search session {SessionId}", sessionId);
             }
         }
+    }
+
+    internal static async Task<(bool TimedOut, List<T> Results)> AwaitResultsOrTimeoutAsync<T>(
+        Task<List<T>> resultsTask,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var completed = await Task.WhenAny(resultsTask, Task.Delay(timeout, ct));
+        if (completed != resultsTask)
+            return (true, []);
+
+        return (false, await resultsTask);
     }
 
     private static List<CopilotSearchResult> ParseResponseForResults(string response)
@@ -228,26 +246,62 @@ public class CopilotSearchProvider : ISearchProvider
         }
         if (content.EndsWith("```")) content = content[..^3].TrimEnd();
 
-        // Find the JSON array in the response
-        var arrayStart = content.IndexOf('[');
-        var arrayEnd = content.LastIndexOf(']');
-        if (arrayStart < 0 || arrayEnd <= arrayStart)
+        // Find the JSON array — use bracket matching to find the correct array,
+        // not just first '[' and last ']' which breaks on prose like "results [1]..."
+        var parsed = TryExtractJsonArray(content);
+        if (parsed is null)
             return [];
 
-        content = content[arrayStart..(arrayEnd + 1)];
+        return parsed
+            .Where(r => !string.IsNullOrWhiteSpace(r.Url) &&
+                        Uri.TryCreate(r.Url, UriKind.Absolute, out var uri) &&
+                        (uri.Scheme == "https" || uri.Scheme == "http"))
+            .ToList();
+    }
 
+    private static List<CopilotSearchResult>? TryExtractJsonArray(string content)
+    {
+        // Try parsing the whole content first (ideal case: pure JSON)
+        var list = TryDeserialize(content);
+        if (list is not null) return list;
+
+        // Find JSON arrays by bracket matching — try each '[' position
+        for (var i = 0; i < content.Length; i++)
+        {
+            if (content[i] != '[') continue;
+
+            var depth = 0;
+            for (var j = i; j < content.Length; j++)
+            {
+                if (content[j] == '[') depth++;
+                else if (content[j] == ']') depth--;
+
+                if (depth != 0) continue;
+
+                var candidate = content[i..(j + 1)];
+                list = TryDeserialize(candidate);
+                if (list is not null) return list;
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    private static List<CopilotSearchResult>? TryDeserialize(string json)
+    {
         try
         {
-            var results = JsonSerializer.Deserialize<List<CopilotSearchResult>>(content, JsonOptions);
-            return results?
-                .Where(r => !string.IsNullOrWhiteSpace(r.Url) &&
-                            Uri.TryCreate(r.Url, UriKind.Absolute, out var uri) &&
-                            (uri.Scheme == "https" || uri.Scheme == "http"))
-                .ToList() ?? [];
+            var results = JsonSerializer.Deserialize<List<CopilotSearchResult>>(json, JsonOptions);
+            // Must be non-empty AND contain at least one item with a url — prevents
+            // false positives on prose like "[1]" or "[see above]" which parse as JSON arrays
+            return results is { Count: > 0 } && results.Any(r => !string.IsNullOrWhiteSpace(r.Url))
+                ? results
+                : null;
         }
         catch (JsonException)
         {
-            return [];
+            return null;
         }
     }
 

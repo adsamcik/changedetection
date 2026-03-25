@@ -15,24 +15,27 @@ public class MultiProviderSearchService(
     /// <summary>
     /// Returns true if at least one search provider is configured and available.
     /// </summary>
-    public bool HasAvailableProviders() => providers.Any(p => p.IsAvailable);
+    public bool HasAvailableProviders() => providers.Any(CanExecuteProvider);
 
     /// <summary>
     /// Searches across all available providers (or specified subset) and merges results.
     /// </summary>
     /// <param name="query">The search query.</param>
     /// <param name="providerIds">Optional subset of provider IDs. Null = all available.</param>
+    /// <param name="excludeProviderIds">Optional provider IDs to exclude from execution.</param>
     /// <param name="ct">Cancellation token.</param>
     public async Task<MultiProviderResultSet> SearchAllAsync(
         SearchQuery query,
         IReadOnlyList<string>? providerIds = null,
+        IReadOnlyList<string>? excludeProviderIds = null,
         CancellationToken ct = default)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         var targetProviders = providers
-            .Where(p => p.IsAvailable)
+            .Where(CanExecuteProvider)
             .Where(p => providerIds is null || providerIds.Contains(p.ProviderId))
+            .Where(p => excludeProviderIds is null || !excludeProviderIds.Contains(p.ProviderId))
             .ToList();
 
         if (targetProviders.Count == 0)
@@ -84,6 +87,10 @@ public class MultiProviderSearchService(
             return null;
         }
     }
+
+    private static bool CanExecuteProvider(ISearchProvider provider) =>
+        provider.IsAvailable ||
+        provider is CopilotSearchProvider { CanInitialize: true };
 
     /// <summary>
     /// Merges results from multiple providers, deduplicating by URL.

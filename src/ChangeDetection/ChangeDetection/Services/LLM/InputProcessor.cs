@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Core.Pipeline;
 
 namespace ChangeDetection.Services.LLM;
 
@@ -191,6 +192,7 @@ public partial class InputProcessor : IInputProcessor
 
     private async Task<IntentType> ClassifyIntentAsync(string input, CancellationToken ct)
     {
+        var sanitizedInput = PromptSanitizer.SanitizeForPrompt(input, "user_input");
         var prompt = $"""
             Classify the user's intent from the following input. Respond with ONLY one of these exact words:
             - CreateWatch: User wants to monitor/watch a website for changes
@@ -199,9 +201,10 @@ public partial class InputProcessor : IInputProcessor
             - QueryStatus: User wants to know the status of watches or check for changes
             - ListWatches: User wants to see their list of watches
             - Help: User is asking for help or information about how to use the system
-
-            User input: "{input}"
-
+            
+            User input:
+            {sanitizedInput}
+            
             Intent:
             """;
 
@@ -233,10 +236,13 @@ public partial class InputProcessor : IInputProcessor
 
     private async Task<ParsedWatchRequest> ExtractEntitiesAsync(string input, IntentType intent, CancellationToken ct)
     {
+        _ = intent;
+        var sanitizedInput = PromptSanitizer.SanitizeForPrompt(input, "user_input");
         var prompt = $$"""
             Extract structured information from the user's request to set up website monitoring.
             
-            User input: "{{input}}"
+            User input:
+            {{sanitizedInput}}
             
             Extract the following fields and respond in JSON format:
             {
@@ -274,7 +280,7 @@ public partial class InputProcessor : IInputProcessor
             var json = response.Content.Trim();
             if (json.StartsWith("```"))
             {
-                json = json.Split('\n').Skip(1).TakeWhile(l => !l.StartsWith("```")).Aggregate((a, b) => a + "\n" + b);
+                json = string.Join("\n", json.Split('\n').Skip(1).TakeWhile(l => !l.StartsWith("```")));
             }
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };

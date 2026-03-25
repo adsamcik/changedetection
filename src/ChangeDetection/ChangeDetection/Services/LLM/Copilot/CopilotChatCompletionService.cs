@@ -80,19 +80,8 @@ public class CopilotChatCompletionService : IChatCompletionService
         await EnsureClientStartedAsync(cancellationToken);
 
         // Create a session for this request (disable infinite sessions for simpler lifecycle).
-        // AvailableTools = [] disables all tool invocation — this is a pure text-completion
-        // service and the model must not invoke web_search, file tools, etc.  Without this
-        // restriction gpt-5 attempts tool calls on complex prompts, causing the session to
-        // hang (AssistantMessageEvent / SessionIdleEvent never fire).
         _logger?.LogDebug("Creating non-streaming session with model {Model}", _model);
-        var session = await _client.CreateSessionAsync(new SessionConfig
-        {
-            Model = _model,
-            Streaming = false,
-            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
-            OnPermissionRequest = PermissionHandler.ApproveAll,
-            AvailableTools = []
-        });
+        var session = await _client.CreateSessionAsync(CreateTextCompletionSessionConfig(streaming: false));
 
         var sessionId = session.SessionId;
         _logger?.LogInformation("Created non-streaming session {SessionId} (model: {Model})", sessionId, _model);
@@ -225,16 +214,8 @@ public class CopilotChatCompletionService : IChatCompletionService
         await EnsureClientStartedAsync(cancellationToken);
 
         // Create a streaming session (disable infinite sessions for simpler lifecycle).
-        // AvailableTools = [] — same rationale as the non-streaming path above.
         _logger?.LogDebug("Creating streaming session with model {Model}", _model);
-        var session = await _client.CreateSessionAsync(new SessionConfig
-        {
-            Model = _model,
-            Streaming = true,
-            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
-            OnPermissionRequest = PermissionHandler.ApproveAll,
-            AvailableTools = []
-        });
+        var session = await _client.CreateSessionAsync(CreateTextCompletionSessionConfig(streaming: true));
 
         var sessionId = session.SessionId;
         _logger?.LogInformation("Created streaming session {SessionId} (model: {Model})", sessionId, _model);
@@ -273,6 +254,11 @@ public class CopilotChatCompletionService : IChatCompletionService
                             sessionId, streamEventCount);
                         writer.TryComplete();
                         break;
+                    case AssistantReasoningEvent reasoning:
+                        _logger?.LogDebug(
+                            "Streaming session {SessionId}: AssistantReasoningEvent ({Length} chars)",
+                            sessionId, reasoning.Data.Content?.Length ?? 0);
+                        break;
                     case SessionErrorEvent err:
                         _logger?.LogError(
                             "Streaming session {SessionId}: SessionErrorEvent — {Message}",
@@ -280,9 +266,19 @@ public class CopilotChatCompletionService : IChatCompletionService
                         writer.TryComplete(
                             new InvalidOperationException($"Copilot session error: {err.Data.Message}"));
                         break;
-                    default:
+                    case ToolExecutionStartEvent:
                         _logger?.LogDebug(
-                            "Streaming session {SessionId}: Unhandled event {EventType}",
+                            "Streaming session {SessionId}: Tool execution started",
+                            sessionId);
+                        break;
+                    case ToolExecutionCompleteEvent:
+                        _logger?.LogDebug(
+                            "Streaming session {SessionId}: Tool execution completed",
+                            sessionId);
+                        break;
+                    default:
+                        _logger?.LogTrace(
+                            "Streaming session {SessionId}: Event type {EventType} (not handled explicitly)",
                             sessionId, evt.GetType().Name);
                         break;
                 }
@@ -314,6 +310,17 @@ public class CopilotChatCompletionService : IChatCompletionService
             }
         }
     }
+
+    private SessionConfig CreateTextCompletionSessionConfig(bool streaming) =>
+        new()
+        {
+            Model = _model,
+            Streaming = streaming,
+            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            // Empty allow-list => no tool execution in text-completion mode.
+            AvailableTools = []
+        };
 
     /// <summary>
     /// Converts Semantic Kernel ChatHistory to a single prompt string for Copilot.
