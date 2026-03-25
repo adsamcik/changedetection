@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Net;
+using System.Threading.Channels;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChangeDetection.Core.Entities;
@@ -85,6 +88,8 @@ public class GroupWatchDiscoveryService(
     SetupFlowEnhancements setupFlowEnhancements,
     IComposableSetupPipeline composableSetupPipeline,
     IHttpClientFactory httpClientFactory,
+    IServiceScopeFactory serviceScopeFactory,
+    IWatchExecutionLock watchExecutionLock,
     ILogger<GroupWatchDiscoveryService> logger,
     IOptions<GroupWatchDiscoveryOptions>? options = null) : IGroupWatchDiscoveryService
 {
@@ -92,6 +97,11 @@ public class GroupWatchDiscoveryService(
     {
         PropertyNameCaseInsensitive = true
     };
+    private static readonly TimeSpan IntentParsingTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan PortalClassificationTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PipelineBuildTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan WarmupBuildTimeout = TimeSpan.FromSeconds(60);
+    private const int PipelineBuildConcurrency = 4;
 
     private readonly GroupWatchDiscoveryOptions _options = options?.Value ?? new GroupWatchDiscoveryOptions();
 
@@ -114,7 +124,18 @@ public class GroupWatchDiscoveryService(
         GroupWatchProgress? failureProgress = null;
         try
         {
-            parsedIntent = await ParseIntentAsync(userInput, ct);
+            using var intentTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            intentTimeout.CancelAfter(IntentParsingTimeout);
+            parsedIntent = await ParseIntentAsync(userInput, intentTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Intent parsing timed out for discovery request: {Intent}", userInput);
+            failureProgress = CreateProgress(
+                GroupWatchPhase.Complete,
+                "Intent parsing timed out. Please try again.",
+                completedCount: 0,
+                totalCount: 0);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -154,9 +175,35 @@ public class GroupWatchDiscoveryService(
 
         List<DiscoveredPortal>? portals = null;
         failureProgress = null;
+
+        var progressChannel = Channel.CreateUnbounded<GroupWatchProgress>();
+        var discoveryTask = Task.Run(async () =>
+        {
+            try
+            {
+                return await DiscoverPortalsViaSearchAsync(parsedIntent, userInput, ct, progressChannel.Writer);
+            }
+            finally
+            {
+                progressChannel.Writer.TryComplete();
+            }
+        }, ct);
+
+        // Ensure channel completes even if Task.Run rejects the work item (e.g. already-cancelled token)
+        _ = discoveryTask.ContinueWith(
+            _ => progressChannel.Writer.TryComplete(),
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+
+        await foreach (var intermediateProgress in progressChannel.Reader.ReadAllAsync(ct))
+        {
+            yield return intermediateProgress;
+        }
+
         try
         {
-            portals = await DiscoverPortalsViaSearchAsync(parsedIntent, userInput, ct);
+            portals = await discoveryTask;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -264,7 +311,19 @@ public class GroupWatchDiscoveryService(
         GroupWatchProgress? parseFailure = null;
         try
         {
-            parsedIntent = await ParseIntentAsync(userInput, ct);
+            using var intentTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            intentTimeout.CancelAfter(IntentParsingTimeout);
+            parsedIntent = await ParseIntentAsync(userInput, intentTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Intent re-parsing timed out during watch creation: {Intent}", userInput);
+            parseFailure = CreateProgress(
+                GroupWatchPhase.Complete,
+                "Intent parsing timed out. Please try again.",
+                completedCount: 0,
+                totalCount: 0);
+            parsedIntent = new StructuredDiscoveryIntent();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -311,9 +370,18 @@ public class GroupWatchDiscoveryService(
             groupId: group.Id,
             watchIds: watchIds);
 
+        var preparedPortals = await PreparePortalBuildsAsync(
+            portals,
+            userInput,
+            parsedIntent,
+            positiveKeywords,
+            negativeKeywords,
+            ct);
+
         for (var i = 0; i < portals.Count; i++)
         {
-            var portal = portals[i];
+            var preparedPortal = preparedPortals[i];
+            var portal = preparedPortal.Portal;
 
             // Signal that we're starting this portal so the UI updates immediately
             yield return CreateProgress(
@@ -324,17 +392,7 @@ public class GroupWatchDiscoveryService(
                 groupId: group.Id,
                 watchIds: [.. watchIds]);
 
-            // Validate URL before attempting watch creation
-            UrlValidationResult? validation = null;
-            try
-            {
-                validation = await ValidatePortalUrlAsync(portal.Url, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "URL validation threw for {PortalUrl}", portal.Url);
-                validation = new UrlValidationResult(false, $"Validation error: {ex.Message}", 0);
-            }
+            var validation = preparedPortal.Validation;
 
             if (validation is { IsValid: false })
             {
@@ -358,28 +416,10 @@ public class GroupWatchDiscoveryService(
             GroupWatchProgress? watchProgress = null;
             try
             {
-                PipelineDefinition? pipeline = null;
+                if (preparedPortal.Error is not null)
+                    throw preparedPortal.Error;
 
-                using var portalTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                portalTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-
-                try
-                {
-                    pipeline = await BuildPipelineForPortalAsync(
-                        portal,
-                        userInput,
-                        parsedIntent,
-                        positiveKeywords,
-                        negativeKeywords,
-                        portalTimeout.Token);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    logger.LogWarning(
-                        "Pipeline building timed out for {PortalUrl} — creating watch without pipeline for lazy generation",
-                        portal.Url);
-                    pipeline = null;
-                }
+                var pipeline = preparedPortal.Pipeline;
 
                 var watchId = await CreateWatchForPortalAsync(
                     portal,
@@ -398,8 +438,101 @@ public class GroupWatchDiscoveryService(
                 }
                 else
                 {
-                    pipelineNote = " (needs individual setup)";
+                    pipelineNote = " (building pipeline in background)";
                     needsSetupPortals.Add(new SetupNeededPortal(watchId, portal.Url, portal.Domain));
+
+                    // Fire-and-forget: immediately queue headless pipeline build
+                    // instead of waiting up to 1 min for the background service cycle
+                    var warmupWatchId = watchId;
+                    var warmupUrl = portal.Url;
+                    var warmupIntent = userInput;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            logger.LogInformation(
+                                "Warm-up: starting immediate headless build for watch {WatchId} ({Url})",
+                                warmupWatchId, warmupUrl);
+                            
+                            using var scope = serviceScopeFactory.CreateScope();
+                            var sp = scope.ServiceProvider;
+                            var composable = sp.GetService<IComposableSetupPipeline>();
+                            if (composable is null) return;
+
+                            if (watchExecutionLock.IsRunning(warmupWatchId))
+                            {
+                                logger.LogDebug(
+                                    "Warm-up: skipping immediate headless build for watch {WatchId} because another execution already holds the lock",
+                                    warmupWatchId);
+                                return;
+                            }
+
+                            if (!watchExecutionLock.TryAcquire(warmupWatchId))
+                            {
+                                logger.LogDebug(
+                                    "Warm-up: skipping immediate headless build for watch {WatchId} because the execution lock could not be acquired",
+                                    warmupWatchId);
+                                return;
+                            }
+
+                            try
+                            {
+                                var watchRepo = sp.GetRequiredService<IRepository<WatchedSite>>();
+                                var watch = await watchRepo.GetByIdAsync(warmupWatchId, ct);
+                                if (watch is null || !string.IsNullOrEmpty(watch.PipelineDefinitionJson))
+                                    return;
+
+                                logger.LogInformation(
+                                    "Warm-up: attempting immediate headless pipeline build for watch {WatchId} ({Url})",
+                                    warmupWatchId, warmupUrl);
+
+                                using var warmupTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                                warmupTimeout.CancelAfter(WarmupBuildTimeout);
+                                var pipeline = await composable.BuildPipelineHeadlessAsync(
+                                    warmupUrl, warmupIntent, warmupTimeout.Token);
+
+                                if (pipeline is not null)
+                                {
+                                    watch.PipelineDefinitionJson = PipelineSerializer.Serialize(pipeline);
+                                    watch.NeedsPipelineSetup = false;
+                                    watch.HeadlessBuildAttempts = 0;
+                                    watch.LastError = null;
+                                    watch.UpdatedAt = DateTime.UtcNow;
+                                    await watchRepo.UpdateAsync(watch, ct);
+
+                                    logger.LogInformation(
+                                        "Warm-up: headless pipeline built successfully for watch {WatchId}: {BlockCount} blocks",
+                                        warmupWatchId, pipeline.Blocks.Count);
+                                }
+                                else
+                                {
+                                    watch.HeadlessBuildAttempts++;
+                                    watch.UpdatedAt = DateTime.UtcNow;
+                                    await watchRepo.UpdateAsync(watch, ct);
+                                    
+                                    logger.LogInformation(
+                                        "Warm-up: headless pipeline build returned null for watch {WatchId}",
+                                        warmupWatchId);
+                                }
+                            }
+                            finally
+                            {
+                                watchExecutionLock.Release(warmupWatchId);
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            logger.LogWarning(
+                                "Warm-up: headless pipeline build cancelled/timed out for watch {WatchId} — will retry on next background cycle",
+                                warmupWatchId);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex,
+                                "Warm-up: headless pipeline build failed for watch {WatchId} — will retry on next background cycle",
+                                warmupWatchId);
+                        }
+                    }, ct);
                 }
 
                 logger.LogInformation(
@@ -460,7 +593,8 @@ public class GroupWatchDiscoveryService(
     private async Task<List<DiscoveredPortal>> DiscoverPortalsViaSearchAsync(
         StructuredDiscoveryIntent parsedIntent,
         string userInput,
-        CancellationToken ct)
+        CancellationToken ct,
+        ChannelWriter<GroupWatchProgress>? progressWriter = null)
     {
         var searchQueries = BuildSearchQueries(parsedIntent, userInput);
 
@@ -476,6 +610,13 @@ public class GroupWatchDiscoveryService(
         logger.LogInformation(
             "Discovery sources: {WebCount} from web search, {CatalogCount} from catalog",
             webResults.Count, catalogResults.Count);
+
+        if (progressWriter is not null)
+            await progressWriter.WriteAsync(CreateProgress(
+                GroupWatchPhase.Searching,
+                $"Found {webResults.Count} web results and {catalogResults.Count} catalog matches. Classifying...",
+                completedCount: webResults.Count + catalogResults.Count,
+                totalCount: null), ct);
 
         // Merge both sources into one flat list, dedup by domain
         var merged = new List<SearchResultEnvelope>();
@@ -495,33 +636,178 @@ public class GroupWatchDiscoveryService(
         }
 
         // LLM classification — evaluate each URL: is it a career portal?
-        var classifiedPortals = await ClassifyPortalsViaLlmAsync(parsedIntent, userInput, merged, ct);
+        if (progressWriter is not null)
+            await progressWriter.WriteAsync(CreateProgress(
+                GroupWatchPhase.Searching,
+                $"Classifying {merged.Count} candidates via AI...",
+                completedCount: 0,
+                totalCount: merged.Count), ct);
 
-        // URL validation — HTTP HEAD check each approved portal
-        var validatedPortals = new List<DiscoveredPortal>();
-        foreach (var portal in classifiedPortals)
+        List<DiscoveredPortal> classifiedPortals;
+        try
         {
+            using var classificationTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            classificationTimeout.CancelAfter(PortalClassificationTimeout);
+            classifiedPortals = await ClassifyPortalsViaLlmAsync(parsedIntent, userInput, merged, classificationTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Portal classification timed out for intent: {Intent}. Falling back to heuristics.", userInput);
+            classifiedPortals = FallbackPortalSelection(merged);
+        }
+
+        if (progressWriter is not null)
+            await progressWriter.WriteAsync(CreateProgress(
+                GroupWatchPhase.Searching,
+                $"Classified {classifiedPortals.Count} portals. Validating URLs...",
+                completedCount: classifiedPortals.Count,
+                totalCount: merged.Count), ct);
+
+        // URL validation — parallel with concurrency limit (8 concurrent, 5s timeout each)
+        var validationSemaphore = new SemaphoreSlim(8, 8);
+        var validatedCount = 0;
+        var totalToValidate = classifiedPortals.Count;
+
+        var validationTasks = classifiedPortals.Select(async portal =>
+        {
+            await validationSemaphore.WaitAsync(ct);
             try
             {
                 var validation = await ValidatePortalUrlAsync(portal.Url, ct);
+                var current = Interlocked.Increment(ref validatedCount);
+
+                if (progressWriter is not null)
+                    await progressWriter.WriteAsync(CreateProgress(
+                        GroupWatchPhase.Searching,
+                        $"Validating portal {current}/{totalToValidate}...",
+                        completedCount: current,
+                        totalCount: totalToValidate), ct);
+
                 if (validation.IsValid)
-                {
-                    validatedPortals.Add(portal);
-                }
-                else
-                {
-                    logger.LogInformation("Dropped portal {Url}: {Reason}", portal.Url, validation.Reason);
-                }
+                    return portal;
+
+                logger.LogInformation("Dropped portal {Url}: {Reason}", portal.Url, validation.Reason);
+                return null;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogWarning(ex, "Validation failed for {Url}, keeping portal", portal.Url);
-                validatedPortals.Add(portal); // keep on validation error — better to include than drop
+                Interlocked.Increment(ref validatedCount);
+                logger.LogWarning(ex, "Rejected portal {Url} due to validation error", portal.Url);
+                return null;
             }
-        }
+            finally
+            {
+                validationSemaphore.Release();
+            }
+        }).ToList();
+
+        var validationResults = await Task.WhenAll(validationTasks);
+        var validatedPortals = validationResults.Where(p => p is not null).Select(p => p!).ToList();
 
         logger.LogInformation("Validated {Valid}/{Total} portals", validatedPortals.Count, classifiedPortals.Count);
         return validatedPortals;
+    }
+
+    private async Task<List<PreparedPortalBuildResult>> PreparePortalBuildsAsync(
+        IReadOnlyList<DiscoveredPortal> portals,
+        string userInput,
+        StructuredDiscoveryIntent parsedIntent,
+        IReadOnlyList<RelevanceKeyword> positiveKeywords,
+        IReadOnlyList<RelevanceKeyword> negativeKeywords,
+        CancellationToken ct)
+    {
+        using var pipelineBuildLimiter = new SemaphoreSlim(PipelineBuildConcurrency, PipelineBuildConcurrency);
+        var preparedResults = new ConcurrentBag<PreparedPortalBuildResult>();
+
+        var tasks = portals
+            .Select((portal, index) => PreparePortalBuildAsync(
+                index,
+                portal,
+                userInput,
+                parsedIntent,
+                positiveKeywords,
+                negativeKeywords,
+                pipelineBuildLimiter,
+                preparedResults,
+                ct))
+            .ToList();
+
+        await Task.WhenAll(tasks);
+
+        return preparedResults
+            .OrderBy(result => result.Index)
+            .ToList();
+    }
+
+    private async Task PreparePortalBuildAsync(
+        int index,
+        DiscoveredPortal portal,
+        string userInput,
+        StructuredDiscoveryIntent parsedIntent,
+        IReadOnlyList<RelevanceKeyword> positiveKeywords,
+        IReadOnlyList<RelevanceKeyword> negativeKeywords,
+        SemaphoreSlim pipelineBuildLimiter,
+        ConcurrentBag<PreparedPortalBuildResult> preparedResults,
+        CancellationToken ct)
+    {
+        UrlValidationResult validation;
+        try
+        {
+            validation = await ValidatePortalUrlAsync(portal.Url, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "URL validation threw for {PortalUrl}", portal.Url);
+            preparedResults.Add(new PreparedPortalBuildResult(
+                index,
+                portal,
+                new UrlValidationResult(false, $"Validation error: {ex.Message}", 0),
+                null,
+                null));
+            return;
+        }
+
+        if (!validation.IsValid)
+        {
+            preparedResults.Add(new PreparedPortalBuildResult(index, portal, validation, null, null));
+            return;
+        }
+
+        await pipelineBuildLimiter.WaitAsync(ct);
+        try
+        {
+            PipelineDefinition? pipeline = null;
+
+            try
+            {
+                using var portalTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                portalTimeout.CancelAfter(PipelineBuildTimeout);
+                pipeline = await BuildPipelineForPortalAsync(
+                    portal,
+                    userInput,
+                    parsedIntent,
+                    positiveKeywords,
+                    negativeKeywords,
+                    portalTimeout.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(
+                    "Pipeline building timed out for {PortalUrl} — creating watch without pipeline for lazy generation",
+                    portal.Url);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                preparedResults.Add(new PreparedPortalBuildResult(index, portal, validation, null, ex));
+                return;
+            }
+
+            preparedResults.Add(new PreparedPortalBuildResult(index, portal, validation, pipeline, null));
+        }
+        finally
+        {
+            pipelineBuildLimiter.Release();
+        }
     }
 
     private async Task<List<SearchResultEnvelope>> RunWebSearchAsync(
@@ -593,9 +879,9 @@ public class GroupWatchDiscoveryService(
             if (locationTerms.Count > 0)
             {
                 var locationMatch = entry.LocationKeywords.Any(kw =>
-                    locationTerms.Any(lt => kw.Contains(lt, StringComparison.OrdinalIgnoreCase))) ||
+                    locationTerms.Any(lt => ContainsWholeTerm(kw, lt))) ||
                     entry.Tags.Any(tag =>
-                    locationTerms.Any(lt => tag.Contains(lt, StringComparison.OrdinalIgnoreCase)));
+                    locationTerms.Any(lt => ContainsWholeTerm(tag, lt)));
 
                 if (!locationMatch)
                     return false;
@@ -815,6 +1101,12 @@ public class GroupWatchDiscoveryService(
         else if (tld is "nl") tags.Add("netherlands");
         else if (tld is "at") tags.Add("austria");
         else if (tld is "be") tags.Add("belgium");
+        else if (tld is "ch") tags.Add("switzerland");
+        else if (tld is "fr") tags.Add("france");
+        else if (tld is "fi") tags.Add("finland");
+        else if (tld is "no") tags.Add("norway");
+        else if (tld is "uk" or "ac") tags.Add("uk");
+        else if (tld is "eu") tags.Add("europe");
         return tags;
     }
 
@@ -823,15 +1115,28 @@ public class GroupWatchDiscoveryService(
     /// </summary>
     private static List<string> ExtractLocationFromIntent(string intent)
     {
-        var lower = intent.ToLowerInvariant();
         var locations = new List<string>();
-        ReadOnlySpan<string> known = ["denmark", "copenhagen", "czech", "prague", "sweden", "germany", "netherlands", "austria", "belgium"];
+        ReadOnlySpan<string> known =
+        [
+            "denmark", "copenhagen", "czech", "prague",
+            "sweden", "stockholm", "malmö", "lund",
+            "germany", "berlin", "munich", "hamburg", "frankfurt", "heidelberg",
+            "netherlands", "amsterdam", "leiden", "rotterdam",
+            "austria", "vienna", "graz",
+            "belgium", "brussels", "ghent",
+            "switzerland", "basel", "zurich",
+            "france", "paris", "lyon",
+            "finland", "helsinki",
+            "norway", "oslo",
+            "uk", "united kingdom", "london", "cambridge", "oxford",
+            "europe"
+        ];
         foreach (var loc in known)
         {
-            if (lower.Contains(loc, StringComparison.Ordinal))
+            if (ContainsWholeTerm(intent, loc))
                 locations.Add(loc);
         }
-        return locations;
+        return locations.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static CatalogEntry? ParseSiteEntry(string category, JsonElement site) => category switch
@@ -880,12 +1185,41 @@ public class GroupWatchDiscoveryService(
         return kw.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
     }
 
-    private static bool IsLocationTag(string tag) =>
-        tag.Equals("denmark", StringComparison.OrdinalIgnoreCase) ||
-        tag.Equals("czech", StringComparison.OrdinalIgnoreCase) ||
-        tag.Equals("sweden", StringComparison.OrdinalIgnoreCase) ||
-        tag.Equals("copenhagen", StringComparison.OrdinalIgnoreCase) ||
-        tag.Equals("prague", StringComparison.OrdinalIgnoreCase);
+    private static bool IsLocationTag(string tag)
+    {
+        ReadOnlySpan<string> locationTags =
+        [
+            "denmark", "copenhagen", "czech", "prague", "sweden", "stockholm", "malmö", "lund",
+            "germany", "berlin", "munich", "hamburg", "frankfurt", "heidelberg",
+            "netherlands", "amsterdam", "leiden", "rotterdam",
+            "austria", "vienna", "graz",
+            "belgium", "brussels", "ghent", "flanders",
+            "switzerland", "basel", "zurich",
+            "france", "paris", "lyon", "strasbourg",
+            "finland", "helsinki", "turku",
+            "norway", "oslo", "bergen",
+            "uk", "london", "cambridge", "oxford",
+            "europe", "eu", "nordic", "scandinavia", "dach", "international"
+        ];
+
+        foreach (var loc in locationTags)
+        {
+            if (ContainsWholeTerm(tag, loc))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsWholeTerm(string text, string term)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(term))
+            return false;
+
+        return Regex.IsMatch(
+            text,
+            $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(term)}(?![\p{{L}}\p{{N}}])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
 
     private static string? FindSitesJson()
     {
@@ -999,12 +1333,32 @@ public class GroupWatchDiscoveryService(
             return CustomizeTemplatePipeline(template, portal, parsedIntent);
         }
 
-        // Unknown platform — no template available. The watch will be created with
-        // NeedsPipelineSetup=true and the user will need to configure it interactively.
+        // Unknown platform — try LLM-based composable flow first, then generic fallback.
         logger.LogInformation(
-            "Unknown platform for {Url} — will mark as needing interactive pipeline setup",
+            "Unknown platform for {Url} — attempting LLM-based pipeline build",
             portal.Url);
-        return null;
+
+        try
+        {
+            var composablePipeline = await BuildPipelineWithComposableFlowAsync(
+                portal, userInput, positiveKeywords, negativeKeywords, ct);
+
+            logger.LogInformation(
+                "LLM-based composable flow succeeded for {Url}",
+                portal.Url);
+            return CustomizeTemplatePipeline(composablePipeline, portal, parsedIntent);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "LLM-based composable flow failed for {Url} — falling back to generic pipeline",
+                portal.Url);
+        }
+
+        logger.LogInformation(
+            "Using generic job listing pipeline for {Url}",
+            portal.Url);
+        return CreateGenericJobListingPipeline(portal.Url);
     }
 
     /// <summary>
@@ -1102,7 +1456,7 @@ public class GroupWatchDiscoveryService(
             return new UrlValidationResult(false, "Invalid URL", 0);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
         try
         {
@@ -1160,6 +1514,13 @@ public class GroupWatchDiscoveryService(
         !string.IsNullOrWhiteSpace(responseBody) &&
         (responseBody.Contains("captcha", StringComparison.OrdinalIgnoreCase) ||
          responseBody.Contains("verify", StringComparison.OrdinalIgnoreCase));
+
+    private sealed record PreparedPortalBuildResult(
+        int Index,
+        DiscoveredPortal Portal,
+        UrlValidationResult Validation,
+        PipelineDefinition? Pipeline,
+        Exception? Error);
 
     private async Task<PipelineDefinition> BuildPipelineWithComposableFlowAsync(
         DiscoveredPortal portal,
@@ -1263,8 +1624,9 @@ public class GroupWatchDiscoveryService(
             CheckInterval = ParseFrequencyOrDefault(null, _options.DefaultCheckInterval),
             UseJavaScript = useJavaScript,
             Tags = BuildWatchTags(parsedIntent, portal),
-            // When no pipeline is provided, skip initial check — the watch needs setup first
-            SkipInitialCheck = pipeline is not null
+            // Always skip initial check for group-created watches — the background service
+            // will check them on the next cycle regardless of pipeline presence.
+            SkipInitialCheck = true
         };
 
         var createdWatch = await watchService.CreateWatchAsync(request, ct);
@@ -1669,7 +2031,7 @@ public class GroupWatchDiscoveryService(
             .ToList();
     }
 
-    private static bool DetectUseJavaScript(PipelineDefinition pipeline)
+    private bool DetectUseJavaScript(PipelineDefinition pipeline)
     {
         foreach (var block in pipeline.Blocks)
         {
@@ -1682,9 +2044,10 @@ public class GroupWatchDiscoveryService(
                 if (config?.UseJavaScript == true)
                     return true;
             }
-            catch
+                        catch (Exception ex)
             {
                 // Ignore malformed block config; watch still gets saved with pipeline JSON.
+                logger.LogDebug(ex, "Malformed block config in DetectUseJavaScript");
             }
         }
 

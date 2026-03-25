@@ -419,6 +419,517 @@
         ],
         "identityFields": ["title", "company"]
       }
+    },
+    {
+      "id": "watch-stepstone-de",
+      "name": "StepStone Germany",
+      "description": "Major German job board — science, tech, and general roles across Germany",
+      "url": "https://www.stepstone.de/jobs",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["germany", "berlin", "munich", "hamburg", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": "article[data-testid='job-item'], .job-element, .res-1fzmmhg",
+        "fields": [
+          { "name": "title", "selector": "h2 a, [data-testid='job-item-title'] a, a.res-nehv70", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, [data-testid='job-item-title'] a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='job-item-company'], .res-1r68562", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='job-item-location'], .res-1w3r7bw", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-indeed-de",
+      "name": "Indeed Germany",
+      "description": "General German job board — broad coverage of science and industry roles",
+      "url": "https://de.indeed.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["germany", "berlin", "munich", "frankfurt", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job_seen_beacon, .jobsearch-ResultsList > li, .result",
+        "fields": [
+          { "name": "title", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .companyName", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='text-location'], .companyLocation", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-xing-jobs",
+      "name": "Xing Jobs Germany",
+      "description": "German professional network job board — popular in DACH region",
+      "url": "https://www.xing.com/jobs",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["germany", "austria", "switzerland", "dach", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": "[data-testid='job-search-result'], .job-posting, article.job",
+        "fields": [
+          { "name": "title", "selector": "a[data-testid='job-title'], h3 a, .job-title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a[data-testid='job-title'], h3 a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .company-name", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='location'], .location", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-jobvector-de",
+      "name": "Jobvector Germany (STEM/Science)",
+      "description": "German STEM-specialized job board — natural sciences, pharma, biotech roles",
+      "url": "https://www.jobvector.de",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["germany", "science", "stem", "biotech", "pharma", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-item, .search-result, article.job-listing",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-academics-de",
+      "name": "Academics.de (Research/Academic)",
+      "description": "German academic and research job board — university and institute positions",
+      "url": "https://www.academics.de",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["germany", "academia", "research", "science", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".result-item, .job-item, article.listing",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .result-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .result-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".employer, .institution", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" },
+          { "name": "deadline", "selector": ".deadline, .date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-indeed-nl",
+      "name": "Indeed Netherlands",
+      "description": "Dutch job board — broad coverage of science and industry roles in the Netherlands",
+      "url": "https://nl.indeed.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["netherlands", "amsterdam", "leiden", "rotterdam", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job_seen_beacon, .jobsearch-ResultsList > li, .result",
+        "fields": [
+          { "name": "title", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .companyName", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='text-location'], .companyLocation", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-academictransfer-nl",
+      "name": "Academic Transfer (Netherlands)",
+      "description": "Dutch academic job board — university, research institute, and UMC positions",
+      "url": "https://www.academictransfer.com/jobs",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["netherlands", "academia", "research", "science", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".vacancy-item, .search-result, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .vacancy-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .vacancy-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".employer, .institution, .organization", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" },
+          { "name": "deadline", "selector": ".deadline, .closing-date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-linkedin-nl",
+      "name": "LinkedIn Jobs Netherlands",
+      "description": "LinkedIn job search filtered to Netherlands — general professional roles",
+      "url": "https://www.linkedin.com/jobs/search/?location=Netherlands",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["netherlands", "amsterdam", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 60,
+        "waitAfterLoadMs": 5000
+      },
+      "schema": {
+        "itemSelector": ".jobs-search-results__list-item, .job-card-container, li.result-card",
+        "fields": [
+          { "name": "title", "selector": ".job-card-list__title, a.job-card-container__link, h3.base-search-card__title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "a.job-card-container__link, a.base-card__full-link", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".job-card-container__company-name, h4.base-search-card__subtitle", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".job-card-container__metadata-item, .job-search-card__location", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-karriere-at",
+      "name": "Karriere.at (Austria)",
+      "description": "Largest Austrian job board — general, science, and industry roles",
+      "url": "https://www.karriere.at",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["austria", "vienna", "graz", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".m-jobItem, .job-item, article.job",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .m-jobItem__title a, .job-title a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .m-jobItem__title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".m-jobItem__company, .company-name", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".m-jobItem__location, .location", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-stepstone-at",
+      "name": "StepStone Austria",
+      "description": "Austrian StepStone job board — science, tech, and general roles",
+      "url": "https://www.stepstone.at",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["austria", "vienna", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": "article[data-testid='job-item'], .job-element, .res-1fzmmhg",
+        "fields": [
+          { "name": "title", "selector": "h2 a, [data-testid='job-item-title'] a", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, [data-testid='job-item-title'] a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='job-item-company']", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='job-item-location']", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-indeed-be",
+      "name": "Indeed Belgium",
+      "description": "Belgian job board — general coverage of roles across Belgium",
+      "url": "https://be.indeed.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["belgium", "brussels", "ghent", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job_seen_beacon, .jobsearch-ResultsList > li, .result",
+        "fields": [
+          { "name": "title", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .companyName", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='text-location'], .companyLocation", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-vdab-be",
+      "name": "VDAB (Flanders Public Employment)",
+      "description": "Flemish public employment service — science and general roles in Flanders, Belgium",
+      "url": "https://www.vdab.be/vindeenjob",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["belgium", "flanders", "public-sector", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".search-result, .job-item, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-jobs-ch",
+      "name": "Jobs.ch (Switzerland)",
+      "description": "Largest Swiss job board — science, pharma, and general roles",
+      "url": "https://www.jobs.ch",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["switzerland", "basel", "zurich", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-item, .vacancy, article.job-result",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-indeed-ch",
+      "name": "Indeed Switzerland",
+      "description": "Swiss Indeed job board — broad coverage of pharma, science, and general roles",
+      "url": "https://ch.indeed.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["switzerland", "basel", "zurich", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job_seen_beacon, .jobsearch-ResultsList > li, .result",
+        "fields": [
+          { "name": "title", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .companyName", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='text-location'], .companyLocation", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-platsbanken-se",
+      "name": "Platsbanken (Swedish Public Employment)",
+      "description": "Swedish public employment service — all public and private job listings",
+      "url": "https://arbetsformedlingen.se/platsbanken",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["sweden", "stockholm", "malmö", "public-sector", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-item, .search-result, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".company, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .city", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-academicpositions-se",
+      "name": "Academic Positions (Nordic/International)",
+      "description": "International academic job board — strong Nordic and European coverage for research roles",
+      "url": "https://academicpositions.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["sweden", "denmark", "europe", "academia", "research", "science", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-item, .vacancy-item, article.listing",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".employer, .institution", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .country", "type": "String" },
+          { "name": "deadline", "selector": ".deadline, .closing-date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-indeed-uk",
+      "name": "Indeed United Kingdom",
+      "description": "UK job board — broad coverage of science, pharma, and general roles",
+      "url": "https://www.indeed.com/jobs?l=United+Kingdom",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["uk", "london", "cambridge", "oxford", "general", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job_seen_beacon, .jobsearch-ResultsList > li, .result",
+        "fields": [
+          { "name": "title", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2.jobTitle a, a.jcs-JobTitle", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": "[data-testid='company-name'], .companyName", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": "[data-testid='text-location'], .companyLocation", "type": "String" }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-jobsacuk",
+      "name": "Jobs.ac.uk (UK Academic)",
+      "description": "UK academic job board — university, research council, and institute positions",
+      "url": "https://www.jobs.ac.uk",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["uk", "london", "cambridge", "oxford", "academia", "research", "science", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": ".j-search-result, .job-result, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .j-search-result__title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .j-search-result__title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".j-search-result__employer, .employer", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".j-search-result__location, .location", "type": "String" },
+          { "name": "deadline", "selector": ".j-search-result__date, .closing-date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-nature-careers",
+      "name": "Nature Careers (International Science)",
+      "description": "Nature journal's career portal — science and research positions worldwide",
+      "url": "https://www.nature.com/naturecareers",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["europe", "uk", "international", "science", "research", "academia", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".job-result, .vacancy-item, article.job",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".employer, .institution, .company", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .country", "type": "String" },
+          { "name": "deadline", "selector": ".deadline, .closing-date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-eurosciencejobs",
+      "name": "EuroScienceJobs (EU Science)",
+      "description": "European science job board — research, lab, and academic roles across EU",
+      "url": "https://www.eurosciencejobs.com",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["europe", "eu", "science", "research", "academia", "international", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": false,
+        "timeoutSeconds": 30,
+        "waitAfterLoadMs": null
+      },
+      "schema": {
+        "itemSelector": ".job-item, .vacancy, article.job-listing",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .job-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .job-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".employer, .institution, .company", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".location, .country", "type": "String" },
+          { "name": "deadline", "selector": ".deadline, .closing-date", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
+    },
+    {
+      "id": "watch-euraxess",
+      "name": "EURAXESS (EU Research Mobility)",
+      "description": "European Commission research job portal — funded research positions across EU",
+      "url": "https://euraxess.ec.europa.eu/jobs",
+      "tier": "tier-2",
+      "checkIntervalHours": 24,
+      "extraTags": ["europe", "eu", "research", "academia", "science", "international", "job-board"],
+      "fetchSettings": {
+        "useJavaScript": true,
+        "timeoutSeconds": 45,
+        "waitAfterLoadMs": 3000
+      },
+      "schema": {
+        "itemSelector": ".views-row, .job-item, article.vacancy",
+        "fields": [
+          { "name": "title", "selector": "h2 a, .field-title a, a.title", "type": "String", "isRequired": true, "isIdentityField": true },
+          { "name": "url", "selector": "h2 a, .field-title a", "type": "Url", "isRequired": true },
+          { "name": "company", "selector": ".field-organisation, .institution", "type": "String", "isIdentityField": true },
+          { "name": "location", "selector": ".field-country, .location", "type": "String" },
+          { "name": "deadline", "selector": ".field-deadline, .deadline", "type": "Date", "trackHistory": false }
+        ],
+        "identityFields": ["title", "company"]
+      }
     }
   ]
 }

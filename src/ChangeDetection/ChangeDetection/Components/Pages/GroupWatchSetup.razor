@@ -1,0 +1,837 @@
+﻿@page "/groupwatch"
+@page "/groupwatch/setup"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using ChangeDetection.Client.Components
+@using ChangeDetection.Core.Interfaces
+@using ChangeDetection.Services.GroupWatch
+@inject NavigationManager Navigation
+@inject IGroupWatchDiscoveryService DiscoveryService
+@inject IWatchService WatchService
+@implements IAsyncDisposable
+
+<PageTitle>Group Setup — Sentinel</PageTitle>
+
+<div class="groupwatch-container">
+    <header class="page-header">
+        <div class="header-content">
+            <h1>🌐 Group Watch Setup</h1>
+            <p class="subtitle">Describe what you want to monitor and we'll discover relevant portals automatically</p>
+        </div>
+        <button class="back-button" @onclick="GoBack" aria-label="Go back to dashboard">
+            <span class="icon" aria-hidden="true">←</span> Dashboard
+        </button>
+    </header>
+
+    @* Reconnecting banner *@
+    @if (_isReconnecting)
+    {
+        <div class="reconnect-banner" role="status" aria-live="polite">
+            <span class="spinner-sm" aria-hidden="true"></span>
+            <span>Connection lost. Reconnecting...</span>
+        </div>
+    }
+
+    @* Error alert *@
+    @if (_hasError)
+    {
+        <div class="alert alert-error" role="alert">
+            <strong>⚠️ Error:</strong> @_errorMessage
+            <button class="alert-dismiss" @onclick="DismissError" aria-label="Dismiss error">×</button>
+        </div>
+    }
+
+    @* ── Phase 1: Input ── *@
+    @if (_phase == Phase.Input)
+    {
+        <div class="input-phase">
+            <div class="input-card">
+                <div class="input-icon" aria-hidden="true">🎯</div>
+                <h2>What jobs do you want to watch?</h2>
+                <p class="input-hint">Describe the type of jobs and locations you're interested in. We'll find the best career portals to monitor.</p>
+
+                <div class="input-wrapper">
+                    <textarea @ref="_inputElement"
+                              @bind="_userInput"
+                              @bind:event="oninput"
+                              @onkeydown="HandleKeyDown"
+                              placeholder="e.g., Research assistant jobs in Copenhagen biology"
+                              class="query-input"
+                              rows="3"
+                              disabled="@(!_hasRendered)" />
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_userInput))
+                {
+                    <div class="input-hint-action">
+                        <span>✨ Press Enter or click the button below</span>
+                    </div>
+                }
+
+                <button class="btn btn-primary btn-block"
+                        disabled="@(string.IsNullOrWhiteSpace(_userInput) || _isDiscovering)"
+                        @onclick="StartDiscovery">
+                    🔍 Discover Portals
+                </button>
+
+                <div class="how-it-works">
+                    <h3>How it works</h3>
+                    <div class="step">
+                        <span class="step-num">1</span>
+                        <span>Describe your job search intent</span>
+                    </div>
+                    <div class="step">
+                        <span class="step-num">2</span>
+                        <span>AI discovers relevant career portals</span>
+                    </div>
+                    <div class="step">
+                        <span class="step-num">3</span>
+                        <span>Review and confirm which portals to monitor</span>
+                    </div>
+                    <div class="step">
+                        <span class="step-num">4</span>
+                        <span>Watches are created for each portal automatically</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Phase 2: Discovery (streaming progress) ── *@
+    @if (_phase == Phase.Discovery)
+    {
+        <div class="discovery-phase">
+            <div class="progress-card">
+                <div class="progress-header">
+                    <h2>Discovering portals</h2>
+                    <p class="progress-query">"@_userInput"</p>
+                </div>
+
+                <div class="progress-steps">
+                    @foreach (var step in _progressSteps)
+                    {
+                        <div class="progress-step @step.Status.ToString().ToLowerInvariant()">
+                            <span class="step-icon" aria-hidden="true">
+                                @switch (step.Status)
+                                {
+                                    case StepStatus.Completed:
+                                        <text>✅</text>
+                                        break;
+                                    case StepStatus.Active:
+                                        <span class="spinner-sm"></span>
+                                        break;
+                                    case StepStatus.Failed:
+                                        <text>❌</text>
+                                        break;
+                                    default:
+                                        <text>○</text>
+                                        break;
+                                }
+                            </span>
+                            <div class="step-content">
+                                <span class="step-label">@step.Label</span>
+                                @if (!string.IsNullOrEmpty(step.Detail))
+                                {
+                                    <span class="step-detail">@step.Detail</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* ── Agent questions (inline during discovery) ── *@
+                @foreach (var aq in _agentQuestions)
+                {
+                    @if (aq.IsResearchPrompt)
+                    {
+                        <ResearchPromptCard Question="@aq.Question"
+                                            OnResponse="@(r => HandleAgentResponse(aq, r))"
+                                            OnSkip="@(() => HandleAgentSkip(aq))" />
+                    }
+                    else
+                    {
+                        <AgentQuestionCard Question="@aq.Question"
+                                           OnResponse="@(r => HandleAgentResponse(aq, r))"
+                                           OnSkip="@(() => HandleAgentSkip(aq))" />
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    @* ── Phase 3: Confirmation (portal cards) ── *@
+    @if (_phase == Phase.Confirmation)
+    {
+        <div class="confirmation-phase">
+            <div class="confirmation-header">
+                <h2>Discovered Portals</h2>
+                <p class="confirmation-subtitle">
+                    Found @_discoveredPortals.Count portal(s). Select which ones to monitor.
+                </p>
+            </div>
+
+            <div class="portal-grid">
+                @for (var i = 0; i < _discoveredPortals.Count; i++)
+                {
+                    var portal = _discoveredPortals[i];
+                    var index = i;
+                    <div class="portal-card @(portal.Selected ? "selected" : "") @(portal.Recommended ? "recommended" : "")">
+                        <div class="portal-card-header">
+                            <label class="portal-checkbox">
+                                <input type="checkbox"
+                                       checked="@portal.Selected"
+                                       @onchange="() => TogglePortal(index)" />
+                                <span class="checkmark"></span>
+                            </label>
+                            <div class="portal-card-title">
+                                <span class="portal-name">@portal.Name</span>
+                                @if (portal.Recommended)
+                                {
+                                    <span class="badge badge-recommended" title="Recommended by AI">⭐ Recommended</span>
+                                }
+                            </div>
+                        </div>
+
+                        <a href="@portal.Url" target="_blank" rel="noopener noreferrer" class="portal-url">
+                            @TruncateUrl(portal.Url)
+                        </a>
+
+                        @if (!string.IsNullOrEmpty(portal.Platform))
+                        {
+                            <span class="badge badge-platform">@portal.Platform</span>
+                        }
+
+                        @if (!string.IsNullOrEmpty(portal.Reasoning))
+                        {
+                            <p class="portal-reasoning">@portal.Reasoning</p>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="confirmation-actions">
+                <button class="btn btn-primary"
+                        disabled="@(_isCreating || !_discoveredPortals.Any(p => p.Selected))"
+                        @onclick="CreateWatches">
+                    @if (_isCreating)
+                    {
+                        <span class="spinner-inline"></span>
+                        <span>Creating…</span>
+                    }
+                    else
+                    {
+                        <span>🚀 Create Watches (@_discoveredPortals.Count(p => p.Selected) selected)</span>
+                    }
+                </button>
+                <button class="btn btn-outline" @onclick="GoBackToInput">
+                    ← Change query
+                </button>
+            </div>
+        </div>
+    }
+
+    @* ── Phase 4: Creation (progress bar) ── *@
+    @if (_phase == Phase.Creating)
+    {
+        <div class="creation-phase">
+            <div class="creation-card">
+                <h2>Creating watches</h2>
+                <p class="creation-subtitle">Setting up monitoring for your selected portals...</p>
+
+                <div class="creation-progress-bar">
+                    <div class="creation-progress-fill"
+                         style="width: @(CreationProgressPercent)%">
+                    </div>
+                </div>
+                <p class="creation-counter">
+                    Creating watch @(_creationCompleted + 1)/@_creationTotal...
+                </p>
+
+                <div class="creation-items">
+                    @foreach (var item in _creationItems)
+                    {
+                        <div class="creation-item @item.Status.ToString().ToLowerInvariant()">
+                            <span class="creation-item-icon" aria-hidden="true">
+                                @switch (item.Status)
+                                {
+                                    case StepStatus.Completed:
+                                        <text>✅</text>
+                                        break;
+                                    case StepStatus.Active:
+                                        <span class="spinner-sm"></span>
+                                        break;
+                                    case StepStatus.Failed:
+                                        <text>⚠️</text>
+                                        break;
+                                    default:
+                                        <text>○</text>
+                                        break;
+                                }
+                            </span>
+                            <span class="creation-item-name">@item.Label</span>
+                            @if (!string.IsNullOrEmpty(item.Detail))
+                            {
+                                <span class="creation-item-detail">@item.Detail</span>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Phase 5: Complete ── *@
+    @if (_phase == Phase.Complete)
+    {
+        <div class="complete-phase">
+            <div class="complete-card">
+                <div class="complete-icon" aria-hidden="true">🎉</div>
+                <h2>Group created!</h2>
+
+                @{
+                    var autoMonitoring = _creationCompleted - _needsSetupPortals.Count;
+                }
+
+                @if (autoMonitoring > 0)
+                {
+                    <p class="complete-message">
+                        ✅ <strong>@autoMonitoring portal(s)</strong> are monitoring automatically.
+                        You'll be notified when matching jobs are found.
+                    </p>
+                }
+
+                @if (_needsSetupPortals.Count > 0)
+                {
+                    <div class="complete-warning">
+                        <h3>⚠️ @_needsSetupPortals.Count portal(s) need individual setup:</h3>
+                        <p class="setup-hint">These portals don't have a known template. Set each one up to start monitoring.</p>
+                        <ul class="failed-portal-list">
+                            @foreach (var portal in _needsSetupPortals)
+                            {
+                                <li>
+                                    <strong>@portal.Domain</strong>
+                                    <a href="@($"setup?input={Uri.EscapeDataString(portal.Url)}")" class="btn btn-sm btn-outline setup-link">
+                                        🔧 Set up
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (_failedPortals > 0)
+                {
+                    <div class="complete-warning">
+                        <h3>❌ @_failedPortals portal(s) could not be created:</h3>
+                        <ul class="failed-portal-list">
+                            @foreach (var failure in _failedPortalDetails)
+                            {
+                                <li>
+                                    <strong>@failure.Name</strong>
+                                    <span class="failure-reason">— @failure.Reason</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                <div class="complete-actions">
+                    @if (_groupId is not null)
+                    {
+                        <a href="@($"groupwatch/results/{_groupId}")" class="btn btn-primary">
+                            📊 View Results
+                        </a>
+                    }
+                    <button class="btn btn-outline" @onclick="CreateAnother">
+                        ➕ Create Another
+                    </button>
+                    <a href="/" class="btn btn-outline">
+                        🏠 Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Connection status *@
+    @if (_hasRendered && !_isConnected && !_hasError && _phase == Phase.Input)
+    {
+        <div class="connecting-indicator" role="status" aria-live="polite">
+            <span class="spinner-sm" aria-hidden="true"></span>
+            <span>Connecting...</span>
+        </div>
+    }
+    @if (_hasError)
+    {
+        <div class="error-banner" role="alert">⚠️ @_errorMessage</div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? Input { get; set; }
+
+    private CancellationTokenSource _cts = new();
+    private Task? _streamingTask;
+    private bool _disposed;
+
+    private Phase _phase = Phase.Input;
+    private string _userInput = "";
+    private bool _isConnected = true;
+    private bool _isReconnecting;
+    private bool _isDiscovering;
+    private bool _hasError;
+    private string? _errorMessage;
+    private bool _hasRendered;
+    private bool _isCreating;
+    private ElementReference _inputElement;
+
+    private List<ProgressStep> _progressSteps = [];
+    private readonly List<AgentQuestionEntry> _agentQuestions = [];
+    private List<PortalSelection> _discoveredPortals = [];
+    private int _creationCompleted;
+    private int _creationTotal;
+    private int _failedPortals;
+    private List<ProgressStep> _creationItems = [];
+    private List<FailedPortalDetail> _failedPortalDetails = [];
+    private List<SetupNeededPortal> _needsSetupPortals = [];
+    private Guid? _groupId;
+    private List<Guid> _watchIds = [];
+
+    private int CreationProgressPercent =>
+        _creationTotal > 0 ? (int)((double)_creationCompleted / _creationTotal * 100) : 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        _hasRendered = true;
+        _isConnected = true;
+
+        if (!string.IsNullOrWhiteSpace(Input))
+        {
+            _userInput = Input.Trim();
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(300);
+            await StartDiscovery();
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            return StartDiscovery();
+        }
+
+        if (e.Key == "Escape")
+        {
+            _userInput = "";
+            StateHasChanged();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task StartDiscovery()
+    {
+        if (string.IsNullOrWhiteSpace(_userInput) || _isDiscovering)
+            return;
+
+        await _cts.CancelAsync();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+
+        _isDiscovering = true;
+        _phase = Phase.Discovery;
+        _hasError = false;
+        _errorMessage = null;
+        _agentQuestions.Clear();
+        _discoveredPortals.Clear();
+        _progressSteps =
+        [
+            new("🧠 Understanding your intent...", StepStatus.Active),
+            new("🔍 Searching for career portals...", StepStatus.Pending),
+            new("🤖 Analyzing results...", StepStatus.Pending)
+        ];
+
+        await InvokeAsync(StateHasChanged);
+        _streamingTask = StreamDiscoveryAsync(_userInput.Trim());
+    }
+
+    private async Task StreamDiscoveryAsync(string query)
+    {
+        try
+        {
+            await foreach (var progress in DiscoveryService.DiscoverAsync(query, _cts.Token))
+            {
+                await InvokeAsync(() => OnProgressReceived(progress));
+            }
+
+            if (_phase == Phase.Discovery && !_hasError)
+            {
+                _hasError = true;
+                _errorMessage = "Discovery stream ended unexpectedly. Please try again.";
+                _phase = Phase.Input;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _isDiscovering = false;
+            _hasError = true;
+            _errorMessage = GetFriendlyErrorMessage(ex, "stream");
+            _phase = Phase.Input;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CreateWatches()
+    {
+        if (_isCreating)
+            return;
+
+        var selectedPortals = _discoveredPortals
+            .Where(p => p.Selected)
+            .Select(p => new DiscoveredPortal(
+                p.Url,
+                ExtractDomain(p.Url),
+                p.Reasoning ?? string.Empty,
+                p.Name,
+                p.Platform))
+            .ToList();
+
+        if (selectedPortals.Count == 0)
+            return;
+
+        _isCreating = true;
+        _phase = Phase.Creating;
+        _creationTotal = selectedPortals.Count;
+        _creationCompleted = 0;
+        _failedPortals = 0;
+        _failedPortalDetails = [];
+        _needsSetupPortals = [];
+        _creationItems = selectedPortals
+            .Select(p => new ProgressStep(p.Title ?? p.Domain, StepStatus.Pending))
+            .ToList();
+
+        await InvokeAsync(StateHasChanged);
+        _streamingTask = StreamCreationAsync(_userInput.Trim(), selectedPortals);
+    }
+
+    private async Task StreamCreationAsync(string userInput, List<DiscoveredPortal> portals)
+    {
+        try
+        {
+            await foreach (var progress in DiscoveryService.CreateWatchesAsync(userInput, portals, _cts.Token))
+            {
+                await InvokeAsync(() => OnProgressReceived(progress));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _isCreating = false;
+        }
+        catch (Exception ex)
+        {
+            _isCreating = false;
+            _hasError = true;
+            _errorMessage = GetFriendlyErrorMessage(ex, "stream");
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnProgressReceived(GroupWatchProgress progress)
+    {
+        if (_disposed)
+            return;
+
+        switch (progress.Phase)
+        {
+            case GroupWatchPhase.Parsing:
+                UpdateDiscoveryStep(0, StepStatus.Active, progress.Message);
+                break;
+
+            case GroupWatchPhase.Searching:
+                UpdateDiscoveryStep(0, StepStatus.Completed);
+                UpdateDiscoveryStep(1, StepStatus.Active, progress.Message);
+                break;
+
+            case GroupWatchPhase.Filtering:
+                UpdateDiscoveryStep(1, StepStatus.Completed);
+                UpdateDiscoveryStep(2, StepStatus.Active, progress.Message);
+                break;
+
+            case GroupWatchPhase.PortalsReady:
+                _isDiscovering = false;
+                UpdateDiscoveryStep(2, StepStatus.Completed);
+
+                if (progress.Portals is { Count: > 0 })
+                {
+                    _discoveredPortals = progress.Portals.Select(p => new PortalSelection
+                    {
+                        Url = p.Url,
+                        Name = p.Title ?? ExtractDomain(p.Url),
+                        Platform = p.PlatformId,
+                        Reasoning = p.Reasoning,
+                        Recommended = p.ExistingWatchId is null,
+                        Selected = p.ExistingWatchId is null
+                    }).ToList();
+
+                    _phase = Phase.Confirmation;
+                }
+                else
+                {
+                    _hasError = true;
+                    _errorMessage = "No portals were found matching your description. Try a different query.";
+                    _phase = Phase.Input;
+                }
+                break;
+
+            case GroupWatchPhase.CreatingWatches:
+                if (progress is { CompletedCount: not null, TotalCount: not null })
+                {
+                    _creationTotal = progress.TotalCount.Value;
+                    var previousCompleted = _creationCompleted;
+                    _creationCompleted = progress.CompletedCount.Value;
+                    var message = progress.Message ?? string.Empty;
+                    var isFailure = message.Contains("⚠️", StringComparison.Ordinal) ||
+                        message.StartsWith("Skipped ", StringComparison.Ordinal) ||
+                        message.StartsWith("Failed ", StringComparison.Ordinal);
+
+                    if (_creationCompleted > previousCompleted && _creationCompleted > 0)
+                    {
+                        var justFinishedIndex = _creationCompleted - 1;
+                        if (justFinishedIndex >= 0 && justFinishedIndex < _creationItems.Count)
+                        {
+                            if (isFailure)
+                            {
+                                _creationItems[justFinishedIndex] = _creationItems[justFinishedIndex] with
+                                {
+                                    Status = StepStatus.Failed,
+                                    Detail = message
+                                };
+                                _failedPortals++;
+                                _failedPortalDetails.Add(new FailedPortalDetail(
+                                    _creationItems[justFinishedIndex].Label,
+                                    message));
+                            }
+                            else
+                            {
+                                _creationItems[justFinishedIndex] = _creationItems[justFinishedIndex] with
+                                {
+                                    Status = StepStatus.Completed,
+                                    Detail = null
+                                };
+                            }
+                        }
+                    }
+
+                    if (_creationCompleted < _creationItems.Count)
+                    {
+                        _creationItems[_creationCompleted] = _creationItems[_creationCompleted] with
+                        {
+                            Status = StepStatus.Active,
+                            Detail = message
+                        };
+                    }
+                }
+                break;
+
+            case GroupWatchPhase.Complete:
+                _isDiscovering = false;
+                _isCreating = false;
+
+                if (_phase == Phase.Discovery && progress.GroupId is null)
+                {
+                    _hasError = true;
+                    _errorMessage = progress.Message;
+                    _phase = Phase.Input;
+                    break;
+                }
+
+                _groupId = progress.GroupId;
+                _watchIds = progress.WatchIds ?? [];
+                _needsSetupPortals = progress.NeedsSetupPortals ?? [];
+                _creationCompleted = _creationItems.Count(i => i.Status == StepStatus.Completed);
+
+                for (var i = 0; i < _creationItems.Count; i++)
+                {
+                    if (_creationItems[i].Status is StepStatus.Active or StepStatus.Pending)
+                    {
+                        _creationItems[i] = _creationItems[i] with { Status = StepStatus.Completed };
+                    }
+                }
+
+                _creationCompleted = _creationItems.Count(i => i.Status == StepStatus.Completed);
+                _failedPortals = _creationItems.Count(i => i.Status == StepStatus.Failed);
+                _phase = Phase.Complete;
+                break;
+        }
+
+        if (!_disposed)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void UpdateDiscoveryStep(int index, StepStatus status, string? detail = null)
+    {
+        if (index < 0 || index >= _progressSteps.Count)
+            return;
+
+        _progressSteps[index] = _progressSteps[index] with
+        {
+            Status = status,
+            Detail = detail ?? _progressSteps[index].Detail
+        };
+    }
+
+    private async Task HandleAgentResponse(AgentQuestionEntry entry, AgentQuestionCard.AgentResponseDto response)
+    {
+        _agentQuestions.Remove(entry);
+        _hasError = true;
+        _errorMessage = "Interactive research prompts are not available in the server-side discovery flow yet.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleAgentSkip(AgentQuestionEntry entry)
+    {
+        _agentQuestions.Remove(entry);
+        _hasError = true;
+        _errorMessage = "Interactive research prompts are not available in the server-side discovery flow yet.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void TogglePortal(int index)
+    {
+        if (index < 0 || index >= _discoveredPortals.Count)
+            return;
+
+        _discoveredPortals[index].Selected = !_discoveredPortals[index].Selected;
+    }
+
+    private void GoBack() => Navigation.NavigateTo("/");
+
+    private void GoBackToInput()
+    {
+        _isCreating = false;
+        _phase = Phase.Input;
+        _discoveredPortals.Clear();
+        _agentQuestions.Clear();
+        _hasError = false;
+        _errorMessage = null;
+    }
+
+    private void CreateAnother()
+    {
+        _isCreating = false;
+        _phase = Phase.Input;
+        _userInput = "";
+        _discoveredPortals.Clear();
+        _creationItems.Clear();
+        _failedPortalDetails.Clear();
+        _needsSetupPortals = [];
+        _agentQuestions.Clear();
+        _groupId = null;
+        _watchIds.Clear();
+        _creationCompleted = 0;
+        _creationTotal = 0;
+        _failedPortals = 0;
+        _hasError = false;
+        _errorMessage = null;
+    }
+
+    private void DismissError()
+    {
+        _hasError = false;
+        _errorMessage = null;
+    }
+
+    private static string TruncateUrl(string url, int maxLength = 60)
+    {
+        if (string.IsNullOrEmpty(url) || url.Length <= maxLength)
+            return url;
+
+        return url[..maxLength] + "…";
+    }
+
+    private static string ExtractDomain(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return url;
+
+        var host = uri.Host.ToLowerInvariant();
+        return host.StartsWith("www.", StringComparison.Ordinal) ? host[4..] : host;
+    }
+
+    private static string GetFriendlyErrorMessage(Exception ex, string context)
+    {
+        var baseMessage = ex switch
+        {
+            OperationCanceledException => "The operation was cancelled.",
+            TimeoutException => "The operation timed out. The server may be busy.",
+            HttpRequestException httpEx when httpEx.Message.Contains("refused", StringComparison.OrdinalIgnoreCase) =>
+                "Could not connect to the server. Please check if the service is running.",
+            HttpRequestException => "Network error occurred. Please check your internet connection.",
+            _ => ex.Message
+        };
+
+        var suggestion = context switch
+        {
+            "connect" => " Try refreshing the page or check your network connection.",
+            "stream" => " Try refreshing the page to continue.",
+            _ => ""
+        };
+
+        return $"{baseMessage}{suggestion}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        await _cts.CancelAsync();
+
+        if (_streamingTask is not null)
+        {
+            try
+            {
+                await _streamingTask.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (TimeoutException)
+            {
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _cts.Dispose();
+    }
+
+    private enum Phase { Input, Discovery, Confirmation, Creating, Complete }
+    private enum StepStatus { Pending, Active, Completed, Failed }
+
+    private record ProgressStep(string Label, StepStatus Status, string? Detail = null);
+
+    private record AgentQuestionEntry(
+        AgentQuestionCard.AgentQuestionDto Question,
+        bool IsResearchPrompt = false);
+
+    private sealed class PortalSelection
+    {
+        public string Url { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string? Platform { get; init; }
+        public string? Reasoning { get; init; }
+        public bool Recommended { get; init; }
+        public bool Selected { get; set; }
+    }
+
+    private record FailedPortalDetail(string Name, string Reason);
+}

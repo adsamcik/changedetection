@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ChangeDetection.Core.Entities;
+using ChangeDetection.Core.Interfaces;
 
 namespace ChangeDetection.Services.GroupWatch;
 
@@ -136,6 +138,112 @@ public class OutreachSignalDetector
         overallScore = MathF.Round(overallScore, 1);
 
         return new OutreachAssessment(true, signals, overallScore);
+    }
+
+    /// <summary>
+    /// Optionally enriches an ambiguous regex assessment with LLM analysis.
+    /// Only calls the LLM when the regex score falls in the ambiguous zone (3.0–7.0).
+    /// Clear yes (&gt;7) or clear no (&lt;3) are returned unchanged.
+    /// </summary>
+    /// <param name="regexAssessment">The initial regex-only assessment.</param>
+    /// <param name="pageContent">Raw page content to send to the LLM (truncated to 2000 chars).</param>
+    /// <param name="companyName">Company name for logging context.</param>
+    /// <param name="llmChain">LLM provider chain to execute the prompt.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The assessment, potentially with an adjusted score and an LLM signal.</returns>
+    public async Task<OutreachAssessment> EnrichWithLlmAsync(
+        OutreachAssessment regexAssessment,
+        string pageContent,
+        string companyName,
+        ILlmProviderChain llmChain,
+        CancellationToken ct)
+    {
+        // Only enrich ambiguous scores (3.0–7.0 inclusive)
+        if (regexAssessment.OverallScore < 3.0f || regexAssessment.OverallScore > 7.0f)
+            return regexAssessment;
+
+        var truncated = pageContent.Length > 2000 ? pageContent[..2000] : pageContent;
+
+        var prompt = $$"""
+            Analyze this company careers page. Does this company welcome speculative/cold applications?
+
+            Company: {{companyName}}
+            Page content:
+            {{truncated}}
+
+            Look for: tone (approachable vs corporate), explicit invitations, contact information for recruiters,
+            "always hiring" language, general application forms, talent community links.
+
+            Return JSON only, no markdown fencing:
+            {"receptive": true/false, "confidence": 0.0-1.0, "reason": "one sentence explanation"}
+            """;
+
+        LlmResponse response;
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
+
+            response = await llmChain.ExecuteAsync(prompt, new LlmRequestOptions
+            {
+                Temperature = 0.2f,
+                MaxTokens = 200,
+                ExpectJson = true,
+                UsageType = LlmUsageType.ContentAnalysis,
+            }, timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Timeout or caller cancelled — return regex assessment unchanged
+            return regexAssessment;
+        }
+
+        if (!response.IsSuccess || string.IsNullOrWhiteSpace(response.Content))
+            return regexAssessment;
+
+        // Parse the LLM response
+        bool receptive;
+        float confidence;
+        string reason;
+        try
+        {
+            using var doc = JsonDocument.Parse(response.Content);
+            var root = doc.RootElement;
+
+            receptive = root.TryGetProperty("receptive", out var rProp) && rProp.GetBoolean();
+            confidence = root.TryGetProperty("confidence", out var cProp) && cProp.TryGetSingle(out var c) ? c : 0.5f;
+            reason = root.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() ?? "No reason" : "No reason";
+        }
+        catch (Exception) // JsonException, InvalidOperationException, etc.
+        {
+            return regexAssessment;
+        }
+
+        // Adjust score based on LLM verdict
+        var adjustedScore = regexAssessment.OverallScore;
+        if (receptive && confidence >= 0.6f)
+        {
+            // Boost: up to +2 points scaled by confidence
+            adjustedScore = Math.Min(10f, adjustedScore + 2.0f * confidence);
+        }
+        else if (!receptive && confidence >= 0.6f)
+        {
+            // Reduce: up to -2 points scaled by confidence
+            adjustedScore = Math.Max(0f, adjustedScore - 2.0f * confidence);
+        }
+
+        adjustedScore = MathF.Round(adjustedScore, 1);
+
+        // Add LLM signal to the signals list
+        var enrichedSignals = new List<OutreachSignal>(regexAssessment.Signals)
+        {
+            new("LlmAssessment", $"LLM analysis: {reason}", confidence)
+        };
+
+        return new OutreachAssessment(
+            adjustedScore >= 3.0f,
+            enrichedSignals,
+            adjustedScore);
     }
 
     /// <summary>

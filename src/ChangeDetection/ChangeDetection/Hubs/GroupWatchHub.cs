@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Services.AgentInteraction;
@@ -14,11 +14,15 @@ public sealed record ConfirmedPortalDto(
     string? PlatformId,
     string? Reasoning);
 
+// Retained for future WebAssembly or external-client scenarios.
 public class GroupWatchHub(
-    IServiceScopeFactory scopeFactory,
+    IGroupWatchDiscoveryService discoveryService,
     IUrlValidator urlValidator,
     ILogger<GroupWatchHub> logger) : Hub
 {
+    private const string DiscoveryInProgressKey = "DiscoveryInProgress";
+    private const string DiscoveredUrlsKey = "DiscoveredUrls";
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var expiredQuestions = AskUserService.CleanupConnection(Context.ConnectionId);
@@ -33,27 +37,43 @@ public class GroupWatchHub(
         await base.OnDisconnectedAsync(exception);
     }
 
+    // Diagnostic: verify hub is reachable
+    public string Ping() => "pong";
+
     public async IAsyncEnumerable<GroupWatchProgress> StartDiscovery(
         string userInput,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        Console.WriteLine($"[GroupWatchHub] StartDiscovery ENTERED with: '{userInput}'");
+        logger.LogWarning("StartDiscovery ENTERED for connection {ConnectionId} with input '{Input}'",
+            Context.ConnectionId, userInput);
+
+        if (Context.Items.ContainsKey(DiscoveryInProgressKey))
+        {
+            logger.LogWarning(
+                "Rejecting concurrent discovery for connection {ConnectionId}",
+                Context.ConnectionId);
+            yield return new GroupWatchProgress(
+                GroupWatchPhase.Complete,
+                "Discovery already in progress. Please wait for it to finish before starting another search.",
+                0, 0, null, null, null);
+            yield break;
+        }
+
+        Context.Items[DiscoveryInProgressKey] = true;
+
         logger.LogInformation(
             "Starting group watch discovery for connection {ConnectionId}",
             Context.ConnectionId);
 
-        // Run the discovery on a thread-pool thread and pipe results through a Channel.
-        // This detaches the async iterator from the SignalR hub pipeline, preventing
-        // deadlocks where the iterator's MoveNextAsync continuation and the inner
-        // awaits (DB semaphore, LLM calls) block each other.
+        // Discovery service is injected directly (hub is transient, gets scoped DI).
+        // Run the actual work on a thread-pool thread via Channel to detach from
+        // the SignalR hub pipeline and prevent async iterator deadlocks.
         var channel = Channel.CreateUnbounded<GroupWatchProgress>(
             new UnboundedChannelOptions { SingleWriter = true });
 
         var producerTask = Task.Run(async () =>
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var discoveryService = scope.ServiceProvider
-                .GetRequiredService<IGroupWatchDiscoveryService>();
-
             try
             {
                 await foreach (var progress in discoveryService.DiscoverAsync(userInput, ct))
@@ -71,41 +91,55 @@ public class GroupWatchHub(
                     "Error during {Operation} for connection {ConnectionId}",
                     nameof(StartDiscovery), Context.ConnectionId);
 
-                var errorProgress = new GroupWatchProgress(
-                    Phase: GroupWatchPhase.Parsing,
-                    Message: $"Discovery failed: {ex.Message}",
-                    CompletedCount: null,
-                    TotalCount: null,
-                    Portals: null,
-                    GroupId: null,
-                    WatchIds: null);
-
-                await channel.Writer.WriteAsync(errorProgress, CancellationToken.None);
+                try
+                {
+                    await channel.Writer.WriteAsync(new GroupWatchProgress(
+                        Phase: GroupWatchPhase.Complete,
+                        Message: $"Discovery failed: {ex.Message}",
+                        CompletedCount: 0,
+                        TotalCount: 0,
+                        Portals: null,
+                        GroupId: null,
+                        WatchIds: null), CancellationToken.None);
+                }
+                catch (Exception writeEx) { logger.LogDebug(writeEx, "Channel already completed when writing error"); }
             }
             finally
             {
-                channel.Writer.Complete();
+                channel.Writer.TryComplete();
             }
         }, ct);
 
-        await foreach (var progress in channel.Reader.ReadAllAsync(ct))
+        try
         {
-            if (progress.Portals is { Count: > 0 })
+            await foreach (var progress in channel.Reader.ReadAllAsync(ct))
             {
-                Context.Items["DiscoveredUrls"] = new HashSet<string>(
-                    progress.Portals.Select(p => p.Url),
-                    StringComparer.OrdinalIgnoreCase);
+                logger.LogInformation(
+                    "Hub yielding progress to client: Phase={Phase}, Message={Message}",
+                    progress.Phase, progress.Message);
+
+                if (progress.Portals is { Count: > 0 })
+                {
+                    Context.Items[DiscoveredUrlsKey] = new HashSet<string>(
+                        progress.Portals.Select(p => p.Url),
+                        StringComparer.OrdinalIgnoreCase);
+                }
+
+                yield return progress;
+
+                // If the server sent a terminal error (Phase=Complete with error message), stop
+                if (progress.Phase == GroupWatchPhase.Complete &&
+                    progress.Message?.StartsWith("Discovery failed:") == true)
+                    yield break;
             }
 
-            yield return progress;
-
-            // If we just yielded an error, stop
-            if (progress.Message?.StartsWith("Discovery failed:") == true)
-                yield break;
+            // Ensure the producer finishes (propagate any unobserved exceptions)
+            await producerTask;
         }
-
-        // Ensure the producer finishes (propagate any unobserved exceptions)
-        await producerTask;
+        finally
+        {
+            Context.Items.Remove(DiscoveryInProgressKey);
+        }
     }
 
     public async IAsyncEnumerable<GroupWatchProgress> ConfirmPortals(
@@ -118,7 +152,7 @@ public class GroupWatchHub(
             portals.Count,
             Context.ConnectionId);
 
-        if (!Context.Items.TryGetValue("DiscoveredUrls", out var discoveredObj)
+        if (!Context.Items.TryGetValue(DiscoveredUrlsKey, out var discoveredObj)
             || discoveredObj is not HashSet<string> discoveredUrls)
         {
             logger.LogWarning(
@@ -178,16 +212,12 @@ public class GroupWatchHub(
             p.Name,
             p.PlatformId)).ToList();
 
-        // Same Channel pattern as StartDiscovery — detach from SignalR pipeline
+        // Discovery service injected via hub constructor — no manual scope needed
         var channel = Channel.CreateUnbounded<GroupWatchProgress>(
             new UnboundedChannelOptions { SingleWriter = true });
 
         var producerTask = Task.Run(async () =>
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var discoveryService = scope.ServiceProvider
-                .GetRequiredService<IGroupWatchDiscoveryService>();
-
             try
             {
                 await foreach (var progress in discoveryService.CreateWatchesAsync(
@@ -206,20 +236,22 @@ public class GroupWatchHub(
                     "Error during {Operation} for connection {ConnectionId}",
                     nameof(ConfirmPortals), Context.ConnectionId);
 
-                var errorProgress = new GroupWatchProgress(
-                    Phase: GroupWatchPhase.Parsing,
-                    Message: $"Discovery failed: {ex.Message}",
-                    CompletedCount: null,
-                    TotalCount: null,
-                    Portals: null,
-                    GroupId: null,
-                    WatchIds: null);
-
-                await channel.Writer.WriteAsync(errorProgress, CancellationToken.None);
+                try
+                {
+                    await channel.Writer.WriteAsync(new GroupWatchProgress(
+                        Phase: GroupWatchPhase.Complete,
+                        Message: $"Discovery failed: {ex.Message}",
+                        CompletedCount: 0,
+                        TotalCount: 0,
+                        Portals: null,
+                        GroupId: null,
+                        WatchIds: null), CancellationToken.None);
+                }
+                catch (Exception writeEx) { logger.LogDebug(writeEx, "Channel already completed when writing error"); }
             }
             finally
             {
-                channel.Writer.Complete();
+                channel.Writer.TryComplete();
             }
         }, ct);
 
@@ -227,7 +259,8 @@ public class GroupWatchHub(
         {
             yield return progress;
 
-            if (progress.Message?.StartsWith("Discovery failed:") == true)
+            if (progress.Phase == GroupWatchPhase.Complete &&
+                progress.Message?.StartsWith("Discovery failed:") == true)
                 yield break;
         }
 
@@ -240,63 +273,5 @@ public class GroupWatchHub(
             return url;
         var host = uri.Host.ToLowerInvariant();
         return host.StartsWith("www.") ? host[4..] : host;
-    }
-
-    private async IAsyncEnumerable<GroupWatchProgress> SafeStream(
-        IAsyncEnumerable<GroupWatchProgress> source,
-        string operation,
-        [EnumeratorCancellation] CancellationToken ct = default)
-    {
-        var enumerator = source.GetAsyncEnumerator(ct);
-        try
-        {
-            while (true)
-            {
-                GroupWatchProgress current;
-                try
-                {
-                    if (!await enumerator.MoveNextAsync())
-                        yield break;
-
-                    current = enumerator.Current;
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    logger.LogInformation(
-                        "{Operation} cancelled for connection {ConnectionId}",
-                        operation,
-                        Context.ConnectionId);
-                    yield break;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(
-                        ex,
-                        "Error during {Operation} for connection {ConnectionId}",
-                        operation,
-                        Context.ConnectionId);
-
-                    // Capture error — cannot yield inside catch in C#
-                    current = new GroupWatchProgress(
-                        Phase: GroupWatchPhase.Parsing,
-                        Message: $"Discovery failed: {ex.Message}",
-                        CompletedCount: null,
-                        TotalCount: null,
-                        Portals: null,
-                        GroupId: null,
-                        WatchIds: null);
-                }
-
-                yield return current;
-
-                // If we just yielded an error, stop
-                if (current.Message?.StartsWith("Discovery failed:") == true)
-                    yield break;
-            }
-        }
-        finally
-        {
-            await enumerator.DisposeAsync();
-        }
     }
 }

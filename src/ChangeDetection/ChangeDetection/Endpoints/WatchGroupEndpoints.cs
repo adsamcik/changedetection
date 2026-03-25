@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.GroupWatch;
@@ -27,6 +28,7 @@ public static class WatchGroupEndpoints
         group.MapPost("/{id}/suggestions/{suggestionId}/accept", AcceptSuggestion).WithName("AcceptPortalSuggestion").Produces<PortalSuggestionAcceptResultDto>().Produces(404);
         group.MapPost("/{id}/suggestions/{suggestionId}/dismiss", DismissSuggestion).WithName("DismissPortalSuggestion").Produces(204).Produces(404);
         group.MapPut("/{id}/profile", UpdateProfile).WithName("UpdateGroupProfile").Produces<ProfileUpdateResult>().Produces(404).Produces(400);
+        group.MapGet("/{id}/outreach/export", ExportOutreach).WithName("ExportOutreach").Produces<OutreachExportDto>().Produces(404);
         return group;
     }
 
@@ -767,5 +769,143 @@ public static class WatchGroupEndpoints
             summary = sumEl.GetString();
 
         return (positive, negative, summary);
+    }
+
+    /// <summary>
+    /// Exports outreach-friendly companies in JSON or LaTeX format.
+    /// GET /api/groups/{id}/outreach/export?format=json|latex
+    /// </summary>
+    private static async Task<IResult> ExportOutreach(
+        Guid id,
+        IWatchGroupService groupSvc,
+        string? format,
+        CancellationToken ct)
+    {
+        var group = await groupSvc.GetByIdAsync(id, ct);
+        if (group is null) return Results.NotFound();
+
+        var members = await groupSvc.GetGroupMembersAsync(id, ct);
+
+        var companies = new List<OutreachExportCompanyDto>();
+        foreach (var member in members)
+        {
+            var assessment = OutreachSignalDetector.Deserialize(member.OutreachAssessmentJson);
+            if (assessment is not { IsOutreachFriendly: true }) continue;
+
+            var companyName = DeriveCompanyFromWatchName(member.Name ?? new Uri(member.Url, UriKind.RelativeOrAbsolute).Host)
+                              ?? member.Name ?? member.Url;
+
+            // Determine outreach channel from signals
+            var outreachChannel = DetermineOutreachChannel(assessment, member.Url);
+
+            companies.Add(new OutreachExportCompanyDto
+            {
+                Name = companyName,
+                Url = member.Url,
+                Score = assessment.OverallScore,
+                Signals = assessment.Signals.Select(s => s.Evidence).ToList(),
+                OutreachChannel = outreachChannel,
+            });
+        }
+
+        companies = companies.OrderByDescending(c => c.Score).ToList();
+
+        if (string.Equals(format, "latex", StringComparison.OrdinalIgnoreCase))
+        {
+            var latex = GenerateLatexOutreach(companies);
+            return Results.Text(latex, "text/plain; charset=utf-8");
+        }
+
+        // Default: JSON
+        return Results.Ok(new OutreachExportDto
+        {
+            GroupId = id.ToString(),
+            GroupName = group.Name,
+            ExportedAt = DateTime.UtcNow,
+            Companies = companies,
+        });
+    }
+
+    /// <summary>
+    /// Determines the best outreach channel from detected signals.
+    /// </summary>
+    private static string DetermineOutreachChannel(OutreachAssessment assessment, string watchUrl)
+    {
+        // Check for email-containing signals first
+        var emailSignal = assessment.Signals.FirstOrDefault(s =>
+            s.Type is "NamedRecruiter" or "SendCV" && s.Evidence.Contains('@'));
+        if (emailSignal is not null)
+        {
+            // Try to extract email from evidence
+            var emailMatch = Regex.Match(emailSignal.Evidence, @"[\w.+-]+@[\w.-]+\.\w{2,}");
+            if (emailMatch.Success)
+                return emailMatch.Value;
+        }
+
+        if (assessment.Signals.Any(s => s.Type == "GeneralApplication"))
+            return "General application page";
+        if (assessment.Signals.Any(s => s.Type == "TalentCommunity"))
+            return "Talent community";
+        if (assessment.Signals.Any(s => s.Type == "SendCV"))
+            return "CV submission form";
+
+        return watchUrl;
+    }
+
+    /// <summary>
+    /// Generates a LaTeX outreach table in Czech for the pozice.tex report.
+    /// </summary>
+    private static string GenerateLatexOutreach(List<OutreachExportCompanyDto> companies)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("% Outreach tabulka — vygenerováno automaticky z ChangeDetection");
+        sb.AppendLine(@"% Vložte do pozice.tex nebo prilezitosti.tex");
+        sb.AppendLine();
+        sb.AppendLine(@"\begin{longtable}{p{3.5cm} p{2cm} p{1cm} p{4cm} p{3.5cm}}");
+        sb.AppendLine(@"\toprule");
+        sb.AppendLine(@"\textbf{Společnost} & \textbf{Kanál} & \textbf{Skóre} & \textbf{Signály} & \textbf{URL} \\");
+        sb.AppendLine(@"\midrule");
+        sb.AppendLine(@"\endhead");
+
+        foreach (var company in companies)
+        {
+            var escapedName = EscapeLatex(company.Name);
+            var escapedChannel = EscapeLatex(company.OutreachChannel);
+            var escapedSignals = EscapeLatex(string.Join("; ", company.Signals.Select(TrimSignalForLatex)));
+            var escapedUrl = EscapeLatex(company.Url);
+
+            sb.AppendLine(
+                $@"{escapedName} & {escapedChannel} & {company.Score:F1} & {escapedSignals} & \url{{{company.Url}}} \\");
+        }
+
+        sb.AppendLine(@"\bottomrule");
+        sb.AppendLine(@"\end{longtable}");
+
+        return sb.ToString();
+    }
+
+    /// <summary>Escapes special LaTeX characters.</summary>
+    private static string EscapeLatex(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text
+            .Replace(@"\", @"\textbackslash{}")
+            .Replace("&", @"\&")
+            .Replace("%", @"\%")
+            .Replace("$", @"\$")
+            .Replace("#", @"\#")
+            .Replace("_", @"\_")
+            .Replace("{", @"\{")
+            .Replace("}", @"\}")
+            .Replace("~", @"\textasciitilde{}")
+            .Replace("^", @"\textasciicircum{}");
+    }
+
+    /// <summary>Trims a signal evidence string for compact LaTeX display.</summary>
+    private static string TrimSignalForLatex(string evidence)
+    {
+        // Strip the "…" wrappers and truncate
+        var trimmed = evidence.Trim('…', ' ');
+        return trimmed.Length > 60 ? trimmed[..57] + "..." : trimmed;
     }
 }
