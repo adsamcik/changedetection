@@ -248,6 +248,39 @@ public class LiteDbContext : IDisposable
         fieldHistory.EnsureIndex(x => x.WatchedSiteId);
         fieldHistory.EnsureIndex(x => x.FieldName);
 
+        // Configure indexes for PriceHistoryEntry
+        var priceHistory = _database.GetCollection<Core.Entities.PriceHistoryEntry>("price_history");
+        priceHistory.EnsureIndex(x => x.WatchId);
+        priceHistory.EnsureIndex(x => x.FieldName);
+        priceHistory.EnsureIndex(x => x.Timestamp);
+        priceHistory.EnsureIndex(x => x.ObjectIdentityKey);
+        priceHistory.EnsureIndex("WatchId_FieldName_Timestamp",
+            BsonExpression.Create("{ WatchId: $.WatchId, FieldName: $.FieldName, Timestamp: $.Timestamp }"));
+
+        // Configure indexes for NotificationOutboxEntry
+        var notificationOutbox = _database.GetCollection<Core.Entities.NotificationOutboxEntry>("notification_outbox");
+        notificationOutbox.EnsureIndex(x => x.Status);
+        notificationOutbox.EnsureIndex(x => x.CreatedAt);
+        notificationOutbox.EnsureIndex(x => x.NextRetryAt);
+        notificationOutbox.EnsureIndex(x => x.ProcessingStartedAt);
+        notificationOutbox.EnsureIndex(x => x.WatchedSiteId);
+
+        // Configure indexes for PipelineQueueItem
+        var pipelineQueue = _database.GetCollection<Core.Entities.PipelineQueueItem>("pipeline_queue");
+        pipelineQueue.EnsureIndex(x => x.Status);
+        pipelineQueue.EnsureIndex(x => x.SessionId);
+        pipelineQueue.EnsureIndex(x => x.OwnerId);
+        pipelineQueue.EnsureIndex(x => x.EnqueuedAt);
+        pipelineQueue.EnsureIndex(x => x.Priority);
+        pipelineQueue.EnsureIndex(x => x.StartedAt);
+
+        // Configure indexes for PersistedSession
+        var persistedSessions = _database.GetCollection<Core.Entities.PersistedSession>("persisted_sessions");
+        persistedSessions.EnsureIndex(x => x.SessionId, unique: true);
+        persistedSessions.EnsureIndex(x => x.OwnerId);
+        persistedSessions.EnsureIndex(x => x.LastActivityAt);
+        persistedSessions.EnsureIndex(x => x.AwaitingUserInput);
+
         // Configure indexes for PortalSuggestionEntity
         var portalSuggestions = _database.GetCollection<Core.Entities.PortalSuggestionEntity>("portal_suggestions");
         portalSuggestions.EnsureIndex(x => x.OwnerId);

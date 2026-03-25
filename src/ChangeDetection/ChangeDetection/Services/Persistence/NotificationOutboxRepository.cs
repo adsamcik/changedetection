@@ -7,154 +7,156 @@ namespace ChangeDetection.Services.Persistence;
 /// <summary>
 /// LiteDB repository for the notification outbox.
 /// Provides reliable delivery semantics with retry support.
+/// All operations are serialized through <see cref="ThreadSafeLiteDbContext"/>.
 /// </summary>
-public class NotificationOutboxRepository(LiteDbContext context) : INotificationOutboxRepository
+public class NotificationOutboxRepository : INotificationOutboxRepository
 {
-    private readonly ILiteCollection<NotificationOutboxEntry> _collection = InitializeCollection(context);
-    private readonly object _claimLock = new();
+    private readonly ThreadSafeLiteDbContext _safeContext;
+    private const string CollectionName = "notification_outbox";
 
-    private static ILiteCollection<NotificationOutboxEntry> InitializeCollection(LiteDbContext context)
+    public NotificationOutboxRepository(ThreadSafeLiteDbContext safeContext)
     {
-        var collection = context.Database.GetCollection<NotificationOutboxEntry>("notification_outbox");
-        
-        // Indexes for efficient queries
-        collection.EnsureIndex(x => x.Status);
-        collection.EnsureIndex(x => x.CreatedAt);
-        collection.EnsureIndex(x => x.NextRetryAt);
-        collection.EnsureIndex(x => x.ProcessingStartedAt);
-        collection.EnsureIndex(x => x.WatchedSiteId);
-        
-        return collection;
+        _safeContext = safeContext;
     }
 
-    public Task<NotificationOutboxEntry> AddAsync(NotificationOutboxEntry entry, CancellationToken ct = default)
+    private ILiteCollection<NotificationOutboxEntry> Col(ILiteDatabase db) =>
+        db.GetCollection<NotificationOutboxEntry>(CollectionName);
+
+    public async Task<NotificationOutboxEntry> AddAsync(NotificationOutboxEntry entry, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
         if (entry.Id == Guid.Empty)
             entry.Id = Guid.NewGuid();
         
-        _collection.Insert(entry);
-        return Task.FromResult(entry);
+        await _safeContext.ExecuteAsync(db => { Col(db).Insert(entry); }, ct);
+        return entry;
     }
 
-    public Task<IReadOnlyList<NotificationOutboxEntry>> GetPendingAsync(int maxCount = 100, CancellationToken ct = default)
+    public async Task<IReadOnlyList<NotificationOutboxEntry>> GetPendingAsync(int maxCount = 100, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
-        var results = _collection.Query()
-            .Where(x => x.Status == NotificationStatus.Pending)
-            .OrderBy(x => x.CreatedAt)
-            .Limit(maxCount)
-            .ToList();
-        
-        return Task.FromResult<IReadOnlyList<NotificationOutboxEntry>>(results);
+        return await _safeContext.ExecuteAsync(db =>
+            (IReadOnlyList<NotificationOutboxEntry>)Col(db).Query()
+                .Where(x => x.Status == NotificationStatus.Pending)
+                .OrderBy(x => x.CreatedAt)
+                .Limit(maxCount)
+                .ToList(), ct);
     }
 
-    public Task<IReadOnlyList<NotificationOutboxEntry>> GetReadyForRetryAsync(int maxCount = 50, CancellationToken ct = default)
+    public async Task<IReadOnlyList<NotificationOutboxEntry>> GetReadyForRetryAsync(int maxCount = 50, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
         var now = DateTime.UtcNow;
-        var results = _collection.Query()
-            .Where(x => x.Status == NotificationStatus.RetryPending && x.NextRetryAt <= now)
-            .OrderBy(x => x.NextRetryAt)
-            .Limit(maxCount)
-            .ToList();
-        
-        return Task.FromResult<IReadOnlyList<NotificationOutboxEntry>>(results);
+        return await _safeContext.ExecuteAsync(db =>
+            (IReadOnlyList<NotificationOutboxEntry>)Col(db).Query()
+                .Where(x => x.Status == NotificationStatus.RetryPending && x.NextRetryAt <= now)
+                .OrderBy(x => x.NextRetryAt)
+                .Limit(maxCount)
+                .ToList(), ct);
     }
 
-    public Task<bool> TryClaimForProcessingAsync(Guid entryId, CancellationToken ct = default)
+    public async Task<bool> TryClaimForProcessingAsync(Guid entryId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
-        lock (_claimLock)
+        // Global semaphore in ThreadSafeLiteDbContext provides exclusive access
+        return await _safeContext.ExecuteAsync(db =>
         {
-            var entry = _collection.FindById(entryId);
+            var col = Col(db);
+            var entry = col.FindById(entryId);
             if (entry == null)
-                return Task.FromResult(false);
+                return false;
             
-            // Only claim if still in a claimable state
             if (entry.Status != NotificationStatus.Pending && entry.Status != NotificationStatus.RetryPending)
-                return Task.FromResult(false);
+                return false;
             
             entry.Status = NotificationStatus.Processing;
             entry.ProcessingStartedAt = DateTime.UtcNow;
-            _collection.Update(entry);
+            col.Update(entry);
             
-            return Task.FromResult(true);
-        }
+            return true;
+        }, ct);
     }
 
-    public Task MarkSentAsync(Guid entryId, CancellationToken ct = default)
+    public async Task MarkSentAsync(Guid entryId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
-        var entry = _collection.FindById(entryId);
-        if (entry == null)
-            return Task.CompletedTask;
-        
-        entry.Status = NotificationStatus.Sent;
-        entry.SentAt = DateTime.UtcNow;
-        entry.LastError = null;
-        _collection.Update(entry);
-        
-        return Task.CompletedTask;
-    }
-
-    public Task MarkFailedAsync(Guid entryId, string errorMessage, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        
-        var entry = _collection.FindById(entryId);
-        if (entry == null)
-            return Task.CompletedTask;
-        
-        entry.RetryCount++;
-        entry.LastError = errorMessage;
-        
-        if (entry.RetryCount >= entry.MaxRetries)
+        await _safeContext.ExecuteAsync(db =>
         {
+            var col = Col(db);
+            var entry = col.FindById(entryId);
+            if (entry == null)
+                return;
+            
+            entry.Status = NotificationStatus.Sent;
+            entry.SentAt = DateTime.UtcNow;
+            entry.LastError = null;
+            col.Update(entry);
+        }, ct);
+    }
+
+    public async Task MarkFailedAsync(Guid entryId, string errorMessage, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        
+        await _safeContext.ExecuteAsync(db =>
+        {
+            var col = Col(db);
+            var entry = col.FindById(entryId);
+            if (entry == null)
+                return;
+            
+            entry.RetryCount++;
+            entry.LastError = errorMessage;
+            
+            if (entry.RetryCount >= entry.MaxRetries)
+            {
+                entry.Status = NotificationStatus.Failed;
+                entry.NextRetryAt = null;
+            }
+            else
+            {
+                entry.Status = NotificationStatus.RetryPending;
+                var delayMinutes = Math.Pow(2, entry.RetryCount - 1);
+                entry.NextRetryAt = DateTime.UtcNow.AddMinutes(delayMinutes);
+            }
+            
+            col.Update(entry);
+        }, ct);
+    }
+
+    public async Task MarkPermanentlyFailedAsync(Guid entryId, string errorMessage, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        
+        await _safeContext.ExecuteAsync(db =>
+        {
+            var col = Col(db);
+            var entry = col.FindById(entryId);
+            if (entry == null)
+                return;
+            
             entry.Status = NotificationStatus.Failed;
+            entry.LastError = errorMessage;
             entry.NextRetryAt = null;
-        }
-        else
-        {
-            entry.Status = NotificationStatus.RetryPending;
-            // Exponential backoff: 1min, 2min, 4min, 8min, 16min
-            var delayMinutes = Math.Pow(2, entry.RetryCount - 1);
-            entry.NextRetryAt = DateTime.UtcNow.AddMinutes(delayMinutes);
-        }
-        
-        _collection.Update(entry);
-        return Task.CompletedTask;
+            col.Update(entry);
+        }, ct);
     }
 
-    public Task MarkPermanentlyFailedAsync(Guid entryId, string errorMessage, CancellationToken ct = default)
+    public async Task<int> RecoverStaleProcessingAsync(TimeSpan processingTimeout, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
-        var entry = _collection.FindById(entryId);
-        if (entry == null)
-            return Task.CompletedTask;
-        
-        entry.Status = NotificationStatus.Failed;
-        entry.LastError = errorMessage;
-        entry.NextRetryAt = null;
-        _collection.Update(entry);
-        
-        return Task.CompletedTask;
-    }
-
-    public Task<int> RecoverStaleProcessingAsync(TimeSpan processingTimeout, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        
-        lock (_claimLock)
+        // Global semaphore provides exclusive access — no local lock needed
+        return await _safeContext.ExecuteAsync(db =>
         {
+            var col = Col(db);
             var cutoff = DateTime.UtcNow - processingTimeout;
-            var staleEntries = _collection.Query()
+            var staleEntries = col.Query()
                 .Where(x => x.Status == NotificationStatus.Processing && x.ProcessingStartedAt < cutoff)
                 .ToList();
             
@@ -163,44 +165,44 @@ public class NotificationOutboxRepository(LiteDbContext context) : INotification
                 entry.Status = NotificationStatus.RetryPending;
                 entry.LastError = "Processing timed out - recovered after restart";
                 entry.NextRetryAt = DateTime.UtcNow;
-                _collection.Update(entry);
+                col.Update(entry);
             }
             
-            return Task.FromResult(staleEntries.Count);
-        }
+            return staleEntries.Count;
+        }, ct);
     }
 
-    public Task<NotificationOutboxEntry?> GetByIdAsync(Guid entryId, CancellationToken ct = default)
+    public async Task<NotificationOutboxEntry?> GetByIdAsync(Guid entryId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult<NotificationOutboxEntry?>(_collection.FindById(entryId));
+        return await _safeContext.ExecuteAsync(db => Col(db).FindById(entryId), ct);
     }
 
-    public Task<int> DeleteOldSentAsync(TimeSpan olderThan, CancellationToken ct = default)
+    public async Task<int> DeleteOldSentAsync(TimeSpan olderThan, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
         var cutoff = DateTime.UtcNow - olderThan;
-        var deletedCount = _collection.DeleteMany(x => 
-            x.Status == NotificationStatus.Sent && x.SentAt < cutoff);
-        
-        return Task.FromResult(deletedCount);
+        return await _safeContext.ExecuteAsync(db =>
+            Col(db).DeleteMany(x => x.Status == NotificationStatus.Sent && x.SentAt < cutoff), ct);
     }
 
-    public Task<NotificationOutboxStats> GetStatsAsync(CancellationToken ct = default)
+    public async Task<NotificationOutboxStats> GetStatsAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
-        var yesterday = DateTime.UtcNow.AddDays(-1);
-        
-        var stats = new NotificationOutboxStats(
-            PendingCount: _collection.Count(x => x.Status == NotificationStatus.Pending),
-            ProcessingCount: _collection.Count(x => x.Status == NotificationStatus.Processing),
-            RetryPendingCount: _collection.Count(x => x.Status == NotificationStatus.RetryPending),
-            FailedCount: _collection.Count(x => x.Status == NotificationStatus.Failed),
-            SentLast24Hours: _collection.Count(x => x.Status == NotificationStatus.Sent && x.SentAt >= yesterday)
-        );
-        
-        return Task.FromResult(stats);
+        return await _safeContext.ExecuteAsync(db =>
+        {
+            var col = Col(db);
+            var yesterday = DateTime.UtcNow.AddDays(-1);
+            
+            return new NotificationOutboxStats(
+                PendingCount: col.Count(x => x.Status == NotificationStatus.Pending),
+                ProcessingCount: col.Count(x => x.Status == NotificationStatus.Processing),
+                RetryPendingCount: col.Count(x => x.Status == NotificationStatus.RetryPending),
+                FailedCount: col.Count(x => x.Status == NotificationStatus.Failed),
+                SentLast24Hours: col.Count(x => x.Status == NotificationStatus.Sent && x.SentAt >= yesterday)
+            );
+        }, ct);
     }
 }

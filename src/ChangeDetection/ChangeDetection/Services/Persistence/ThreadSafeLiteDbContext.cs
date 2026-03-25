@@ -133,12 +133,6 @@ public class ThreadSafeLiteDbContext : IDisposable
         }
     }
 
-    /// <summary>
-    /// Direct access to the underlying database for backward compatibility.
-    /// Prefer Execute/ExecuteAsync methods for thread-safe access.
-    /// </summary>
-    public ILiteDatabase UnsafeDatabase => _inner.Database;
-
     public void Dispose()
     {
         if (!_disposed)

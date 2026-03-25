@@ -6,132 +6,112 @@ namespace ChangeDetection.Services.Persistence;
 
 /// <summary>
 /// LiteDB implementation of session persistence.
-/// Stores conversation sessions for recovery after restart.
+/// All operations are serialized through <see cref="ThreadSafeLiteDbContext"/>.
 /// </summary>
-public class SessionPersistenceService(LiteDbContext context) : ISessionPersistenceService
+public class SessionPersistenceService : ISessionPersistenceService
 {
-    private readonly ILiteCollection<PersistedSession> _collection = InitializeCollection(context);
+    private readonly ThreadSafeLiteDbContext _safeContext;
+    private readonly ILogger<SessionPersistenceService> _logger;
 
-    private static ILiteCollection<PersistedSession> InitializeCollection(LiteDbContext context)
+    public SessionPersistenceService(ThreadSafeLiteDbContext safeContext, ILogger<SessionPersistenceService> logger)
     {
-        var collection = context.Database.GetCollection<PersistedSession>("persisted_sessions");
-        
-        // Indexes for efficient queries
-        collection.EnsureIndex(x => x.SessionId, unique: true);
-        collection.EnsureIndex(x => x.OwnerId);
-        collection.EnsureIndex(x => x.LastActivityAt);
-        collection.EnsureIndex(x => x.AwaitingUserInput);
-        
-        return collection;
+        _safeContext = safeContext;
+        _logger = logger;
     }
 
-    public Task SaveSessionAsync(ConversationSession session, Guid ownerId, CancellationToken ct = default)
+    private static ILiteCollection<PersistedSession> Col(ILiteDatabase db)
+        => db.GetCollection<PersistedSession>("persisted_sessions");
+
+    public async Task SaveSessionAsync(ConversationSession session, Guid ownerId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var persisted = PersistedSession.FromSession(session, ownerId);
-        
-        // Upsert - update if exists, insert if not
-        var existing = _collection.FindOne(x => x.SessionId == session.SessionId);
-        if (existing != null)
+        await _safeContext.ExecuteAsync(db =>
         {
-            persisted.Id = existing.Id;
-            _collection.Update(persisted);
-        }
-        else
+            var col = Col(db);
+            var persisted = PersistedSession.FromSession(session, ownerId);
+            var existing = col.FindOne(x => x.SessionId == session.SessionId);
+            if (existing != null)
+                persisted.Id = existing.Id;
+            col.Upsert(persisted);
+        }, ct);
+    }
+
+    public async Task<ConversationSession?> LoadSessionAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return await _safeContext.ExecuteAsync(db =>
         {
-            _collection.Insert(persisted);
-        }
-        
-        return Task.CompletedTask;
+            var persisted = Col(db).FindOne(x => x.SessionId == sessionId);
+            if (persisted == null) return (ConversationSession?)null;
+            try { return persisted.ToSession(); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to deserialize session {Id}", sessionId);
+                return null;
+            }
+        }, ct);
     }
 
-    public Task<ConversationSession?> LoadSessionAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task DeleteSessionAsync(Guid sessionId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var persisted = _collection.FindOne(x => x.SessionId == sessionId);
-        if (persisted == null)
-            return Task.FromResult<ConversationSession?>(null);
-        
-        try
-        {
-            var session = persisted.ToSession();
-            return Task.FromResult<ConversationSession?>(session);
-        }
-        catch (Exception)
-        {
-            // If deserialization fails, treat as not found
-            return Task.FromResult<ConversationSession?>(null);
-        }
+        await _safeContext.ExecuteAsync(db => { Col(db).DeleteMany(x => x.SessionId == sessionId); }, ct);
     }
 
-    public Task DeleteSessionAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PersistedSession>> GetActiveSessionsAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        _collection.DeleteMany(x => x.SessionId == sessionId);
-        return Task.CompletedTask;
+        return await _safeContext.ExecuteAsync(db =>
+            (IReadOnlyList<PersistedSession>)Col(db).Query()
+                .OrderByDescending(x => x.LastActivityAt)
+                .ToList(), ct);
     }
 
-    public Task<IReadOnlyList<PersistedSession>> GetActiveSessionsAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<PersistedSession>> GetActiveSessionsForOwnerAsync(Guid ownerId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var sessions = _collection.Query()
-            .OrderByDescending(x => x.LastActivityAt)
-            .ToList();
-        
-        return Task.FromResult<IReadOnlyList<PersistedSession>>(sessions);
+        return await _safeContext.ExecuteAsync(db =>
+            (IReadOnlyList<PersistedSession>)Col(db).Query()
+                .Where(x => x.OwnerId == ownerId)
+                .OrderByDescending(x => x.LastActivityAt)
+                .ToList(), ct);
     }
 
-    public Task<IReadOnlyList<PersistedSession>> GetActiveSessionsForOwnerAsync(Guid ownerId, CancellationToken ct = default)
+    public async Task<int> DeleteExpiredSessionsAsync(TimeSpan maxAge, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var sessions = _collection.Query()
-            .Where(x => x.OwnerId == ownerId)
-            .OrderByDescending(x => x.LastActivityAt)
-            .ToList();
-        
-        return Task.FromResult<IReadOnlyList<PersistedSession>>(sessions);
-    }
-
-    public Task<int> DeleteExpiredSessionsAsync(TimeSpan maxAge, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        
         var cutoff = DateTimeOffset.UtcNow - maxAge;
-        var deleted = _collection.DeleteMany(x => x.LastActivityAt < cutoff);
-        
-        return Task.FromResult(deleted);
+        return await _safeContext.ExecuteAsync(db =>
+            Col(db).DeleteMany(x => x.LastActivityAt < cutoff), ct);
     }
 
-    public Task<bool> SessionExistsAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task<bool> SessionExistsAsync(Guid sessionId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(_collection.Exists(x => x.SessionId == sessionId));
+        return await _safeContext.ExecuteAsync(db =>
+            Col(db).Exists(x => x.SessionId == sessionId), ct);
     }
 
-    public Task SaveStateHistoryAsync(Guid sessionId, string stateHistoryJson, CancellationToken ct = default)
+    public async Task SaveStateHistoryAsync(Guid sessionId, string stateHistoryJson, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var persisted = _collection.FindOne(x => x.SessionId == sessionId);
-        if (persisted != null)
+        await _safeContext.ExecuteAsync(db =>
         {
-            persisted.StateHistoryJson = stateHistoryJson;
-            persisted.LastActivityAt = DateTimeOffset.UtcNow;
-            _collection.Update(persisted);
-        }
-        
-        return Task.CompletedTask;
+            var col = Col(db);
+            var persisted = col.FindOne(x => x.SessionId == sessionId);
+            if (persisted != null)
+            {
+                persisted.StateHistoryJson = stateHistoryJson;
+                persisted.LastActivityAt = DateTimeOffset.UtcNow;
+                col.Update(persisted);
+            }
+        }, ct);
     }
 
-    public Task<string> LoadStateHistoryAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task<string> LoadStateHistoryAsync(Guid sessionId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        
-        var persisted = _collection.FindOne(x => x.SessionId == sessionId);
-        return Task.FromResult(persisted?.StateHistoryJson ?? "[]");
+        return await _safeContext.ExecuteAsync(db =>
+            Col(db).FindOne(x => x.SessionId == sessionId)?.StateHistoryJson ?? "[]", ct);
     }
 }

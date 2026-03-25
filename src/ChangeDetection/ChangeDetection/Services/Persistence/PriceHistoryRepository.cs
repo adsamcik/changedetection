@@ -7,32 +7,22 @@ namespace ChangeDetection.Services.Persistence;
 /// <summary>
 /// LiteDB repository for price history entries.
 /// Optimized for time-series queries and chart data generation.
+/// All operations are serialized through <see cref="ThreadSafeLiteDbContext"/>.
 /// </summary>
 public class PriceHistoryRepository : IPriceHistoryRepository
 {
-    private readonly ILiteCollection<PriceHistoryEntry> _collection;
+    private readonly ThreadSafeLiteDbContext _safeContext;
     private const string CollectionName = "price_history";
 
-    public PriceHistoryRepository(LiteDbContext context)
+    public PriceHistoryRepository(ThreadSafeLiteDbContext safeContext)
     {
-        _collection = context.Database.GetCollection<PriceHistoryEntry>(CollectionName);
-        ConfigureIndexes();
+        _safeContext = safeContext;
     }
 
-    private void ConfigureIndexes()
-    {
-        // Composite indexes for efficient queries
-        _collection.EnsureIndex(x => x.WatchId);
-        _collection.EnsureIndex(x => x.FieldName);
-        _collection.EnsureIndex(x => x.Timestamp);
-        _collection.EnsureIndex(x => x.ObjectIdentityKey);
-        
-        // Compound index for the most common query pattern
-        _collection.EnsureIndex("WatchId_FieldName_Timestamp", 
-            BsonExpression.Create("{ WatchId: $.WatchId, FieldName: $.FieldName, Timestamp: $.Timestamp }"));
-    }
+    private static ILiteCollection<PriceHistoryEntry> Col(ILiteDatabase db) =>
+        db.GetCollection<PriceHistoryEntry>(CollectionName);
 
-    public Task<PriceHistoryEntry> AddAsync(PriceHistoryEntry entry, CancellationToken ct = default)
+    public async Task<PriceHistoryEntry> AddAsync(PriceHistoryEntry entry, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
@@ -42,11 +32,11 @@ public class PriceHistoryRepository : IPriceHistoryRepository
         if (entry.Timestamp == default)
             entry.Timestamp = DateTime.UtcNow;
         
-        _collection.Insert(entry);
-        return Task.FromResult(entry);
+        await _safeContext.ExecuteAsync(db => { Col(db).Insert(entry); }, ct);
+        return entry;
     }
 
-    public Task AddRangeAsync(IEnumerable<PriceHistoryEntry> entries, CancellationToken ct = default)
+    public async Task AddRangeAsync(IEnumerable<PriceHistoryEntry> entries, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         
@@ -59,11 +49,10 @@ public class PriceHistoryRepository : IPriceHistoryRepository
                 entry.Timestamp = DateTime.UtcNow;
         }
         
-        _collection.InsertBulk(entryList);
-        return Task.CompletedTask;
+        await _safeContext.ExecuteAsync(db => { Col(db).InsertBulk(entryList); }, ct);
     }
 
-    public Task<PriceHistoryEntry?> GetLatestAsync(
+    public async Task<PriceHistoryEntry?> GetLatestAsync(
         Guid watchId,
         string fieldName,
         string? objectIdentityKey = null,
@@ -71,21 +60,22 @@ public class PriceHistoryRepository : IPriceHistoryRepository
     {
         ct.ThrowIfCancellationRequested();
         
-        var query = _collection.Query()
-            .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
-        
-        if (objectIdentityKey != null)
-            query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
-        
-        var result = query
-            .OrderByDescending(x => x.Timestamp)
-            .Limit(1)
-            .FirstOrDefault();
-        
-        return Task.FromResult<PriceHistoryEntry?>(result);
+        return await _safeContext.ExecuteAsync(db =>
+        {
+            var query = Col(db).Query()
+                .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
+            
+            if (objectIdentityKey != null)
+                query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
+            
+            return query
+                .OrderByDescending(x => x.Timestamp)
+                .Limit(1)
+                .FirstOrDefault();
+        }, ct);
     }
 
-    public Task<IReadOnlyList<PriceHistoryEntry>> GetHistoryAsync(
+    public async Task<IReadOnlyList<PriceHistoryEntry>> GetHistoryAsync(
         Guid watchId,
         string fieldName,
         DateTime? from = null,
@@ -96,28 +86,31 @@ public class PriceHistoryRepository : IPriceHistoryRepository
     {
         ct.ThrowIfCancellationRequested();
         
-        var query = _collection.Query()
-            .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
-        
-        if (from.HasValue)
-            query = query.Where(x => x.Timestamp >= from.Value);
-        
-        if (to.HasValue)
-            query = query.Where(x => x.Timestamp <= to.Value);
-        
-        if (objectIdentityKey != null)
-            query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
-        
-        var orderedQuery = query.OrderByDescending(x => x.Timestamp);
-        
-        var results = limit.HasValue 
-            ? orderedQuery.Limit(limit.Value).ToList()
-            : orderedQuery.ToList();
-        
-        return Task.FromResult<IReadOnlyList<PriceHistoryEntry>>(results);
+        return await _safeContext.ExecuteAsync(db =>
+        {
+            var query = Col(db).Query()
+                .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
+            
+            if (from.HasValue)
+                query = query.Where(x => x.Timestamp >= from.Value);
+            
+            if (to.HasValue)
+                query = query.Where(x => x.Timestamp <= to.Value);
+            
+            if (objectIdentityKey != null)
+                query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
+            
+            var orderedQuery = query.OrderByDescending(x => x.Timestamp);
+            
+            var results = limit.HasValue 
+                ? orderedQuery.Limit(limit.Value).ToList()
+                : orderedQuery.ToList();
+            
+            return (IReadOnlyList<PriceHistoryEntry>)results;
+        }, ct);
     }
 
-    public Task<IReadOnlyList<PriceHistoryEntry>> GetAllForWatchAsync(
+    public async Task<IReadOnlyList<PriceHistoryEntry>> GetAllForWatchAsync(
         Guid watchId,
         DateTime? from = null,
         DateTime? to = null,
@@ -125,23 +118,24 @@ public class PriceHistoryRepository : IPriceHistoryRepository
     {
         ct.ThrowIfCancellationRequested();
         
-        var query = _collection.Query()
-            .Where(x => x.WatchId == watchId);
-        
-        if (from.HasValue)
-            query = query.Where(x => x.Timestamp >= from.Value);
-        
-        if (to.HasValue)
-            query = query.Where(x => x.Timestamp <= to.Value);
-        
-        var results = query
-            .OrderByDescending(x => x.Timestamp)
-            .ToList();
-        
-        return Task.FromResult<IReadOnlyList<PriceHistoryEntry>>(results);
+        return await _safeContext.ExecuteAsync(db =>
+        {
+            var query = Col(db).Query()
+                .Where(x => x.WatchId == watchId);
+            
+            if (from.HasValue)
+                query = query.Where(x => x.Timestamp >= from.Value);
+            
+            if (to.HasValue)
+                query = query.Where(x => x.Timestamp <= to.Value);
+            
+            return (IReadOnlyList<PriceHistoryEntry>)query
+                .OrderByDescending(x => x.Timestamp)
+                .ToList();
+        }, ct);
     }
 
-    public Task<(decimal? Min, DateTime? MinAt, decimal? Max, DateTime? MaxAt)> GetMinMaxAsync(
+    public async Task<(decimal? Min, DateTime? MinAt, decimal? Max, DateTime? MaxAt)> GetMinMaxAsync(
         Guid watchId,
         string fieldName,
         string? objectIdentityKey = null,
@@ -149,43 +143,45 @@ public class PriceHistoryRepository : IPriceHistoryRepository
     {
         ct.ThrowIfCancellationRequested();
         
-        var query = _collection.Query()
-            .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
-        
-        if (objectIdentityKey != null)
-            query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
-        
-        var entries = query.ToList();
-        
-        if (entries.Count == 0)
-            return Task.FromResult<(decimal?, DateTime?, decimal?, DateTime?)>((null, null, null, null));
-        
-        var minEntry = entries.MinBy(x => x.Value);
-        var maxEntry = entries.MaxBy(x => x.Value);
-        
-        return Task.FromResult<(decimal?, DateTime?, decimal?, DateTime?)>((
-            minEntry?.Value,
-            minEntry?.Timestamp,
-            maxEntry?.Value,
-            maxEntry?.Timestamp
-        ));
+        return await _safeContext.ExecuteAsync(db =>
+        {
+            var query = Col(db).Query()
+                .Where(x => x.WatchId == watchId && x.FieldName == fieldName);
+            
+            if (objectIdentityKey != null)
+                query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
+            
+            var entries = query.ToList();
+            
+            if (entries.Count == 0)
+                return (default(decimal?), default(DateTime?), default(decimal?), default(DateTime?));
+            
+            var minEntry = entries.MinBy(x => x.Value);
+            var maxEntry = entries.MaxBy(x => x.Value);
+            
+            return ((decimal?, DateTime?, decimal?, DateTime?))(
+                minEntry?.Value,
+                minEntry?.Timestamp,
+                maxEntry?.Value,
+                maxEntry?.Timestamp
+            );
+        }, ct);
     }
 
-    public Task DeleteForWatchAsync(Guid watchId, CancellationToken ct = default)
+    public async Task DeleteForWatchAsync(Guid watchId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        _collection.DeleteMany(x => x.WatchId == watchId);
-        return Task.CompletedTask;
+        await _safeContext.ExecuteAsync(db => { Col(db).DeleteMany(x => x.WatchId == watchId); }, ct);
     }
 
-    public Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken ct = default)
+    public async Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var count = _collection.DeleteMany(x => x.Timestamp < cutoffDate);
-        return Task.FromResult(count);
+        return await _safeContext.ExecuteAsync(db =>
+            Col(db).DeleteMany(x => x.Timestamp < cutoffDate), ct);
     }
 
-    public Task<IReadOnlyList<PriceHistoryDataPoint>> GetChartDataAsync(
+    public async Task<IReadOnlyList<PriceHistoryDataPoint>> GetChartDataAsync(
         Guid watchId,
         string fieldName,
         DateTime from,
@@ -196,22 +192,24 @@ public class PriceHistoryRepository : IPriceHistoryRepository
     {
         ct.ThrowIfCancellationRequested();
         
-        // Get raw data first
-        var query = _collection.Query()
-            .Where(x => x.WatchId == watchId && 
-                        x.FieldName == fieldName && 
-                        x.Timestamp >= from && 
-                        x.Timestamp <= to);
-        
-        if (objectIdentityKey != null)
-            query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
-        
-        var entries = query
-            .OrderBy(x => x.Timestamp)
-            .ToList();
+        var entries = await _safeContext.ExecuteAsync(db =>
+        {
+            var query = Col(db).Query()
+                .Where(x => x.WatchId == watchId && 
+                            x.FieldName == fieldName && 
+                            x.Timestamp >= from && 
+                            x.Timestamp <= to);
+            
+            if (objectIdentityKey != null)
+                query = query.Where(x => x.ObjectIdentityKey == objectIdentityKey);
+            
+            return query
+                .OrderBy(x => x.Timestamp)
+                .ToList();
+        }, ct);
         
         if (entries.Count == 0)
-            return Task.FromResult<IReadOnlyList<PriceHistoryDataPoint>>([]);
+            return [];
         
         // Determine interval if auto
         var actualInterval = interval == ChartInterval.Auto
@@ -220,16 +218,13 @@ public class PriceHistoryRepository : IPriceHistoryRepository
         
         if (actualInterval == ChartInterval.Raw)
         {
-            // Return raw data points
             var rawPoints = entries
                 .Select(e => new PriceHistoryDataPoint(e.Timestamp, e.Value, null, null, 1))
                 .ToList();
-            return Task.FromResult<IReadOnlyList<PriceHistoryDataPoint>>(rawPoints);
+            return rawPoints;
         }
         
-        // Aggregate data points by interval
-        var aggregatedPoints = AggregateByInterval(entries, actualInterval);
-        return Task.FromResult<IReadOnlyList<PriceHistoryDataPoint>>(aggregatedPoints);
+        return AggregateByInterval(entries, actualInterval);
     }
 
     private static ChartInterval DetermineOptimalInterval(DateTime from, DateTime to)
@@ -238,11 +233,11 @@ public class PriceHistoryRepository : IPriceHistoryRepository
         
         return range.TotalDays switch
         {
-            <= 2 => ChartInterval.Raw,      // Up to 2 days: show raw data
-            <= 14 => ChartInterval.Hourly,  // Up to 2 weeks: hourly
-            <= 90 => ChartInterval.Daily,   // Up to 3 months: daily
-            <= 365 => ChartInterval.Weekly, // Up to 1 year: weekly
-            _ => ChartInterval.Monthly      // Over 1 year: monthly
+            <= 2 => ChartInterval.Raw,
+            <= 14 => ChartInterval.Hourly,
+            <= 90 => ChartInterval.Daily,
+            <= 365 => ChartInterval.Weekly,
+            _ => ChartInterval.Monthly
         };
     }
 
