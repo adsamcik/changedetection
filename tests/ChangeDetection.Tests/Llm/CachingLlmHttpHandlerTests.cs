@@ -157,11 +157,11 @@ public class CachingLlmHttpHandlerTests : TestBase
     }
 
     [Test]
-    public async Task CacheOnly_CacheHit_IsPortableAcrossSourceLineEndings()
+    public async Task CacheOnly_CacheHit_IsPortableAcrossMixedSourceLineEndings()
     {
         using var cache = new LlmResponseCache(_testDbPath);
-        var windowsRequestBody = """{"messages":[{"role":"user","content":"Line one\r\nLine two"}],"model":"test-model"}""";
-        var linuxRequestBody = """{"messages":[{"role":"user","content":"Line one\nLine two"}],"model":"test-model"}""";
+        var windowsRequestBody = """{"messages":[{"role":"user","content":"Line one\r\nLine two\nExplicit LF"}],"model":"test-model"}""";
+        var linuxRequestBody = """{"messages":[{"role":"user","content":"Line one\nLine two\nExplicit LF"}],"model":"test-model"}""";
         var cachedResponse = """{"choices":[{"message":{"content":"Portable cache hit"}}]}""";
         cache.Store(windowsRequestBody, cachedResponse);
 
