@@ -18,7 +18,6 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
 
     private static ILiteCollection<BlockExecutionSnapshotEntity> InitCollection(LiteDbContext context)
     {
-        EnsureMapperConfigured();
         var collection = context.Database.GetCollection<BlockExecutionSnapshotEntity>("blockexecutionsnapshots");
         collection.EnsureIndex(x => x.WatchId);
         collection.EnsureIndex(x => x.BlockInstanceId);
@@ -26,26 +25,6 @@ public class LiteDbBlockStateStore(LiteDbContext context, ILogger<LiteDbBlockSta
         collection.EnsureIndex(x => x.InputHash);
         collection.EnsureIndex(x => x.PipelineDefinitionHash);
         return collection;
-    }
-
-    private static bool _mapperConfigured;
-    private static readonly object _mapperLock = new();
-
-    private static void EnsureMapperConfigured()
-    {
-        if (_mapperConfigured) return;
-        lock (_mapperLock)
-        {
-            if (_mapperConfigured) return;
-            BsonMapper.Global.Entity<BlockExecutionSnapshotEntity>()
-                .Id(x => x.Id)
-                .Field(x => x.WatchId, "WatchId")
-                .Field(x => x.BlockInstanceId, "BlockInstanceId")
-                .Field(x => x.OutputJson, "OutputJson")
-                .Field(x => x.InputHash, "InputHash")
-                .Field(x => x.PipelineDefinitionHash, "PipelineDefinitionHash");
-            _mapperConfigured = true;
-        }
     }
 
     public async Task<JsonElement?> GetPreviousOutputAsync(string watchId, string blockInstanceId, CancellationToken ct = default)

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ChangeDetection.Services.JobWatch;
 using ChangeDetection.Shared.Dtos;
 using Shouldly;
 using TUnit.Core;
@@ -63,7 +64,8 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
         var result = JsonSerializer.Deserialize<JsonElement>(body);
         result.GetProperty("groupId").GetString().ShouldNotBeNullOrWhiteSpace();
         result.GetProperty("name").GetString().ShouldContain("Biotech");
-        result.GetProperty("portalCount").GetInt32().ShouldBe(17);
+        result.GetProperty("portalCount").GetInt32()
+            .ShouldBe(JobWatchSeeder.GetAllPortalDefinitions().Count);
     }
 
     [Test]
@@ -158,14 +160,14 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
     #region Portals Endpoint Tests
 
     [Test]
-    public async Task GetPortals_Returns17Definitions()
+    public async Task GetPortals_ReturnsCompleteCatalog()
     {
         var response = await _client.GetAsync("/api/jobwatch/portals");
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var portals = await response.Content.ReadFromJsonAsync<List<JsonElement>>();
         portals.ShouldNotBeNull();
-        portals.Count.ShouldBe(17);
+        portals.Count.ShouldBe(JobWatchSeeder.GetAllPortalDefinitions().Count);
     }
 
     [Test]
@@ -204,7 +206,7 @@ public class JobWatchEndpointTests : TestBase, IAsyncDisposable
 
         Log($"Tier 1: {tier1}, Tier 2: {tier2}");
         tier1.ShouldBe(10, "Should have 10 Tier-1 portals (daily)");
-        tier2.ShouldBe(7, "Should have 7 Tier-2 portals (weekly)");
+        tier2.ShouldBe(28, "Should have 28 Tier-2 portals");
     }
 
     [Test]

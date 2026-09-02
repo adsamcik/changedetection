@@ -4,6 +4,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
+using ChangeDetection.Services.BlockExecution;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Services.SetupPipeline;
 using NSubstitute;
@@ -96,12 +97,16 @@ public class ComposableSetupPipelineTests : TestBase
 
         var logger = CreateLogger<ComposableSetupPipeline>();
         var setupFlowEnhancements = new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>());
+        var securityValidator = new PipelineSecurityValidator(
+            new DomainPinValidator(CreateLogger<DomainPinValidator>()),
+            CreateLogger<PipelineSecurityValidator>());
+        var contentSanitizer = new ContentSanitizer();
         _sut = new ComposableSetupPipeline(
             _llmChain, _contentFetcher, _pipelineExecutor,
             _pipelineValidator, _blockRegistry, _platformDetector, _templateRegistry, _watchRepo,
             setupFlowEnhancements,
-            null!,  // TODO: PipelineSecurityValidator - missing parameter
-            null!,  // TODO: ContentSanitizer - missing parameter
+            securityValidator,
+            contentSanitizer,
             logger);
     }
 
@@ -150,7 +155,7 @@ public class ComposableSetupPipelineTests : TestBase
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
             progressList.Add(progress);
-            Log($"Phase: {progress.Phase}, Type: {progress.Type}, Message: {progress.Message}");
+            Log($"Phase: {progress.Phase}, Type: {progress.Type}, Message: {progress.Message}, Error: {progress.Error ?? "(none)"}");
         }
 
         // Assert
@@ -162,7 +167,7 @@ public class ComposableSetupPipelineTests : TestBase
         checkpoint.Intent.ShouldNotBeNull();
         checkpoint.Intent.Url.ShouldBe("https://example.com/product");
         checkpoint.Intent.ChangeType.ShouldBe("price");
-        checkpoint.Detail!.ShouldContain("Session:");
+        checkpoint.SessionId.ShouldNotBeNullOrWhiteSpace();
 
         // Verify there was thinking/progress before checkpoint
         progressList.ShouldContain(p => p.Type == SetupProgressType.Thinking);
@@ -255,9 +260,9 @@ public class ComposableSetupPipelineTests : TestBase
 
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
             {
-                sessionId = progress.Detail.Replace("Session: ", "");
+                sessionId = progress.SessionId;
             }
         }
 
@@ -341,8 +346,8 @@ public class ComposableSetupPipelineTests : TestBase
         string? sessionId = null;
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -414,8 +419,8 @@ public class ComposableSetupPipelineTests : TestBase
         string? sessionId = null;
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -495,8 +500,8 @@ public class ComposableSetupPipelineTests : TestBase
         string? sessionId = null;
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -573,8 +578,8 @@ public class ComposableSetupPipelineTests : TestBase
         string? sessionId = null;
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -670,8 +675,8 @@ public class ComposableSetupPipelineTests : TestBase
 
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         var confirmProgress = new List<SetupProgress>();
@@ -769,14 +774,14 @@ public class ComposableSetupPipelineTests : TestBase
 
         await foreach (var p in _sut.StartSetupAsync(request))
         {
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null)
-                sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null)
+                sessionId = p.SessionId;
         }
 
         await foreach (var p in _sut.ConfirmIntentAsync(sessionId!, confirmed: true))
         {
-            if (p.Phase == SetupPhase.Checkpoint2 && p.Detail != null)
-                sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint2 && p.SessionId != null)
+                sessionId = p.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -981,8 +986,8 @@ public class ComposableSetupPipelineTests : TestBase
 
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -1104,8 +1109,8 @@ public class ComposableSetupPipelineTests : TestBase
 
         await foreach (var progress in _sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail != null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId != null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -1167,7 +1172,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1226,7 +1231,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1289,7 +1294,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1345,7 +1350,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1410,7 +1415,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1471,7 +1476,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1538,7 +1543,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1596,7 +1601,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1643,7 +1648,7 @@ public class ComposableSetupPipelineTests : TestBase
         var request = new SetupRequest { UserInput = "Track price at https://example.com/p" };
         string? sessionId = null;
         await foreach (var p in _sut.StartSetupAsync(request))
-            if (p.Phase == SetupPhase.Checkpoint1 && p.Detail != null) sessionId = p.Detail.Replace("Session: ", "");
+            if (p.Phase == SetupPhase.Checkpoint1 && p.SessionId != null) sessionId = p.SessionId;
 
         // Act
         var progress = new List<SetupProgress>();
@@ -1671,9 +1676,10 @@ public class ComposableSetupPipelineTests : TestBase
     private void SetupLlmResponses(params string[] responses)
     {
         var returnValues = responses.Select(SuccessResponse).ToArray();
+        var callIndex = -1;
 
         _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(returnValues[0], returnValues.Skip(1).ToArray());
+            .Returns(_ => returnValues[Math.Min(Interlocked.Increment(ref callIndex), returnValues.Length - 1)]);
     }
 
     private static bool HasCachedHtml(PipelineDefinition definition, string blockId, string expectedHtml)

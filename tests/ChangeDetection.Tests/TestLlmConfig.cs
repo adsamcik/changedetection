@@ -52,6 +52,25 @@ public static class TestLlmConfig
     }
 
     /// <summary>
+    /// Loads the committed provider configuration without applying a developer's
+    /// local override. Deterministic cache-replay suites use this to ensure that a
+    /// normal test run cannot be redirected to an external SDK provider.
+    /// </summary>
+    public static TestLlmSettings LoadCommitted()
+    {
+        var configPath = FindConfigFile(BaseConfigFileName)
+            ?? throw new InvalidOperationException(
+                $"No committed test LLM config found. Expected '{BaseConfigFileName}' in the test project directory.");
+
+        var json = File.ReadAllText(configPath);
+        var settings = JsonSerializer.Deserialize<TestLlmSettings>(json, JsonOptions)
+            ?? throw new InvalidOperationException($"Failed to deserialize {configPath}");
+
+        settings.Validate();
+        return settings;
+    }
+
+    /// <summary>
     /// Creates an LlmProviderConfig entity from the test settings.
     /// </summary>
     public static LlmProviderConfig ToProviderConfig(this TestLlmSettings settings) => new()

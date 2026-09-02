@@ -202,11 +202,11 @@ public class BugfixRegressionTests : TestBase
     }
 
     // ───────────────────────────────────────────────────
-    // L6: Port type validator strict compatibility
+    // L6: Port type validator JSON compatibility
     // ───────────────────────────────────────────────────
 
     [Test]
-    public async Task L6_SearchResults_To_ExtractedObjects_IsNotValid()
+    public async Task L6_SearchResults_To_ExtractedObjects_IsValid()
     {
         var validator = new PipelineValidator(CreateLogger<PipelineValidator>());
         var registry = new BlockRegistry();
@@ -243,12 +243,12 @@ public class BugfixRegressionTests : TestBase
         var result = validator.Validate(pipeline, registry);
 
         var hasTypeMismatch = result.Errors.Any(e => e.Code == "PORT_TYPE_MISMATCH");
-        hasTypeMismatch.ShouldBeTrue("SearchResults → ExtractedObjects should NOT be compatible (strict type matching)");
+        hasTypeMismatch.ShouldBeFalse("SearchResults → ExtractedObjects should be compatible JSON payloads");
         await Task.CompletedTask;
     }
 
     [Test]
-    public async Task L6_SearchResults_To_PlainText_IsNotValid()
+    public async Task L6_SearchResults_To_PlainText_IsValid()
     {
         var validator = new PipelineValidator(CreateLogger<PipelineValidator>());
         var registry = new BlockRegistry();
@@ -285,7 +285,7 @@ public class BugfixRegressionTests : TestBase
         var result = validator.Validate(pipeline, registry);
 
         var hasTypeMismatch = result.Errors.Any(e => e.Code == "PORT_TYPE_MISMATCH");
-        hasTypeMismatch.ShouldBeTrue("SearchResults → PlainText should NOT be compatible (strict type matching)");
+        hasTypeMismatch.ShouldBeFalse("SearchResults → PlainText should be compatible JSON payloads");
         await Task.CompletedTask;
     }
 

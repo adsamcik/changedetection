@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 
@@ -39,22 +39,14 @@ public class CopilotChatCompletionService : IChatCompletionService
     }
 
     /// <summary>
-    /// Ensures the client is started and responsive before making requests.
-    /// Uses CopilotClient.State (live connection state) instead of a per-instance flag,
-    /// since a new CopilotChatCompletionService is created for each request
-    /// while the CopilotClient is a singleton.
+    /// Ensures the shared client is started before making requests.
+    /// Copilot SDK 1.x makes StartAsync idempotent, so concurrent adapters can safely
+    /// await the same startup task without maintaining a second connection-state flag.
     /// </summary>
     private async Task EnsureClientStartedAsync(CancellationToken ct)
     {
-        // Check the client's live connection state (not a per-instance flag)
-        if (_client.State == ConnectionState.Connected)
-        {
-            _logger?.LogDebug("Copilot client already connected (state: {State})", _client.State);
-            return;
-        }
-        
-        _logger?.LogInformation("Copilot client not connected (state: {State}), starting...", _client.State);
-        
+        _logger?.LogDebug("Ensuring Copilot client is started");
+
         using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         startCts.CancelAfter(TimeSpan.FromSeconds(15));
         try
@@ -63,11 +55,29 @@ public class CopilotChatCompletionService : IChatCompletionService
         }
         catch (OperationCanceledException) when (startCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
+            await ResetAfterFailedStartAsync();
             throw new TimeoutException(
-                $"Copilot SDK client did not start within 15 seconds (state: {_client.State})");
+                "Copilot SDK client did not start within 15 seconds");
         }
-        
-        _logger?.LogInformation("Copilot client started (state: {State})", _client.State);
+        catch
+        {
+            await ResetAfterFailedStartAsync();
+            throw;
+        }
+
+        _logger?.LogDebug("Copilot client is started");
+    }
+
+    private async Task ResetAfterFailedStartAsync()
+    {
+        try
+        {
+            await _client.ForceStopAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Failed to reset Copilot client after startup failure");
+        }
     }
 
     /// <inheritdoc />
@@ -81,7 +91,8 @@ public class CopilotChatCompletionService : IChatCompletionService
 
         // Create a session for this request (disable infinite sessions for simpler lifecycle).
         _logger?.LogDebug("Creating non-streaming session with model {Model}", _model);
-        var session = await _client.CreateSessionAsync(CreateTextCompletionSessionConfig(streaming: false));
+        var session = await _client.CreateSessionAsync(
+            CreateTextCompletionSessionConfig(streaming: false), cancellationToken);
 
         var sessionId = session.SessionId;
         _logger?.LogInformation("Created non-streaming session {SessionId} (model: {Model})", sessionId, _model);
@@ -97,7 +108,7 @@ public class CopilotChatCompletionService : IChatCompletionService
             // Subscribe to events — log ALL events for diagnostics
             var eventCount = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            using var subscription = session.On(evt =>
+            using var subscription = session.On<SessionEvent>(evt =>
             {
                 eventCount++;
                 _logger?.LogDebug("Session {SessionId} event #{Count} [{Elapsed}ms]: {EventType}",
@@ -175,8 +186,7 @@ public class CopilotChatCompletionService : IChatCompletionService
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new TimeoutException(
                     $"Copilot SDK did not respond within {_timeoutSeconds} seconds. " +
-                    $"Events received: {eventCount}, model: {_model}, " +
-                    $"client state: {_client.State}");
+                    $"Events received: {eventCount}, model: {_model}");
             }
 
             var result = await responseTask;
@@ -215,7 +225,8 @@ public class CopilotChatCompletionService : IChatCompletionService
 
         // Create a streaming session (disable infinite sessions for simpler lifecycle).
         _logger?.LogDebug("Creating streaming session with model {Model}", _model);
-        var session = await _client.CreateSessionAsync(CreateTextCompletionSessionConfig(streaming: true));
+        var session = await _client.CreateSessionAsync(
+            CreateTextCompletionSessionConfig(streaming: true), cancellationToken);
 
         var sessionId = session.SessionId;
         _logger?.LogInformation("Created streaming session {SessionId} (model: {Model})", sessionId, _model);
@@ -231,7 +242,7 @@ public class CopilotChatCompletionService : IChatCompletionService
             // Subscribe to streaming events — log ALL events for diagnostics
             var streamEventCount = 0;
             var streamSw = System.Diagnostics.Stopwatch.StartNew();
-            using var subscription = session.On(evt =>
+            using var subscription = session.On<SessionEvent>(evt =>
             {
                 streamEventCount++;
                 _logger?.LogDebug("Streaming session {SessionId} event #{Count} [{Elapsed}ms]: {EventType}",

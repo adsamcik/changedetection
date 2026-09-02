@@ -24,6 +24,7 @@ public sealed class LlmResponseCache : IDisposable
     private readonly TimeSpan _lockTimeout = TimeSpan.FromSeconds(30);
     private bool _disposed;
     private readonly bool _isSharedInstance;
+    private readonly bool _readOnly;
     
     /// <summary>
     /// Gets or creates a shared cache instance at the default location.
@@ -35,7 +36,8 @@ public sealed class LlmResponseCache : IDisposable
         {
             if (_sharedInstance == null || _sharedInstance._disposed)
             {
-                _sharedInstance = new LlmResponseCache(GetDefaultPath(), isShared: true);
+                var readOnly = Environment.GetEnvironmentVariable("SKIP_OLLAMA_TESTS") == "true";
+                _sharedInstance = new LlmResponseCache(GetDefaultPath(), isShared: true, readOnly: readOnly);
                 _sharedReferenceCount = 0;
             }
             _sharedReferenceCount++;
@@ -77,9 +79,10 @@ public sealed class LlmResponseCache : IDisposable
     /// </summary>
     /// <param name="databasePath">Path to the SQLite database file</param>
     /// <param name="isShared">Whether this is a shared instance (affects disposal behavior)</param>
-    public LlmResponseCache(string databasePath, bool isShared = false)
+    public LlmResponseCache(string databasePath, bool isShared = false, bool readOnly = false)
     {
         _isSharedInstance = isShared;
+        _readOnly = readOnly;
         
         var directory = Path.GetDirectoryName(databasePath);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -87,11 +90,15 @@ public sealed class LlmResponseCache : IDisposable
             Directory.CreateDirectory(directory);
         }
 
-        _connectionString = $"Data Source={databasePath};Mode=ReadWriteCreate;Cache=Shared";
+        var mode = readOnly ? "ReadOnly" : "ReadWriteCreate";
+        _connectionString = $"Data Source={databasePath};Mode={mode};Cache=Shared";
         _connection = new SqliteConnection(_connectionString);
         _connection.Open();
 
-        InitializeDatabase();
+        if (!readOnly)
+        {
+            InitializeDatabase();
+        }
     }
 
     private void InitializeDatabase()
@@ -195,16 +202,19 @@ public sealed class LlmResponseCache : IDisposable
             // Close reader before updating
             reader.Close();
 
-            // Update hit statistics
-            using var updateCmd = _connection.CreateCommand();
-            updateCmd.CommandText = """
-                UPDATE llm_cache
-                SET hit_count = hit_count + 1, last_hit_at = @now
-                WHERE request_hash = @hash
-                """;
-            updateCmd.Parameters.AddWithValue("@hash", hash);
-            updateCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
-            updateCmd.ExecuteNonQuery();
+            if (!_readOnly)
+            {
+                // Keep committed replay fixtures immutable in CacheOnly mode.
+                using var updateCmd = _connection.CreateCommand();
+                updateCmd.CommandText = """
+                    UPDATE llm_cache
+                    SET hit_count = hit_count + 1, last_hit_at = @now
+                    WHERE request_hash = @hash
+                    """;
+                updateCmd.Parameters.AddWithValue("@hash", hash);
+                updateCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+                updateCmd.ExecuteNonQuery();
+            }
 
             return result;
         }
@@ -217,6 +227,8 @@ public sealed class LlmResponseCache : IDisposable
     public void Store(string requestBody, string responseBody, string? model = null, string? endpoint = null, long durationMs = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readOnly)
+            throw new InvalidOperationException("Cannot store an LLM response in a read-only cache.");
 
         var hash = ComputeRequestHash(requestBody);
         var content = ExtractResponseContent(responseBody);
@@ -344,6 +356,8 @@ public sealed class LlmResponseCache : IDisposable
     public void Clear()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readOnly)
+            throw new InvalidOperationException("Cannot clear a read-only LLM cache.");
 
         lock (_dbLock)
         {
@@ -359,6 +373,8 @@ public sealed class LlmResponseCache : IDisposable
     public int PruneOlderThan(TimeSpan age)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readOnly)
+            throw new InvalidOperationException("Cannot prune a read-only LLM cache.");
 
         var cutoff = DateTime.UtcNow - age;
 

@@ -30,6 +30,7 @@ public class NotificationOutboxServiceTests : TestBase
         _settingsRepo = Substitute.For<IRepository<AppSettings>>();
         _httpClientFactory = Substitute.For<IHttpClientFactory>();
         _urlValidator = Substitute.For<IUrlValidator>();
+        _urlValidator.Validate(Arg.Any<string>()).Returns((string?)null);
         _logger = CreateLogger<NotificationOutboxService>();
 
         // Default: return empty settings

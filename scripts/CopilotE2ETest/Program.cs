@@ -1,7 +1,7 @@
 // E2E test for Copilot SDK integration
 // Run with: dotnet run --project scripts/CopilotE2ETest/CopilotE2ETest.csproj
 
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 
 Console.WriteLine("=== GitHub Copilot SDK E2E Test ===\n");
 
@@ -9,14 +9,13 @@ Console.WriteLine("=== GitHub Copilot SDK E2E Test ===\n");
 Console.WriteLine("1. Creating CopilotClient...");
 await using var client = new CopilotClient(new CopilotClientOptions
 {
-    AutoStart = true,
     UseLoggedInUser = true
 });
 
 // Start client
 Console.WriteLine("2. Starting client...");
 await client.StartAsync();
-Console.WriteLine($"   Client state: {client.State}");
+Console.WriteLine("   Client started");
 
 // List available models
 Console.WriteLine("\n3. Listing available models...");
@@ -41,7 +40,7 @@ var session = await client.CreateSessionAsync(new SessionConfig
 string response = "";
 var done = new TaskCompletionSource();
 
-session.On(evt =>
+using var subscription = session.On<SessionEvent>(evt =>
 {
     switch (evt)
     {

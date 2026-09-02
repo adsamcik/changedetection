@@ -111,6 +111,9 @@ public class CachingLlmHttpHandler : DelegatingHandler
         TextWriter? output = null,
         HttpMessageHandler? innerHandler = null)
     {
+        // Explicit paths are commonly fresh per-test databases. Keep them writable
+        // so CacheOnly can represent an empty cache and fail with CacheMissException;
+        // committed fixtures are opened read-only by CachingWebApplicationFactory.
         _cache = new LlmResponseCache(cachePath);
         _mode = mode;
         _output = output;

@@ -38,6 +38,7 @@ public class CachingWebApplicationFactory : WebApplicationFactory<Program>
         "llm-responses.db");
     
     private CachingLlmHttpHandler? _handler;
+    private LlmResponseCache? _llmCache;
     
     /// <summary>
     /// Gets the LLM cache mode being used. Determined automatically based on SKIP_OLLAMA_TESTS.
@@ -70,8 +71,8 @@ public class CachingWebApplicationFactory : WebApplicationFactory<Program>
     {
         base.ConfigureWebHost(builder);
         
-        var llmCache = new LlmResponseCache(CachePath);
-        _handler = new CachingLlmHttpHandler(llmCache, LlmCacheMode);
+        _llmCache = new LlmResponseCache(CachePath, readOnly: LlmCacheMode == CacheMode.CacheOnly);
+        _handler = new CachingLlmHttpHandler(_llmCache, LlmCacheMode);
         var contentCacheMode = ContentCacheMode;
         
         builder.ConfigureServices(services =>
@@ -141,6 +142,7 @@ public class CachingWebApplicationFactory : WebApplicationFactory<Program>
         if (disposing)
         {
             _handler?.Dispose();
+            _llmCache?.Dispose();
         }
         base.Dispose(disposing);
     }

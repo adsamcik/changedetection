@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChangeDetection.Core.Interfaces;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 
 namespace ChangeDetection.Services.Search;
 
@@ -28,7 +28,28 @@ public class CopilotSearchProvider : ISearchProvider
     public string DisplayName => "Copilot Web Search";
 
     /// <summary>Available only after the Copilot client has fully connected.</summary>
-    public bool IsAvailable => _client?.State == ConnectionState.Connected;
+    public bool IsAvailable
+    {
+        get
+        {
+            if (_client is null)
+                return false;
+
+            try
+            {
+                _ = _client.Rpc;
+                return true;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+    }
     internal bool CanInitialize => _client is not null;
 
     public CopilotSearchProvider(
@@ -53,13 +74,10 @@ public class CopilotSearchProvider : ISearchProvider
     private async Task EnsureClientStartedAsync(CancellationToken ct = default)
     {
         if (_client is null) return;
-        if (_client.State == ConnectionState.Connected) return;
 
         await _startLock.WaitAsync(ct);
         try
         {
-            if (_client.State == ConnectionState.Connected) return;
-
             using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             startCts.CancelAfter(_startTimeout);
 
@@ -69,12 +87,30 @@ public class CopilotSearchProvider : ISearchProvider
             }
             catch (OperationCanceledException) when (startCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
+                await ResetAfterFailedStartAsync();
                 throw new TimeoutException($"Copilot client failed to start within {_startTimeout.TotalSeconds:0} seconds");
+            }
+            catch
+            {
+                await ResetAfterFailedStartAsync();
+                throw;
             }
         }
         finally
         {
             _startLock.Release();
+        }
+    }
+
+    private async Task ResetAfterFailedStartAsync()
+    {
+        try
+        {
+            await _client!.ForceStopAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to reset Copilot client after startup failure");
         }
     }
 
@@ -144,14 +180,16 @@ public class CopilotSearchProvider : ISearchProvider
         // Use Copilot's NATIVE web search — the SDK enables all first-party tools
         // by default (equivalent to --allow-all), which includes web_search.
         // We restrict to only web_search to avoid unnecessary tool calls.
-        var session = await _client!.CreateSessionAsync(new SessionConfig
-        {
-            Model = "gpt-5",
-            Streaming = false,
-            InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
-            OnPermissionRequest = PermissionHandler.ApproveAll,
-            AvailableTools = ["web_search"]
-        });
+        var session = await _client!.CreateSessionAsync(
+            new SessionConfig
+            {
+                Model = "gpt-5",
+                Streaming = false,
+                InfiniteSessions = new InfiniteSessionConfig { Enabled = false },
+                OnPermissionRequest = PermissionHandler.ApproveAll,
+                AvailableTools = ["web_search"]
+            },
+            ct);
 
         var sessionId = session.SessionId;
         try
@@ -159,7 +197,7 @@ public class CopilotSearchProvider : ISearchProvider
             var responseContent = "";
             var completionSource = new TaskCompletionSource<string>();
 
-            using var subscription = session.On(evt =>
+            using var subscription = session.On<SessionEvent>(evt =>
             {
                 switch (evt)
                 {

@@ -89,9 +89,31 @@ public class HtmlExcerptTests : TestBase
         _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
-                capturedPrompt ??= callInfo.ArgAt<string>(0);
-                // Return minimal valid intent JSON for first call
-                return Task.FromResult(new LlmResponse { IsSuccess = true, Content = """{"url":"https://example.com","intent":"track jobs","changeType":"jobs","summary":"Track jobs"}""" });
+                var prompt = callInfo.ArgAt<string>(0);
+                if (prompt.Contains("pipeline builder", StringComparison.OrdinalIgnoreCase))
+                {
+                    capturedPrompt ??= prompt;
+                    return Task.FromResult(new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """{"cannotExtract":true,"reason":"test captured builder prompt"}"""
+                    });
+                }
+
+                if (prompt.Contains("web page analyst", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.FromResult(new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """{"contentType":"jobs","regions":[],"hasPagination":false,"needsJavaScript":false,"pageSummary":"jobs page"}"""
+                    });
+                }
+
+                return Task.FromResult(new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = """{"url":"https://example.com","intent":"track jobs","changeType":"jobs","summary":"Track jobs"}"""
+                });
             });
 
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
@@ -134,18 +156,34 @@ public class HtmlExcerptTests : TestBase
         var html = $"<html><body><div class=\"data\">{largeContent}</div></body></html>";
 
         string? capturedPromptForAnalysis = null;
-        var callCount = 0;
         _llmChain.ExecuteAsync(Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
-                callCount++;
-                if (callCount == 1)
+                var prompt = callInfo.ArgAt<string>(0);
+                if (prompt.Contains("pipeline builder", StringComparison.OrdinalIgnoreCase))
                 {
-                    return Task.FromResult(new LlmResponse { IsSuccess = true, Content = """{"url":"https://example.com","intent":"track","changeType":"text","summary":"Track"}""" });
+                    capturedPromptForAnalysis ??= prompt;
+                    return Task.FromResult(new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """{"cannotExtract":true,"reason":"test captured builder prompt"}"""
+                    });
                 }
-                // Capture the analysis prompt (second LLM call) which contains the excerpt
-                capturedPromptForAnalysis ??= callInfo.ArgAt<string>(0);
-                return Task.FromResult(new LlmResponse { IsSuccess = true, Content = """{"contentType":"text","regions":[],"hasPagination":false,"needsJavaScript":false,"pageSummary":"text page"}""" });
+
+                if (prompt.Contains("web page analyst", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.FromResult(new LlmResponse
+                    {
+                        IsSuccess = true,
+                        Content = """{"contentType":"text","regions":[],"hasPagination":false,"needsJavaScript":false,"pageSummary":"text page"}"""
+                    });
+                }
+
+                return Task.FromResult(new LlmResponse
+                {
+                    IsSuccess = true,
+                    Content = """{"url":"https://example.com","intent":"track","changeType":"text","summary":"Track"}"""
+                });
             });
 
         _contentFetcher.FetchAsync(Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>())
@@ -164,12 +202,11 @@ public class HtmlExcerptTests : TestBase
         // Assert: if the LLM received the excerpt, it should be truncated
         if (capturedPromptForAnalysis is not null)
         {
-            // The full prompt may include system instructions + excerpt.
-            // The excerpt portion should not exceed maxExcerpt + truncation marker.
-            // At minimum, the original oversized content should not appear in full.
-            capturedPromptForAnalysis.Length.ShouldBeLessThan(
-                html.Length,
-                "Excerpt should be smaller than the original oversized HTML");
+            capturedPromptForAnalysis.Contains(
+                    new string('A', maxExcerpt + 1),
+                    StringComparison.Ordinal)
+                .ShouldBeFalse("The builder prompt must not contain more than the configured excerpt length");
+            capturedPromptForAnalysis.ShouldContain("<!-- truncated -->");
         }
 
         await Task.CompletedTask;

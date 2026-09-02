@@ -7,7 +7,6 @@ using ChangeDetection.Services.Authentication;
 using ChangeDetection.Services.GroupWatch;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Shouldly;
@@ -175,16 +174,11 @@ public class GroupWatchHubTests
 {
     private readonly ILogger<GroupWatchHub> _logger = Substitute.For<ILogger<GroupWatchHub>>();
     private readonly IUrlValidator _urlValidator = Substitute.For<IUrlValidator>();
+    private readonly IGroupWatchDiscoveryService _discoveryService = Substitute.For<IGroupWatchDiscoveryService>();
 
     private GroupWatchHub CreateHub()
     {
-        var scopeFactory = Substitute.For<IServiceScopeFactory>();
-        var scope = Substitute.For<IServiceScope>();
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        scope.ServiceProvider.Returns(serviceProvider);
-        scopeFactory.CreateScope().Returns(scope);
-
-        var hub = new GroupWatchHub(scopeFactory, _urlValidator, _logger);
+        var hub = new GroupWatchHub(_discoveryService, _urlValidator, _logger);
         HubTestHelper.AssignHubContext(hub);
         return hub;
     }

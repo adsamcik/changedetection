@@ -124,6 +124,24 @@ public class LiteDbContext : IDisposable
                 .Field(x => x.OperationType, "OperationType")
                 .Field(x => x.Status, "Status");
 
+            // PersistedSession - configure eagerly because collection indexes can be
+            // created concurrently by multiple test/application contexts.
+            mapper.Entity<Core.Entities.PersistedSession>()
+                .Id(x => x.Id)
+                .Field(x => x.SessionId, "SessionId")
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.LastActivityAt, "LastActivityAt")
+                .Field(x => x.AwaitingUserInput, "AwaitingUserInput");
+
+            // TrackedItem is used through the generic repository and therefore does
+            // not otherwise get an eager mapping before concurrent access begins.
+            mapper.Entity<Core.Entities.TrackedItem>()
+                .Id(x => x.Id)
+                .Field(x => x.OwnerId, "OwnerId")
+                .Field(x => x.WatchGroupId, "WatchGroupId")
+                .Field(x => x.SourceWatchId, "SourceWatchId")
+                .Field(x => x.IdentityKey, "IdentityKey");
+
             // FieldValueHistory
             mapper.Entity<Core.Entities.FieldValueHistory>()
                 .Id(x => x.Id)
@@ -170,7 +188,19 @@ public class LiteDbContext : IDisposable
                 .Id(x => x.Id)
                 .Field(x => x.WatchId, "WatchId")
                 .Field(x => x.BlockInstanceId, "BlockInstanceId")
-                .Field(x => x.OutputJson, "OutputJson");
+                .Field(x => x.OutputJson, "OutputJson")
+                .Field(x => x.InputHash, "InputHash")
+                .Field(x => x.PipelineDefinitionHash, "PipelineDefinitionHash");
+
+            // PipelineRunSummaryEntity uses WatchId as its primary key.
+            mapper.Entity<Core.Entities.PipelineRunSummaryEntity>()
+                .Id(x => x.WatchId)
+                .Field(x => x.Timestamp, "Timestamp")
+                .Field(x => x.Success, "Success")
+                .Field(x => x.IsDegraded, "IsDegraded")
+                .Field(x => x.ExecutionDurationMs, "ExecutionDurationMs")
+                .Field(x => x.Error, "Error")
+                .Field(x => x.BlockSummariesJson, "BlockSummariesJson");
             
             _mapperConfigured = true;
         }

@@ -128,7 +128,9 @@ public class LlmExtractBlockTests : TestBase
 
         capturedPrompt.ShouldNotBeNull();
         capturedPrompt.ShouldContain("Extract the product price");
-        capturedPrompt.ShouldContain(html);
+        capturedPrompt.ShouldContain("&lt;html&gt;&lt;body&gt;");
+        capturedPrompt.ShouldContain("$9.99");
+        capturedPrompt.ShouldNotContain(html);
         capturedPrompt.ShouldContain("price");
         capturedPrompt.ShouldContain("schema");
     }

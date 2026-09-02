@@ -13,12 +13,8 @@ public class CopilotSearchProviderTests : TestBase
     [Test]
     public async Task IsAvailable_WhenNoCopilotClient_ReturnsFalse()
     {
-        var multiProvider = new MultiProviderSearchService(
-            [], CreateLogger<MultiProviderSearchService>());
-
         var sut = new CopilotSearchProvider(
             null,
-            multiProvider,
             CreateLogger<CopilotSearchProvider>());
 
         sut.IsAvailable.ShouldBeFalse();
@@ -28,12 +24,8 @@ public class CopilotSearchProviderTests : TestBase
     [Test]
     public async Task SearchAsync_WhenNotConfigured_ReturnsNotSuccess()
     {
-        var multiProvider = new MultiProviderSearchService(
-            [], CreateLogger<MultiProviderSearchService>());
-
         var sut = new CopilotSearchProvider(
             null,
-            multiProvider,
             CreateLogger<CopilotSearchProvider>());
 
         var result = await sut.SearchAsync(new SearchQuery { Query = "test" });

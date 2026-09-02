@@ -176,10 +176,17 @@ public class EnrichBlockTests : TestBase
     public async Task ExecuteAsync_MissingUrlInData_AddsEnrichError()
     {
         var pipeline = BlockContextBuilder.CreateSingleBlockPipeline("enrich-1", "Enrich", new { urlField = "detailUrl" });
+        var validator = Substitute.For<IUrlValidator>();
+        validator.Validate(Arg.Any<string>()).Returns((string?)null);
+        var fetcher = Substitute.For<IContentFetcher>();
+        var services = Substitute.For<IServiceProvider>();
+        services.GetService(typeof(IUrlValidator)).Returns(validator);
+        services.GetService(typeof(IContentFetcher)).Returns(fetcher);
 
         var context = new BlockContextBuilder()
             .WithBlockInstanceId("enrich-1")
             .WithInput("data", JsonSerializer.SerializeToElement(new { title = "no url here" }))
+            .WithServices(services)
             .WithPipelineDefinition(pipeline)
             .Build();
 

@@ -29,6 +29,16 @@ public static class CacheSkipHelper
     }
 
     /// <summary>
+    /// Skips tests that directly use the Copilot SDK unless explicitly enabled.
+    /// Copilot SDK traffic does not pass through the HTTP replay cache.
+    /// </summary>
+    public static void SkipIfCopilotUnavailable()
+    {
+        if (Environment.GetEnvironmentVariable("SKIP_COPILOT_TESTS") == "true")
+            Skip.Test("Copilot tests are disabled (SKIP_COPILOT_TESTS=true). Run with -IncludeCopilot to enable them.");
+    }
+
+    /// <summary>
     /// Converts a CacheMissException to a test skip.
     /// Call from catch blocks: catch (CacheMissException ex) { CacheSkipHelper.SkipOnCacheMiss(ex); }
     /// </summary>

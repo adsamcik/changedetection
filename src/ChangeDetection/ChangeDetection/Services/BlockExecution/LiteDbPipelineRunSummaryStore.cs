@@ -15,30 +15,8 @@ public class LiteDbPipelineRunSummaryStore : IPipelineRunSummaryStore
 
     public LiteDbPipelineRunSummaryStore(LiteDbContext context)
     {
-        EnsureMapperConfigured();
         _collection = context.Database.GetCollection<PipelineRunSummaryEntity>("pipelinerunsummaries");
         _collection.EnsureIndex(x => x.WatchId, unique: true);
-    }
-
-    private static bool _mapperConfigured;
-    private static readonly object _mapperLock = new();
-
-    private static void EnsureMapperConfigured()
-    {
-        if (_mapperConfigured) return;
-        lock (_mapperLock)
-        {
-            if (_mapperConfigured) return;
-            BsonMapper.Global.Entity<PipelineRunSummaryEntity>()
-                .Id(x => x.WatchId)
-                .Field(x => x.Timestamp, "Timestamp")
-                .Field(x => x.Success, "Success")
-                .Field(x => x.IsDegraded, "IsDegraded")
-                .Field(x => x.ExecutionDurationMs, "ExecutionDurationMs")
-                .Field(x => x.Error, "Error")
-                .Field(x => x.BlockSummariesJson, "BlockSummariesJson");
-            _mapperConfigured = true;
-        }
     }
 
     public Task SaveAsync(PipelineRunSummaryEntity summary, CancellationToken ct = default)

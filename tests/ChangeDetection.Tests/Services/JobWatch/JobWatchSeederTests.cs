@@ -26,12 +26,12 @@ public class JobWatchSeederTests : TestBase
         """;
 
     [Test]
-    public async Task GetAllPortalDefinitions_Returns17Portals()
+    public async Task GetAllPortalDefinitions_Returns38Portals()
     {
         var portals = JobWatchSeeder.GetAllPortalDefinitions();
 
         Log($"Found {portals.Count} portal definitions");
-        portals.Count.ShouldBe(17);
+        portals.Count.ShouldBe(38);
 
         await Task.CompletedTask;
     }
@@ -49,13 +49,15 @@ public class JobWatchSeederTests : TestBase
     }
 
     [Test]
-    public async Task GetAllPortalDefinitions_Tier2_Has7Portals()
+    public async Task GetAllPortalDefinitions_Tier2_Has28Portals()
     {
         var portals = JobWatchSeeder.GetAllPortalDefinitions();
         var tier2 = portals.Where(p => p.Tier == "tier-2").ToList();
 
-        tier2.Count.ShouldBe(7);
-        tier2.ShouldAllBe(p => p.CheckInterval == TimeSpan.FromDays(7));
+        tier2.Count.ShouldBe(28);
+        tier2.ShouldAllBe(p =>
+            p.CheckInterval >= TimeSpan.FromHours(24) &&
+            p.CheckInterval <= TimeSpan.FromDays(7));
 
         await Task.CompletedTask;
     }
@@ -182,8 +184,10 @@ public class JobWatchSeederTests : TestBase
 
         var result = await seeder.SeedAsync(TestProfile, "Monitor biotech jobs");
 
+        var expectedPortalCount = JobWatchSeeder.GetAllPortalDefinitions().Count;
+
         result.Group.ShouldNotBeNull();
-        result.CreatedCount.ShouldBe(17);
+        result.CreatedCount.ShouldBe(expectedPortalCount);
 
         // Group created once
         await groupService.Received(1).CreateGroupAsync(
@@ -192,8 +196,8 @@ public class JobWatchSeederTests : TestBase
                 r.AnalysisProfileJson == TestProfile),
             Arg.Any<CancellationToken>());
 
-        // 17 watches created
-        await watchService.Received(17).CreateWatchAsync(
+        // One watch is created for every catalog entry.
+        await watchService.Received(expectedPortalCount).CreateWatchAsync(
             Arg.Any<CreateWatchRequest>(),
             Arg.Any<CancellationToken>());
     }

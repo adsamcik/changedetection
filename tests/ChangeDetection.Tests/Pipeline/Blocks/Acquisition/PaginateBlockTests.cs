@@ -476,7 +476,7 @@ public class PaginateBlockTests : TestBase
         var result = await _sut.ExecuteAsync(context);
 
         result.Status.ShouldBe(BlockExecutionStatus.Failed);
-        result.Error.ShouldContain("empty");
+        result.Error.ShouldContain("requires");
     }
 
     [Test]

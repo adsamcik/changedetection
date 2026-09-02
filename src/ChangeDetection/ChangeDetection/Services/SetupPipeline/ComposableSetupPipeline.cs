@@ -510,7 +510,8 @@ public class ComposableSetupPipeline(
                 Type = SetupProgressType.CheckpointReached,
                 Message = revisedIntent!.Summary ?? $"Updated: I'll watch {revisedIntent.Url} for {revisedIntent.ChangeType} changes.",
                 Intent = revisedIntent,
-                Detail = $"Session: {session.Id}"
+                Detail = $"Session: {session.Id}",
+                SessionId = session.Id
             };
             yield break;
         }

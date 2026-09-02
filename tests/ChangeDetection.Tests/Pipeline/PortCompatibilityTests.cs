@@ -42,28 +42,28 @@ public class PortCompatibilityTests : TestBase
     }
 
     [Test]
-    public async Task PlainText_To_DiffResult_IsNotValid()
+    public async Task PlainText_To_DiffResult_IsValid()
     {
-        // PlainText and DiffResult are distinct types — strict matching rejects this
+        // JSON-bearing port types are interchangeable because blocks consume JsonElement.
         var pipeline = BuildPipelineWithConnection(PortType.PlainText, PortType.DiffResult);
 
         var result = _validator.Validate(pipeline, _registry);
 
         var hasTypeMismatch = result.Errors.Any(e => e.Code == "PORT_TYPE_MISMATCH");
-        hasTypeMismatch.ShouldBeTrue("PlainText → DiffResult should NOT be compatible (strict type matching)");
+        hasTypeMismatch.ShouldBeFalse("PlainText → DiffResult should be compatible JSON payloads");
         await Task.CompletedTask;
     }
 
     [Test]
-    public async Task PlainText_To_ExtractedObjects_IsNotValid()
+    public async Task PlainText_To_ExtractedObjects_IsValid()
     {
-        // PlainText and ExtractedObjects are distinct types — strict matching rejects this
+        // JSON-bearing port types are interchangeable because blocks consume JsonElement.
         var pipeline = BuildPipelineWithConnection(PortType.PlainText, PortType.ExtractedObjects);
 
         var result = _validator.Validate(pipeline, _registry);
 
         var hasTypeMismatch = result.Errors.Any(e => e.Code == "PORT_TYPE_MISMATCH");
-        hasTypeMismatch.ShouldBeTrue("PlainText → ExtractedObjects should NOT be compatible (strict type matching)");
+        hasTypeMismatch.ShouldBeFalse("PlainText → ExtractedObjects should be compatible JSON payloads");
         await Task.CompletedTask;
     }
 
@@ -81,15 +81,15 @@ public class PortCompatibilityTests : TestBase
     }
 
     [Test]
-    public async Task ExtractedObjects_To_DiffResult_IsNotValid()
+    public async Task ExtractedObjects_To_DiffResult_IsValid()
     {
-        // ExtractedObjects and DiffResult are distinct types — strict matching rejects this
+        // JSON-bearing port types are interchangeable because blocks consume JsonElement.
         var pipeline = BuildPipelineWithConnection(PortType.ExtractedObjects, PortType.DiffResult);
 
         var result = _validator.Validate(pipeline, _registry);
 
         var hasTypeMismatch = result.Errors.Any(e => e.Code == "PORT_TYPE_MISMATCH");
-        hasTypeMismatch.ShouldBeTrue("ExtractedObjects → DiffResult should NOT be compatible (strict type matching)");
+        hasTypeMismatch.ShouldBeFalse("ExtractedObjects → DiffResult should be compatible JSON payloads");
         await Task.CompletedTask;
     }
 

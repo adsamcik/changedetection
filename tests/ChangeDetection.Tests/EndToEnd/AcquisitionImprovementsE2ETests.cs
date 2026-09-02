@@ -508,8 +508,10 @@ public class AcquisitionImprovementsE2ETests : TestBase
             templateRegistry,
             watchRepo,
             new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
-            null!,  // TODO: PipelineSecurityValidator - missing parameter
-            null!,  // TODO: ContentSanitizer - missing parameter
+            new PipelineSecurityValidator(
+                new DomainPinValidator(CreateLogger<DomainPinValidator>()),
+                CreateLogger<PipelineSecurityValidator>()),
+            new ContentSanitizer(),
             CreateLogger<ComposableSetupPipeline>());
 
         return new SetupPipelineHarness(

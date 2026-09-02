@@ -149,10 +149,14 @@ public class BlockRegistry : IBlockRegistry
             outputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
             factory: _ => new ListDiffBlock());
 
-        // RelevanceScore: data → result
+        // RelevanceScore: data → result envelope, with items available as a dedicated output
         registry.Register("RelevanceScore",
             inputPorts: [new PortDescriptor { Name = "data", Type = PortType.ExtractedObjects }],
-            outputPorts: [new PortDescriptor { Name = "result", Type = PortType.DiffResult }],
+            outputPorts:
+            [
+                new PortDescriptor { Name = "result", Type = PortType.DiffResult },
+                new PortDescriptor { Name = "items", Type = PortType.ExtractedObjects }
+            ],
             factory: _ => new RelevanceScoreBlock());
 
         // StructDiff: data → result

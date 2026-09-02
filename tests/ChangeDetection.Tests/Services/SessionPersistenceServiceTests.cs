@@ -24,7 +24,9 @@ public class SessionPersistenceServiceTests : TestBase
         var dbContext = Substitute.ForPartsOf<LiteDbContext>("Filename=:memory:");
         dbContext.Database.Returns(mockDatabase);
 
-        _sut = new SessionPersistenceService(new ThreadSafeLiteDbContext(dbContext));
+        _sut = new SessionPersistenceService(
+            new ThreadSafeLiteDbContext(dbContext),
+            CreateLogger<SessionPersistenceService>());
     }
 
     private static ConversationSession CreateTestSession(Guid? sessionId = null)

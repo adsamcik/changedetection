@@ -33,7 +33,7 @@ public class OutreachSignalDetector
     private static readonly (string Type, Regex Pattern)[] HardPositives =
     [
         ("GeneralApplication", new Regex(
-            @"(?i)(general\s+application|open\s+application|speculative\s+application|spontan\w*\s+bewerbung)",
+            @"(?i)(general\s+application|open\s+application|speculative\s+application|spontan\w*\s*bewerbung)",
             RegexOptions.Compiled, TimeSpan.FromMilliseconds(50))),
         ("TalentCommunity", new Regex(
             @"(?i)(talent\s+(community|pool|network)|join\s+our\s+talent|connect\s+with\s+us)",

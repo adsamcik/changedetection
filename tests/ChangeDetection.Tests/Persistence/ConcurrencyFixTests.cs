@@ -241,7 +241,9 @@ public class SessionPersistenceAtomicUpsertTests
         {
             using var context = new LiteDbContext(dbPath);
             using var safeContext = new ThreadSafeLiteDbContext(context);
-            var service = new SessionPersistenceService(safeContext);
+            var logger = new FakeLogger<SessionPersistenceService>(
+                FakeLogCollector.Create(new FakeLogCollectorOptions()));
+            var service = new SessionPersistenceService(safeContext, logger);
 
             var sessionId = Guid.NewGuid();
             var ownerId = Guid.NewGuid();
@@ -286,7 +288,9 @@ public class SessionPersistenceAtomicUpsertTests
         {
             using var context = new LiteDbContext(dbPath);
             using var safeContext = new ThreadSafeLiteDbContext(context);
-            var service = new SessionPersistenceService(safeContext);
+            var logger = new FakeLogger<SessionPersistenceService>(
+                FakeLogCollector.Create(new FakeLogCollectorOptions()));
+            var service = new SessionPersistenceService(safeContext, logger);
 
             var sessionId = Guid.NewGuid();
             var ownerId = Guid.NewGuid();
@@ -336,7 +340,9 @@ public class ConversationSessionManagerFlushTests
         {
             using var context = new LiteDbContext(dbPath);
             using var safeContext = new ThreadSafeLiteDbContext(context);
-            var persistence = new SessionPersistenceService(safeContext);
+            var persistenceLogger = new FakeLogger<SessionPersistenceService>(
+                FakeLogCollector.Create(new FakeLogCollectorOptions()));
+            var persistence = new SessionPersistenceService(safeContext, persistenceLogger);
 
             var services = new ServiceCollection();
             services.AddSingleton<ISessionPersistenceService>(persistence);

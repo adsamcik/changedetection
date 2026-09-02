@@ -1,4 +1,5 @@
 using ChangeDetection.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -7,7 +8,7 @@ namespace ChangeDetection.Tests.Services;
 [Category("Unit")]
 public class StructuredDataExtractorTests
 {
-    private readonly StructuredDataExtractor _sut = new();
+    private readonly StructuredDataExtractor _sut = new(NullLogger<StructuredDataExtractor>.Instance);
 
     [Test]
     public async Task ExtractJsonLd_ReturnsObjectsFromScripts()

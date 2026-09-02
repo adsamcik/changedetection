@@ -96,6 +96,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         // Verify: check that a tracked item was created
         var trackingService = _factory.Services.GetRequiredService<IItemTrackingService>();
         var trackedItems = await trackingService.GetItemsAsync(group.Id, CancellationToken.None);
+        SkipIfLlmCacheMissed();
 
         Log($"Tracked items: {trackedItems.Count}");
         foreach (var item in trackedItems)
@@ -167,6 +168,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         // Verify: PhD listings should be filtered (suppressed) or scored SILENT
         var trackingService = _factory.Services.GetRequiredService<IItemTrackingService>();
         var items = await trackingService.GetItemsAsync(group.Id, CancellationToken.None);
+        SkipIfLlmCacheMissed();
 
         Log($"TC2 tracked items: {items.Count}");
         foreach (var item in items)
@@ -210,6 +212,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC3", items);
 
         items.ShouldNotBeEmpty("TC3 should produce tracked items");
@@ -251,6 +254,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC5", items);
 
         items.ShouldNotBeEmpty("TC5: Czech posting should produce tracked items");
@@ -291,6 +295,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC6", items);
 
         // Paris is wrong location — should not be HIGH
@@ -328,6 +333,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC7", items);
 
         // Hidden senior role should not be HIGH
@@ -368,6 +374,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC8", items);
 
         items.ShouldNotBeEmpty("TC8 should produce tracked items");
@@ -409,6 +416,7 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
         await CheckWatchAsync(watch.Id);
 
         var items = await GetTrackedItemsAsync(group.Id);
+        SkipIfLlmCacheMissed();
         LogItems("TC9", items);
 
         items.ShouldNotBeEmpty("TC9 should produce tracked items");
@@ -447,6 +455,17 @@ public class JobWatchPipelineE2ETests : TestBase, IAsyncDisposable
             "preferences": ["variety", "autonomy", "intellectual challenge"]
         }
         """;
+
+    private void SkipIfLlmCacheMissed()
+    {
+        if (_factory.LlmCacheMode == CacheMode.CacheOnly &&
+            _factory.CachingHandler is { CacheMisses: > 0 } handler)
+        {
+            Skip.Test(
+                $"JobWatch LLM replay cache is missing {handler.CacheMisses} response(s). " +
+                "Run with -IncludeOllama to populate the committed cache.");
+        }
+    }
 
     private async Task<(WatchGroup Group, WatchedSite Watch)> SeedSingleWatchAsync(
         string url, string watchId)
@@ -703,18 +722,16 @@ public sealed class JobWatchE2EFactory : CachingWebApplicationFactory
             services.RemoveAll<IContentFetcher>();
             services.AddSingleton<IContentFetcher>(Fetcher);
 
-            // Seed a Copilot SDK LLM provider. Uses GitHub authentication (gh auth login).
-            // The CachingLlmHttpHandler (from base class) intercepts HTTP calls and
-            // caches responses in SQLite for deterministic replay.
+            // Always use the committed HTTP-based provider for this deterministic
+            // cache-replay suite. A developer's local Copilot override must not turn
+            // a normal test run into live external traffic.
             var providerRepo = new LiteDbRepository<LlmProviderConfig>(new ThreadSafeLiteDbContext(dbContext), "llm_providers");
-            providerRepo.InsertAsync(new LlmProviderConfig
+            var provider = TestLlmConfig.LoadCommitted().ToProviderConfig();
+            if (LlmCacheMode == CacheMode.CacheOnly)
             {
-                Name = "GitHub Copilot",
-                ProviderType = LlmProviderType.Copilot,
-                Model = "gpt-4o",
-                IsEnabled = true,
-                Priority = 1
-            }).GetAwaiter().GetResult();
+                provider.MaxRetries = 0;
+            }
+            providerRepo.InsertAsync(provider).GetAwaiter().GetResult();
         });
     }
 

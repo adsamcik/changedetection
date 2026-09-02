@@ -266,7 +266,6 @@ public class PinnedHttpClient(
             budget.RecordHttpRequest();
 
             var client = httpClientFactory.CreateClient(RuntimeSandboxClientName);
-            client.Timeout = Timeout.InfiniteTimeSpan;
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(budget.GetRemainingTime());

@@ -41,6 +41,10 @@
     Run content fetching in CacheFirst mode (fetches real URLs on cache miss).
     By default, tests run in CacheOnly mode using cached content.
 
+.PARAMETER IncludeCopilot
+    Run tests that call the Copilot SDK directly. These calls cannot be replayed
+    through the HTTP response cache and are disabled by default.
+
 .EXAMPLE
     ./test.ps1 -Filter "*ContentEnricher*"
 
@@ -67,7 +71,8 @@ param(
     [int]$TailLines = 50,
     [int]$MaxParallel = 8,
     [switch]$IncludeOllama,
-    [switch]$IncludeInternet
+    [switch]$IncludeInternet,
+    [switch]$IncludeCopilot
 )
 
 $ErrorActionPreference = "Continue"
@@ -86,6 +91,13 @@ if (-not $IncludeInternet) {
     $env:SKIP_INTERNET_TESTS = "true"
 } else {
     $env:SKIP_INTERNET_TESTS = $null
+}
+
+# Copilot SDK calls bypass the HTTP cache, so require an explicit opt-in.
+if (-not $IncludeCopilot) {
+    $env:SKIP_COPILOT_TESTS = "true"
+} else {
+    $env:SKIP_COPILOT_TESTS = $null
 }
 
 # Ensure we're in repo root
@@ -111,18 +123,33 @@ try {
     
     $runArgs += "--no-build"
     
+    # TUnit 1.65 requires a full tree-node path. Preserve the script's documented
+    # test-name shorthand by expanding it to the method segment.
+    $effectiveFilter = $Filter
+    if ($Filter -and -not $Filter.StartsWith('/')) {
+        $pattern = $Filter
+        if (-not $pattern.Contains('*')) {
+            $pattern = "*$pattern*"
+        }
+
+        $effectiveFilter = "/*/*/*/$pattern"
+    }
+
     # Separator for TUnit arguments
     $runArgs += "--"
     $runArgs += "--maximum-parallel-tests", $MaxParallel
     $runArgs += "--results-directory", $resultsDir
 
     if ($Filter) {
-        $runArgs += "--treenode-filter", $Filter
+        $runArgs += "--treenode-filter", $effectiveFilter
     }
 
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Running TUnit tests with logging to: $logFile" -ForegroundColor Cyan
     Write-Host "Filter: $(if ($Filter) { $Filter } else { '(all tests)' })" -ForegroundColor Cyan
+    if ($Filter -and $effectiveFilter -ne $Filter) {
+        Write-Host "TUnit filter: $effectiveFilter" -ForegroundColor DarkGray
+    }
     if (-not $IncludeOllama) {
         Write-Host "LLM tests: CacheOnly mode (use -IncludeOllama for CacheFirst)" -ForegroundColor Yellow
     } else {
@@ -132,6 +159,11 @@ try {
         Write-Host "Content fetching: CacheOnly mode (use -IncludeInternet for CacheFirst)" -ForegroundColor Yellow
     } else {
         Write-Host "Content fetching: CacheFirst mode (will fetch URLs on cache miss)" -ForegroundColor Green
+    }
+    if (-not $IncludeCopilot) {
+        Write-Host "Copilot SDK tests: skipped (use -IncludeCopilot to enable)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Copilot SDK tests: enabled (live external calls)" -ForegroundColor Green
     }
     Write-Host "========================================" -ForegroundColor Cyan
 

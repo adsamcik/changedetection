@@ -23,6 +23,7 @@ public sealed class ContentCache : IDisposable
     private readonly TimeSpan _lockTimeout = TimeSpan.FromSeconds(30);
     private bool _disposed;
     private readonly bool _isSharedInstance;
+    private readonly bool _readOnly;
     
     /// <summary>
     /// Gets or creates a shared cache instance at the default location.
@@ -34,7 +35,8 @@ public sealed class ContentCache : IDisposable
         {
             if (_sharedInstance == null || _sharedInstance._disposed)
             {
-                _sharedInstance = new ContentCache(GetDefaultPath(), isShared: true);
+                var readOnly = Environment.GetEnvironmentVariable("SKIP_INTERNET_TESTS") == "true";
+                _sharedInstance = new ContentCache(GetDefaultPath(), isShared: true, readOnly: readOnly);
                 _sharedReferenceCount = 0;
             }
             _sharedReferenceCount++;
@@ -55,9 +57,10 @@ public sealed class ContentCache : IDisposable
     /// </summary>
     /// <param name="databasePath">Path to the SQLite database file</param>
     /// <param name="isShared">Whether this is a shared instance (affects disposal behavior)</param>
-    public ContentCache(string databasePath, bool isShared = false)
+    public ContentCache(string databasePath, bool isShared = false, bool readOnly = false)
     {
         _isSharedInstance = isShared;
+        _readOnly = readOnly;
         
         var directory = Path.GetDirectoryName(databasePath);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -65,11 +68,15 @@ public sealed class ContentCache : IDisposable
             Directory.CreateDirectory(directory);
         }
 
-        var connectionString = $"Data Source={databasePath};Mode=ReadWriteCreate;Cache=Shared";
+        var mode = readOnly ? "ReadOnly" : "ReadWriteCreate";
+        var connectionString = $"Data Source={databasePath};Mode={mode};Cache=Shared";
         _connection = new SqliteConnection(connectionString);
         _connection.Open();
 
-        InitializeDatabase();
+        if (!readOnly)
+        {
+            InitializeDatabase();
+        }
     }
 
     private void InitializeDatabase()
@@ -159,17 +166,21 @@ public sealed class ContentCache : IDisposable
             
             reader.Close();
 
-            // Update hit statistics
-            using var updateCmd = _connection.CreateCommand();
-            updateCmd.CommandText = """
-                UPDATE content_cache
-                SET hit_count = hit_count + 1,
-                    last_hit_at = @now
-                WHERE url_hash = @hash
-                """;
-            updateCmd.Parameters.AddWithValue("@hash", hash);
-            updateCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
-            updateCmd.ExecuteNonQuery();
+            if (!_readOnly)
+            {
+                // Hit counters are diagnostic metadata. Cache-only CI reads must not
+                // mutate the committed fixture database or create WAL sidecars.
+                using var updateCmd = _connection.CreateCommand();
+                updateCmd.CommandText = """
+                    UPDATE content_cache
+                    SET hit_count = hit_count + 1,
+                        last_hit_at = @now
+                    WHERE url_hash = @hash
+                    """;
+                updateCmd.Parameters.AddWithValue("@hash", hash);
+                updateCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+                updateCmd.ExecuteNonQuery();
+            }
 
             return result;
         }
@@ -181,6 +192,8 @@ public sealed class ContentCache : IDisposable
     public void Store(string url, CachedContentEntry entry)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readOnly)
+            throw new InvalidOperationException("Cannot store content in a read-only cache.");
 
         var hash = ComputeUrlHash(url);
         var headersJson = JsonSerializer.Serialize(entry.ResponseHeaders);

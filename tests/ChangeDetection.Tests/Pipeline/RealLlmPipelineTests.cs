@@ -4,6 +4,7 @@ using ChangeDetection.Services.LLM;
 using ChangeDetection.Services.LLM.Factories;
 using ChangeDetection.Services.Pipeline;
 using ChangeDetection.Tests.Llm.Cache;
+using ChangeDetection.Tests.Infrastructure;
 using Fizzler.Systems.HtmlAgilityPack;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
@@ -89,6 +90,12 @@ public class RealLlmPipelineTests : TestBase, IAsyncDisposable
         var selectorLogger = Substitute.For<ILogger<SelectorGenerationStage>>();
         var domCompactor = CreatePassThroughDomCompactor();
         _selectorGenerationStage = new SelectorGenerationStage(_llmChain, domCompactor, selectorLogger);
+    }
+
+    [Before(Test)]
+    public void SkipUnlessCopilotIsEnabled()
+    {
+        CacheSkipHelper.SkipIfCopilotUnavailable();
     }
 
     public async ValueTask DisposeAsync()

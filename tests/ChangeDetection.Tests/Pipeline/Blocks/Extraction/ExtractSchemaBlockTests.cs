@@ -3,6 +3,7 @@ using ChangeDetection.Core.Pipeline;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Services;
 using ChangeDetection.Services.Blocks.Extraction;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Shouldly;
 using TUnit.Core;
@@ -15,7 +16,8 @@ public class ExtractSchemaBlockTests : TestBase
     private readonly ExtractSchemaBlock _sut = new();
     private readonly IContentExtractor _extractor = Substitute.For<IContentExtractor>();
     private readonly ILlmProviderChain _llmProviderChain = Substitute.For<ILlmProviderChain>();
-    private readonly IStructuredDataExtractor _structuredDataExtractor = new StructuredDataExtractor();
+    private readonly IStructuredDataExtractor _structuredDataExtractor =
+        new StructuredDataExtractor(NullLogger<StructuredDataExtractor>.Instance);
 
     private IServiceProvider CreateServices()
     {

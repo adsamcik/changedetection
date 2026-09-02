@@ -1,7 +1,7 @@
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Services.LLM.Copilot;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.SemanticKernel;
 
 namespace ChangeDetection.Services.LLM.Factories;
@@ -42,14 +42,12 @@ public class CopilotKernelFactory : ILlmKernelFactory, IAsyncDisposable
 
             var options = new CopilotClientOptions
             {
-                AutoStart = true,
-                AutoRestart = true,
                 UseLoggedInUser = true,
                 Logger = _loggerFactory.CreateLogger<CopilotClient>()
             };
 
             _client = new CopilotClient(options);
-            _logger.LogInformation("Created CopilotClient with auto-start enabled");
+            _logger.LogInformation("Created CopilotClient");
 
             return _client;
         }

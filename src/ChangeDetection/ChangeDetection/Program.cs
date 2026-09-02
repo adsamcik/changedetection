@@ -27,7 +27,7 @@ using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.Search;
 using ChangeDetection.Services.Startup;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.Extensions.Options;
 using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Services.Persistence.Migrations;
@@ -418,8 +418,6 @@ builder.Services.AddSingleton<ISearchProvider>(sp =>
 {
     var clientOptions = new CopilotClientOptions
     {
-        AutoStart = false,
-        AutoRestart = true,
         UseLoggedInUser = true,
         Logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<CopilotClient>()
     };

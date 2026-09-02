@@ -112,7 +112,10 @@ public class IterateBlockTests : TestBase
     [Test]
     public async Task Ports_MatchExpectedDefinition()
     {
-        _sut.InputPorts.ShouldBeEmpty();
+        _sut.InputPorts.Count.ShouldBe(1);
+        _sut.InputPorts[0].Name.ShouldBe("url");
+        _sut.InputPorts[0].Type.ShouldBe(PortType.Url);
+        _sut.InputPorts[0].Required.ShouldBeFalse();
         _sut.OutputPorts.Count.ShouldBe(1);
         _sut.OutputPorts[0].Name.ShouldBe("data");
         _sut.OutputPorts[0].Type.ShouldBe(PortType.ExtractedObjects);

@@ -113,7 +113,7 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
             return Task.FromResult(new FetchResult
             {
                 IsSuccess = true,
-                Html = "<html><body><div>stub</div></body></html>",
+                Html = "<html><body><div class=\"main-content\">stub</div></body></html>",
                 HttpStatusCode = 200,
                 DurationMs = 1
             });

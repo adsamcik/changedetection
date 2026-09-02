@@ -421,8 +421,10 @@ public class PipelineReliabilityE2ETests : TestBase
             new PipelineTemplateRegistry(),
             watchRepo,
             new SetupFlowEnhancements(CreateLogger<SetupFlowEnhancements>()),
-            null!,  // TODO: PipelineSecurityValidator - missing parameter
-            null!,  // TODO: ContentSanitizer - missing parameter
+            new PipelineSecurityValidator(
+                new DomainPinValidator(CreateLogger<DomainPinValidator>()),
+                CreateLogger<PipelineSecurityValidator>()),
+            new ContentSanitizer(),
             CreateLogger<ComposableSetupPipeline>());
 
         var request = new SetupRequest { UserInput = "Watch https://example.com/page for changes" };
@@ -430,14 +432,14 @@ public class PipelineReliabilityE2ETests : TestBase
 
         await foreach (var progress in sut.StartSetupAsync(request))
         {
-            if (progress.Phase == SetupPhase.Checkpoint1 && progress.Detail is not null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint1 && progress.SessionId is not null)
+                sessionId = progress.SessionId;
         }
 
         await foreach (var progress in sut.ConfirmIntentAsync(sessionId!, confirmed: true))
         {
-            if (progress.Phase == SetupPhase.Checkpoint2 && progress.Detail is not null)
-                sessionId = progress.Detail.Replace("Session: ", "");
+            if (progress.Phase == SetupPhase.Checkpoint2 && progress.SessionId is not null)
+                sessionId = progress.SessionId;
         }
 
         sessionId.ShouldNotBeNull();
@@ -474,7 +476,8 @@ public class PipelineReliabilityE2ETests : TestBase
             (typeof(IUrlValidator), urlValidator),
             (typeof(IContentFetcher), fetcher),
             (typeof(IContentExtractor), extractor),
-            (typeof(IStructuredDataExtractor), new StructuredDataExtractor())
+            (typeof(IStructuredDataExtractor),
+                new StructuredDataExtractor(NullLogger<StructuredDataExtractor>.Instance))
         };
 
         services.AddRange(extras);

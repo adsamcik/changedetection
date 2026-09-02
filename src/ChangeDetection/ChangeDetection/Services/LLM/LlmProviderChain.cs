@@ -573,7 +573,7 @@ public class LlmProviderChain : ILlmProviderChain
                 return existing;
             }
 
-            var pipeline = new ResiliencePipelineBuilder()
+            var pipelineBuilder = new ResiliencePipelineBuilder()
                 .AddCircuitBreaker(new CircuitBreakerStrategyOptions
                 {
                     FailureRatio = 0.5,
@@ -597,8 +597,14 @@ public class LlmProviderChain : ILlmProviderChain
                         _ = UpdateProviderHealthAsync(provider, isHealthy: true, null, CancellationToken.None);
                         return ValueTask.CompletedTask;
                     }
-                })
-                .AddRetry(new Polly.Retry.RetryStrategyOptions
+                });
+
+            // Polly 8.7 rejects MaxRetryAttempts=0. Zero is a supported application
+            // setting meaning "make one attempt without retries", so omit the retry
+            // strategy entirely in that case.
+            if (provider.MaxRetries > 0)
+            {
+                pipelineBuilder.AddRetry(new Polly.Retry.RetryStrategyOptions
                 {
                     MaxRetryAttempts = provider.MaxRetries,
                     Delay = TimeSpan.FromSeconds(1),
@@ -611,7 +617,10 @@ public class LlmProviderChain : ILlmProviderChain
                             args.Outcome.Exception?.Message);
                         return ValueTask.CompletedTask;
                     }
-                })
+                });
+            }
+
+            var pipeline = pipelineBuilder
                 .AddTimeout(TimeSpan.FromSeconds(provider.TimeoutSeconds))
                 .Build();
 
