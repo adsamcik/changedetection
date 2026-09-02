@@ -26,8 +26,10 @@ using ChangeDetection.Core.Pipeline.Setup;
 using ChangeDetection.Core.Pipeline.Validation;
 using ChangeDetection.Services.AutoHealing;
 using ChangeDetection.Services.Search;
+using ChangeDetection.Services.Security;
 using ChangeDetection.Services.Startup;
 using GitHub.Copilot;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using ChangeDetection.Core.Pipeline.AutoHealing;
 using ChangeDetection.Services.Persistence.Migrations;
@@ -110,6 +112,15 @@ builder.Services.AddRazorComponents()
 
 // Add cascading authentication state for Blazor
 builder.Services.AddCascadingAuthenticationState();
+
+var dataProtection = builder.Services.AddDataProtection()
+    .SetApplicationName("ChangeDetection");
+var dataProtectionKeyRingPath = builder.Configuration["Security:DataProtectionKeyRingPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeyRingPath))
+{
+    dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyRingPath));
+}
+builder.Services.AddSingleton<IApiKeyProtector, DataProtectionApiKeyProtector>();
 
 // Add SignalR with optimized settings and JSON protocol configuration
 builder.Services.AddSignalR(options =>
@@ -277,8 +288,9 @@ builder.Services.AddScoped<IRepository<NotificationOutboxEntry>>(sp =>
         sp.GetRequiredService<IUserContext>()));
 
 // Register global repositories (not tenant-scoped)
-builder.Services.AddScoped<IRepository<LlmProviderConfig>>(sp => 
+builder.Services.AddScoped(sp =>
     new LiteDbRepository<LlmProviderConfig>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "llm_providers"));
+builder.Services.AddScoped<IRepository<LlmProviderConfig>, EncryptedLlmProviderRepository>();
 builder.Services.AddScoped<IRepository<LlmUsageRecord>>(sp => 
     new LiteDbRepository<LlmUsageRecord>(sp.GetRequiredService<ThreadSafeLiteDbContext>(), "llm_usage"));
 builder.Services.AddScoped<IRepository<AppSettings>>(sp => 
@@ -698,7 +710,7 @@ app.MapGet("/api/diag/di-trace", async (IServiceScopeFactory scopeFactory) =>
     }
 
     return Results.Json(results);
-});
+}).RequireDiagnosticAccess();
 
 // Configure static files with aggressive caching (assets are fingerprinted for cache-busting)
 app.UseStaticFiles(new StaticFileOptions

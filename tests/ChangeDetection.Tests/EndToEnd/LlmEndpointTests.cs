@@ -1,7 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
+using ChangeDetection.Services.Persistence;
+using ChangeDetection.Services.Security;
 using ChangeDetection.Shared.Dtos;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -85,6 +89,64 @@ public class LlmEndpointTests : TestBase, IAsyncDisposable
         var providers = await response.Content.ReadFromJsonAsync<List<LlmProviderDto>>();
         providers.ShouldNotBeNull();
         providers.ShouldContain(p => p.Id == created.Id);
+    }
+
+    [Test]
+    public async Task CreateProvider_WithApiKey_EncryptsValueAtRest()
+    {
+        const string apiKey = "test-secret-api-key";
+        var dto = MakeProvider("OpenAI");
+        dto.ApiKey = apiKey;
+
+        var response = await _client.PostAsJsonAsync("/api/llm/providers", dto);
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<LlmProviderDto>();
+        created.ShouldNotBeNull();
+
+        using var scope = _factory.Services.CreateScope();
+        var rawRepository = scope.ServiceProvider.GetRequiredService<LiteDbRepository<LlmProviderConfig>>();
+        var protector = scope.ServiceProvider.GetRequiredService<IApiKeyProtector>();
+        var providerId = Guid.Parse(created.Id);
+
+        var stored = await rawRepository.GetByIdAsync(providerId);
+        stored.ShouldNotBeNull();
+        stored.ApiKey.ShouldNotBeNull();
+        protector.IsProtected(stored.ApiKey).ShouldBeTrue();
+        stored.ApiKey.ShouldNotContain(apiKey);
+
+        var runtimeRepository = scope.ServiceProvider.GetRequiredService<IRepository<LlmProviderConfig>>();
+        var runtimeProvider = await runtimeRepository.GetByIdAsync(providerId);
+        runtimeProvider.ShouldNotBeNull();
+        runtimeProvider.ApiKey.ShouldBe(apiKey);
+    }
+
+    [Test]
+    public async Task ReadProvider_WithLegacyPlaintextApiKey_MigratesValueAtRest()
+    {
+        const string apiKey = "legacy-plaintext-api-key";
+        var provider = new LlmProviderConfig
+        {
+            Name = "Legacy provider",
+            ProviderType = LlmProviderType.OpenAI,
+            Model = "gpt-test",
+            ApiKey = apiKey
+        };
+
+        using var scope = _factory.Services.CreateScope();
+        var rawRepository = scope.ServiceProvider.GetRequiredService<LiteDbRepository<LlmProviderConfig>>();
+        var runtimeRepository = scope.ServiceProvider.GetRequiredService<IRepository<LlmProviderConfig>>();
+        var protector = scope.ServiceProvider.GetRequiredService<IApiKeyProtector>();
+        await rawRepository.InsertAsync(provider);
+
+        var runtimeProvider = await runtimeRepository.GetByIdAsync(provider.Id);
+        runtimeProvider.ShouldNotBeNull();
+        runtimeProvider.ApiKey.ShouldBe(apiKey);
+
+        var migrated = await rawRepository.GetByIdAsync(provider.Id);
+        migrated.ShouldNotBeNull();
+        migrated.ApiKey.ShouldNotBeNull();
+        protector.IsProtected(migrated.ApiKey).ShouldBeTrue();
+        migrated.ApiKey.ShouldNotContain(apiKey);
     }
 
     [Test]

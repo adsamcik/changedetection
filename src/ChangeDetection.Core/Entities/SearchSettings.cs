@@ -8,16 +8,16 @@ public class SearchSettings
     /// <summary>Base URL for a SearXNG instance (e.g., "http://localhost:8080").</summary>
     public string? SearxngUrl { get; set; }
 
-    /// <summary>Google Custom Search API key.</summary>
+    /// <summary>Google Custom Search API key, sourced from external configuration.</summary>
     public string? GoogleCseApiKey { get; set; }
 
     /// <summary>Google Custom Search Engine ID (cx parameter).</summary>
     public string? GoogleCseEngineId { get; set; }
 
-    /// <summary>Brave Search API subscription token.</summary>
+    /// <summary>Brave Search API subscription token, sourced from external configuration.</summary>
     public string? BraveApiKey { get; set; }
 
-    /// <summary>NewsData.io API key for news-specific searches.</summary>
+    /// <summary>NewsData.io API key for news-specific searches, sourced from external configuration.</summary>
     public string? NewsDataApiKey { get; set; }
 
     /// <summary>Default search provider ID when none specified.</summary>

@@ -58,7 +58,7 @@ public class LlmProviderConfig
     public required string Model { get; set; }
     
     /// <summary>
-    /// API key (should be stored securely in production).
+    /// API key. The persistence adapter encrypts this value before writing it to storage.
     /// </summary>
     public string? ApiKey { get; set; }
     

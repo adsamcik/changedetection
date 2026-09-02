@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Json;
 using ChangeDetection.Core.Entities;
 using ChangeDetection.Core.Interfaces;
@@ -102,6 +103,36 @@ public class SsoTenantIsolationTests : IAsyncDisposable
         changes.ShouldNotBeEmpty();
     }
 
+    [Test]
+    public async Task DiagnosticEndpoint_RejectsNonAdminUser()
+    {
+        using var client = _fixture.CreateClientForUser("alice", "users");
+
+        var response = await client.GetAsync("/api/diag/di-trace");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
+    public async Task DiagnosticEndpoint_RejectsAnonymousUser()
+    {
+        using var client = _fixture.CreateAnonymousClient();
+
+        var response = await client.GetAsync("/api/diag/di-trace");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task DiagnosticEndpoint_AllowsAdminUser()
+    {
+        using var client = _fixture.CreateClientForUser("admin", "changedetection-admins");
+
+        var response = await client.GetAsync("/api/diag/di-trace");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
     public sealed class SsoFixture : IDisposable
     {
         private readonly WebApplicationFactory<Program> _factory;
@@ -200,6 +231,8 @@ public class SsoTenantIsolationTests : IAsyncDisposable
             }
             return client;
         }
+
+        public HttpClient CreateAnonymousClient() => _factory.CreateClient();
 
         public void Dispose()
         {
