@@ -157,6 +157,32 @@ public class CachingLlmHttpHandlerTests : TestBase
     }
 
     [Test]
+    public async Task CacheOnly_CacheHit_IsPortableAcrossSourceLineEndings()
+    {
+        using var cache = new LlmResponseCache(_testDbPath);
+        var windowsRequestBody = """{"messages":[{"role":"user","content":"Line one\r\nLine two"}],"model":"test-model"}""";
+        var linuxRequestBody = """{"messages":[{"role":"user","content":"Line one\nLine two"}],"model":"test-model"}""";
+        var cachedResponse = """{"choices":[{"message":{"content":"Portable cache hit"}}]}""";
+        cache.Store(windowsRequestBody, cachedResponse);
+
+        using var handler = new CachingLlmHttpHandler(
+            cache,
+            CacheMode.CacheOnly,
+            innerHandler: new FakeHttpHandler("should not be called"));
+        using var client = new HttpClient(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost/v1/chat/completions")
+        {
+            Content = new StringContent(linuxRequestBody, Encoding.UTF8, "application/json")
+        };
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("Portable cache hit");
+        handler.CacheHits.ShouldBe(1);
+    }
+
+    [Test]
     public async Task RefreshCache_AlwaysCallsRealLlm()
     {
         // Arrange

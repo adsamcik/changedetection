@@ -38,6 +38,10 @@ jobs:
       - name: Build tests (ChangeDetection.Core.Tests)
         run: dotnet build tests/ChangeDetection.Core.Tests/ChangeDetection.Core.Tests.csproj --no-restore
 
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: ./tests/ChangeDetection.Tests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
+
       - name: Run tests (ChangeDetection.Tests)
         shell: pwsh
         # TUnit test projects are executables (OutputType=Exe); use the repo wrapper instead of dotnet test/direct dotnet run.

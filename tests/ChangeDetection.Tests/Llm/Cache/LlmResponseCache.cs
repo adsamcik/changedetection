@@ -161,7 +161,61 @@ public sealed class LlmResponseCache : IDisposable
             normalizedRequest = requestBody;
         }
 
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedRequest));
+        return ComputeHash(normalizedRequest);
+    }
+
+    private static IReadOnlyList<string> ComputeRequestLookupHashes(string requestBody)
+    {
+        var hashes = new List<string>();
+
+        void AddHash(string value)
+        {
+            var hash = ComputeHash(value);
+            if (!hashes.Contains(hash, StringComparer.Ordinal))
+                hashes.Add(hash);
+        }
+
+        // Keep the legacy hash first so existing callers and exact-platform
+        // cache entries retain their current behavior.
+        hashes.Add(ComputeRequestHash(requestBody));
+
+        try
+        {
+            using var doc = JsonDocument.Parse(requestBody);
+            var root = doc.RootElement;
+            var model = root.TryGetProperty("model", out var m) ? m.GetString() : "";
+            var messages = root.TryGetProperty("messages", out var msgs) ? msgs.ToString() : "";
+            var temperature = root.TryGetProperty("temperature", out var t) ? t.GetDouble() : 0.7;
+
+            // C# multiline strings follow the source checkout's line endings.
+            // Git therefore produces \r\n-backed request fixtures on Windows and
+            // \n-backed fixtures on Linux. Probe both legacy forms so the same
+            // committed response database is portable between operating systems.
+            var lfMessages = messages
+                .Replace("\\r\\n", "\\n", StringComparison.Ordinal)
+                .Replace("\\r", "\\n", StringComparison.Ordinal)
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n');
+            var crlfMessages = lfMessages
+                .Replace("\\n", "\\r\\n", StringComparison.Ordinal)
+                .Replace("\n", "\r\n", StringComparison.Ordinal);
+
+            AddHash($"{model}|{temperature:F2}|{lfMessages}");
+            AddHash($"{model}|{temperature:F2}|{crlfMessages}");
+        }
+        catch
+        {
+            var lfBody = requestBody.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            AddHash(lfBody);
+            AddHash(lfBody.Replace("\n", "\r\n", StringComparison.Ordinal));
+        }
+
+        return hashes;
+    }
+
+    private static string ComputeHash(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
@@ -173,34 +227,40 @@ public sealed class LlmResponseCache : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        var hash = ComputeRequestHash(requestBody);
+        var hashes = ComputeRequestLookupHashes(requestBody);
 
         lock (_dbLock)
         {
-            using var selectCmd = _connection.CreateCommand();
-            selectCmd.CommandText = """
-                SELECT response_body, response_content, model, duration_ms
-                FROM llm_cache
-                WHERE request_hash = @hash
-                """;
-            selectCmd.Parameters.AddWithValue("@hash", hash);
+            CachedLlmResponse? result = null;
+            string? matchedHash = null;
 
-            using var reader = selectCmd.ExecuteReader();
-            if (!reader.Read())
+            foreach (var hash in hashes)
             {
-                return null;
+                using var selectCmd = _connection.CreateCommand();
+                selectCmd.CommandText = """
+                    SELECT response_body, response_content, model, duration_ms
+                    FROM llm_cache
+                    WHERE request_hash = @hash
+                    """;
+                selectCmd.Parameters.AddWithValue("@hash", hash);
+
+                using var reader = selectCmd.ExecuteReader();
+                if (!reader.Read())
+                    continue;
+
+                result = new CachedLlmResponse
+                {
+                    ResponseBody = reader.GetString(0),
+                    ResponseContent = reader.IsDBNull(1) ? null : reader.GetString(1),
+                    Model = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    DurationMs = reader.IsDBNull(3) ? 0 : reader.GetInt64(3)
+                };
+                matchedHash = hash;
+                break;
             }
 
-            var result = new CachedLlmResponse
-            {
-                ResponseBody = reader.GetString(0),
-                ResponseContent = reader.IsDBNull(1) ? null : reader.GetString(1),
-                Model = reader.IsDBNull(2) ? null : reader.GetString(2),
-                DurationMs = reader.IsDBNull(3) ? 0 : reader.GetInt64(3)
-            };
-            
-            // Close reader before updating
-            reader.Close();
+            if (result is null)
+                return null;
 
             if (!_readOnly)
             {
@@ -211,7 +271,7 @@ public sealed class LlmResponseCache : IDisposable
                     SET hit_count = hit_count + 1, last_hit_at = @now
                     WHERE request_hash = @hash
                     """;
-                updateCmd.Parameters.AddWithValue("@hash", hash);
+                updateCmd.Parameters.AddWithValue("@hash", matchedHash!);
                 updateCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
                 updateCmd.ExecuteNonQuery();
             }

@@ -447,7 +447,12 @@ public class PaginateBlock : IPipelineBlock
 
     private static string? ResolveUrl(string? currentPageUrl, string href)
     {
-        if (Uri.TryCreate(href, UriKind.Absolute, out var absoluteUri))
+        // On Unix, Uri.TryCreate treats root-relative paths such as "/page2" as
+        // absolute file URIs. Pagination links are web URLs, so only accept an
+        // absolute URI here when it has an HTTP(S) scheme; otherwise resolve it
+        // against the current page URL below.
+        if (Uri.TryCreate(href, UriKind.Absolute, out var absoluteUri) &&
+            (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
             return absoluteUri.ToString();
 
         if (string.IsNullOrWhiteSpace(currentPageUrl))

@@ -33,9 +33,7 @@ namespace ChangeDetection.Tests.Llm.Cache;
 /// </example>
 public class CachingWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private static readonly string DefaultCachePath = Path.Combine(
-        Path.GetDirectoryName(typeof(CachingWebApplicationFactory).Assembly.Location)!,
-        "llm-responses.db");
+    private static readonly string DefaultCachePath = LlmResponseCache.GetDefaultPath();
     
     private CachingLlmHttpHandler? _handler;
     private LlmResponseCache? _llmCache;
