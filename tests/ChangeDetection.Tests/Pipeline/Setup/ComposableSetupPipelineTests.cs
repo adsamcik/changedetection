@@ -380,6 +380,31 @@ public class ComposableSetupPipelineTests : TestBase
     }
 
     [Test]
+    public async Task StartSetupAsync_UcphVacancies_UsesTemplateWithoutFetchingOrLlm()
+    {
+        var request = new SetupRequest
+        {
+            UserInput = "Track new jobs at https://employment.ku.dk/all-vacancies/"
+        };
+        var progressList = new List<SetupProgress>();
+
+        await foreach (var progress in _sut.StartSetupAsync(request))
+            progressList.Add(progress);
+
+        var checkpoint = progressList.Last();
+        checkpoint.Phase.ShouldBe(SetupPhase.Checkpoint1);
+        checkpoint.Type.ShouldBe(SetupProgressType.CheckpointReached);
+        checkpoint.Intent.ShouldNotBeNull();
+        checkpoint.Intent.Url.ShouldBe("https://employment.ku.dk/all-vacancies/");
+        checkpoint.Detail.ShouldBe("Using pre-built template for ucph (fast path, no AI needed)");
+
+        await _contentFetcher.DidNotReceive().FetchAsync(
+            Arg.Any<string>(), Arg.Any<FetchOptions>(), Arg.Any<CancellationToken>());
+        await _llmChain.DidNotReceive().ExecuteAsync(
+            Arg.Any<string>(), Arg.Any<LlmRequestOptions>(), Arg.Any<CancellationToken>());
+    }
+
+    [Test]
     public async Task ConfirmIntentAsync_KnownPlatform_PersonalizesRelevanceKeywordsFromUserInput()
     {
         const string qcJson = """

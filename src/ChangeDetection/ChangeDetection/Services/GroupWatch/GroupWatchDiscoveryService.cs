@@ -1312,11 +1312,6 @@ public class GroupWatchDiscoveryService(
         var detectedPlatform = SetupFlowEnhancements.DetectPlatformFromUrl(portal.Url);
         if (!string.IsNullOrWhiteSpace(detectedPlatform))
         {
-            logger.LogInformation(
-                "Using deterministic platform template {PlatformId} for {Url}",
-                detectedPlatform,
-                portal.Url);
-
             var template = await setupFlowEnhancements.GetPlatformTemplateAsync(
                 detectedPlatform,
                 portal.Url,
@@ -1324,19 +1319,29 @@ public class GroupWatchDiscoveryService(
                 negativeKeywords,
                 ct);
 
-            if (template is null)
+            if (template is not null)
             {
-                throw new InvalidOperationException(
-                    $"No pipeline template is available for detected platform '{detectedPlatform}'.");
+                logger.LogInformation(
+                    "Using deterministic platform template {PlatformId} for {Url}",
+                    detectedPlatform,
+                    portal.Url);
+                return CustomizeTemplatePipeline(template, portal, parsedIntent);
             }
 
-            return CustomizeTemplatePipeline(template, portal, parsedIntent);
+            logger.LogInformation(
+                "Detected platform {PlatformId} for {Url}, but no deterministic template is available — attempting LLM-based pipeline build",
+                detectedPlatform,
+                portal.Url);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Unknown platform for {Url} — attempting LLM-based pipeline build",
+                portal.Url);
         }
 
-        // Unknown platform — try LLM-based composable flow first, then generic fallback.
-        logger.LogInformation(
-            "Unknown platform for {Url} — attempting LLM-based pipeline build",
-            portal.Url);
+        // Platforms without a deterministic template use the composable flow first,
+        // then the generic listing pipeline if analysis is unavailable.
 
         try
         {

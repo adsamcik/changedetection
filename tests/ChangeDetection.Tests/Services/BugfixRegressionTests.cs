@@ -116,6 +116,51 @@ public class BugfixRegressionTests : TestBase
             Arg.Any<CancellationToken>());
     }
 
+    [Test]
+    public async Task L2L3_BuildPipelineForPortal_DetectedPlatformWithoutTemplate_UsesFallback()
+    {
+        var composableSetup = Substitute.For<IComposableSetupPipeline>();
+        composableSetup.StartSetupAsync(Arg.Any<SetupRequest>(), Arg.Any<CancellationToken>())
+            .Returns(ToAsyncEnumerable(new SetupProgress
+            {
+                Phase = SetupPhase.Checkpoint1,
+                Type = SetupProgressType.Failed,
+                Message = "LLM unavailable",
+                Error = "LLM unavailable"
+            }));
+
+        var (sut, watchService) = CreateGroupWatchSut(composableSetup: composableSetup);
+        var createdWatch = new WatchedSite
+        {
+            Id = Guid.NewGuid(),
+            Url = "https://boards.greenhouse.io/example/jobs"
+        };
+        watchService.CreateWatchAsync(Arg.Any<CreateWatchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(createdWatch);
+        watchService.UpdateWatchAsync(Arg.Any<WatchedSite>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var portals = new List<DiscoveredPortal>
+        {
+            new(
+                Url: "https://boards.greenhouse.io/example/jobs",
+                Domain: "boards.greenhouse.io",
+                Reasoning: "relevant",
+                Title: "Example Careers",
+                PlatformId: "greenhouse")
+        };
+
+        await foreach (var _ in sut.CreateWatchesAsync("find jobs", portals)) { }
+
+        _ = composableSetup.Received(1).StartSetupAsync(
+            Arg.Any<SetupRequest>(), Arg.Any<CancellationToken>());
+        await watchService.Received().UpdateWatchAsync(
+            Arg.Is<WatchedSite>(watch =>
+                watch.PipelineDefinitionJson != null &&
+                watch.PipelineDefinitionJson.Contains("ExtractSchema", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>());
+    }
+
     // ───────────────────────────────────────────────────
     // L4: PipelineExecutor cycle detection returns gracefully
     // ───────────────────────────────────────────────────

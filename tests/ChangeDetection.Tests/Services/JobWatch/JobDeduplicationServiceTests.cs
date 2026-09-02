@@ -134,6 +134,55 @@ public class JobDeduplicationServiceTests
         result.All(item => !item.IsMultiSource).ShouldBeTrue();
     }
 
+    [Test]
+    public void DeduplicateAcrossSources_WithOnlyOneCompany_DoesNotUseLocationFallback()
+    {
+        var identified = CreateItem(
+            title: "Research Assistant",
+            company: "University of Copenhagen",
+            location: "Copenhagen",
+            source: "UCPH",
+            watchId: "watch-a",
+            url: "https://employment.ku.dk/job/1");
+
+        var unidentified = CreateItem(
+            title: "Research Assistant - Copenhagen",
+            company: null,
+            location: "Copenhagen",
+            source: "Job board",
+            watchId: "watch-b",
+            url: "https://jobs.example/job/2");
+
+        var result = _sut.DeduplicateAcrossSources([identified, unidentified]);
+
+        result.Count.ShouldBe(2);
+        result.All(item => !item.IsMultiSource).ShouldBeTrue();
+    }
+
+    [Test]
+    public void DeduplicateAcrossSources_WithMissingCompaniesAndFuzzyTitles_DoesNotOverMerge()
+    {
+        var first = CreateItem(
+            title: "Research Scientist I",
+            company: null,
+            location: "Copenhagen",
+            source: "Portal A",
+            watchId: "watch-a",
+            url: "https://porta.example/job/1");
+
+        var second = CreateItem(
+            title: "Research Scientist II",
+            company: null,
+            location: "Copenhagen",
+            source: "Portal B",
+            watchId: "watch-b",
+            url: "https://portb.example/job/2");
+
+        var result = _sut.DeduplicateAcrossSources([first, second]);
+
+        result.Count.ShouldBe(2);
+    }
+
     private static GroupResultItemDto CreateItem(
         string title,
         string? company,

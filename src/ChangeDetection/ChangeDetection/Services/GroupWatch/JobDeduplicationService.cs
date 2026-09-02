@@ -88,11 +88,22 @@ public sealed partial class JobDeduplicationService : IJobDeduplicationService
         if (!string.IsNullOrEmpty(existingCompany) && !string.IsNullOrEmpty(candidateCompany))
             return string.Equals(existingCompany, candidateCompany, StringComparison.Ordinal);
 
+        // A missing company is not evidence that two jobs are the same. In particular,
+        // do not merge an identified company posting with an unidentified listing merely
+        // because their titles and locations are similar.
+        if (!string.IsNullOrEmpty(existingCompany) || !string.IsNullOrEmpty(candidateCompany))
+            return false;
+
         var existingLocation = NormalizeText(existing.Location);
         var candidateLocation = NormalizeText(candidate.Location);
 
         if (!string.IsNullOrEmpty(existingLocation) && !string.IsNullOrEmpty(candidateLocation))
-            return string.Equals(existingLocation, candidateLocation, StringComparison.Ordinal);
+        {
+            // With both companies absent, require an exact normalized title as well as
+            // an exact location. Fuzzy title matching is too weak for common job titles.
+            return titleSimilarity.Equals(1d) &&
+                   string.Equals(existingLocation, candidateLocation, StringComparison.Ordinal);
+        }
 
         return false;
     }

@@ -550,10 +550,7 @@ public class FieldHistoryServiceTests : TestBase
         var stats = await _sut.GetStatisticsAsync(_watchId, ObjectIdentity, FieldName);
 
         stats.ShouldNotBeNull();
-        // BUG: Production uses Skip(count/2).First() which returns 30 for even-count [10,20,30,40].
-        // Correct median should be (20+30)/2 = 25. This assertion documents the current behavior.
-        // TODO: Fix FieldHistoryService.GetStatisticsAsync median calculation for even-count collections.
-        stats.Median.ShouldBe(30);
+        stats.Median.ShouldBe(25);
     }
 
     // ========== Zero previous value ==========

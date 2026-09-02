@@ -171,6 +171,12 @@ public class FieldHistoryService(
             else if (recentAvg < olderAvg * 0.99) trend = TrendDirection.Down;
         }
 
+        var sortedValues = numericValues.OrderBy(value => value).ToList();
+        var midpoint = sortedValues.Count / 2;
+        var median = sortedValues.Count % 2 == 0
+            ? sortedValues[midpoint - 1] + (sortedValues[midpoint] - sortedValues[midpoint - 1]) / 2d
+            : sortedValues[midpoint];
+
         return new FieldStatistics
         {
             WatchedSiteId = watchId,
@@ -184,7 +190,7 @@ public class FieldHistoryService(
             Min = numericValues.Min(),
             Max = numericValues.Max(),
             Average = mean,
-            Median = numericValues.OrderBy(v => v).Skip(numericValues.Count / 2).First(),
+            Median = median,
             StandardDeviation = stdDev,
             Variance = variance,
             Trend = trend

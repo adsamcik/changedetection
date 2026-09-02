@@ -343,6 +343,34 @@ public class SetupFlowEnhancementsTests : TestBase
         await Task.CompletedTask;
     }
 
+    [Test]
+    public async Task GetPlatformTemplate_UcphVacancies_UsesDeterministicTablePipeline()
+    {
+        const string url = "https://employment.ku.dk/all-vacancies/";
+        var sut = CreateSut();
+
+        SetupFlowEnhancements.DetectPlatformFromUrl(url).ShouldBe("ucph");
+
+        var template = await sut.GetPlatformTemplateAsync("ucph", url);
+
+        template.ShouldNotBeNull();
+        template.Blocks.ShouldNotContain(block => block.Type.StartsWith("Llm", StringComparison.Ordinal));
+
+        var navigate = template.Blocks.Single(block => block.Id == "navigate-1");
+        navigate.Config!.Value.GetProperty("waitForSelector").GetString()
+            .ShouldBe("table.vacancies tbody tr.vacancy-specs");
+
+        var extract = template.Blocks.Single(block => block.Id == "extractschema-1");
+        extract.Config!.Value.GetProperty("scope").GetString()
+            .ShouldBe("table.vacancies tbody tr.vacancy-specs");
+        extract.Config.Value.GetProperty("enableLlmFallback").GetBoolean().ShouldBeFalse();
+        var fields = extract.Config.Value.GetProperty("schema").EnumerateArray().ToArray();
+        fields.Single(field => field.GetProperty("field").GetString() == "title")
+            .GetProperty("selector").GetString().ShouldBe("td:first-child");
+        fields.Single(field => field.GetProperty("field").GetString() == "url")
+            .GetProperty("selector").GetString().ShouldBe("td:first-child a");
+    }
+
     private static SetupFlowEnhancements CreateSut(Func<HttpRequestMessage, HttpResponseMessage>? responder = null)
     {
         responder ??= _ => new HttpResponseMessage(HttpStatusCode.OK)

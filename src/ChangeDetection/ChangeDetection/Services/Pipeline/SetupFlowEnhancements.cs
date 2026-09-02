@@ -262,6 +262,9 @@ public partial class SetupFlowEnhancements(
             case "workable":
                 template = CreateWorkableTemplate(url);
                 break;
+            case "ucph":
+                template = CreateUcphTemplate(url);
+                break;
             default:
                 template = null;
                 break;
@@ -705,6 +708,67 @@ public partial class SetupFlowEnhancements(
             Metadata = CreateMetadata("Workable browser template", "Monitor Workable job openings", "jobs")
         };
 
+    /// <summary>
+    /// The UCPH vacancies page is a large DataTables document. Its stable table markup is
+    /// known ahead of time, so a deterministic browser pipeline avoids sending the page to
+    /// selector-generation LLMs and eliminates multi-minute setup timeouts.
+    /// </summary>
+    private static PipelineDefinition CreateUcphTemplate(string url) =>
+        new()
+        {
+            SchemaVersion = 1,
+            Blocks =
+            [
+                Block("input-1", "Input", 0, new { url }),
+                Block("navigate-1", "Navigate", 1, new
+                {
+                    useJavaScript = true,
+                    timeout = 30000,
+                    waitForSelector = "table.vacancies tbody tr.vacancy-specs"
+                }),
+                Block("extractschema-1", "ExtractSchema", 2, new
+                {
+                    scope = "table.vacancies tbody tr.vacancy-specs",
+                    listMode = true,
+                    schema = new object[]
+                    {
+                        new { field = "title", selector = "td:first-child" },
+                        new { field = "url", selector = "td:first-child a" },
+                        new { field = "faculty", selector = "td:nth-child(2)" },
+                        new { field = "department", selector = "td:nth-child(3)" },
+                        new { field = "deadline", selector = "td:nth-child(4)" }
+                    },
+                    enableLlmFallback = false
+                }),
+                Block("listdiff-1", "ListDiff", 3, new { identityKey = "url", mode = "all_changes" }),
+                Block("condition-1", "Condition", 4, new
+                {
+                    field = "changed",
+                    @operator = "equals",
+                    value = true
+                }),
+                Block("notify-1", "Notify", 5, new
+                {
+                    template = "New job postings detected on {watchName}"
+                }),
+                Block("output-1", "Output", 6)
+            ],
+            Connections =
+            [
+                Connect("input-1", "url", "navigate-1", "url"),
+                Connect("navigate-1", "html", "extractschema-1", "html"),
+                Connect("extractschema-1", "data", "listdiff-1", "data"),
+                Connect("listdiff-1", "result", "condition-1", "result"),
+                Connect("condition-1", "signal", "notify-1", "signal"),
+                Connect("listdiff-1", "result", "notify-1", "data"),
+                Connect("listdiff-1", "result", "output-1", "data")
+            ],
+            Metadata = CreateMetadata(
+                "University of Copenhagen vacancies template",
+                "Monitor University of Copenhagen job openings",
+                "jobs")
+        };
+
     private static PipelineMetadata CreateMetadata(string title, string intent, string cardType) =>
         new()
         {
@@ -760,6 +824,10 @@ public partial class SetupFlowEnhancements(
             return "lever";
         if (url.Contains("jobindex.dk", StringComparison.OrdinalIgnoreCase))
             return "jobindex";
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            uri.Host.Equals("employment.ku.dk", StringComparison.OrdinalIgnoreCase) &&
+            uri.AbsolutePath.StartsWith("/all-vacancies", StringComparison.OrdinalIgnoreCase))
+            return "ucph";
         if (url.Contains("jobtechdev.se", StringComparison.OrdinalIgnoreCase) ||
             url.Contains("arbetsformedlingen.se/platsbanken", StringComparison.OrdinalIgnoreCase))
             return "platsbanken";
