@@ -10,5 +10,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/ChangeDetection.Core.Tests/ChangeDetection.Core.Tests.csproj" />
     <Project Path="tests/ChangeDetection.Tests/ChangeDetection.Tests.csproj" />
+    <Project Path="tests/ChangeDetection.UITests/ChangeDetection.UITests.csproj" />
   </Folder>
 </Solution>

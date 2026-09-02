@@ -38,6 +38,9 @@ jobs:
       - name: Build tests (ChangeDetection.Core.Tests)
         run: dotnet build tests/ChangeDetection.Core.Tests/ChangeDetection.Core.Tests.csproj --no-restore
 
+      - name: Build tests (ChangeDetection.UITests)
+        run: dotnet build tests/ChangeDetection.UITests/ChangeDetection.UITests.csproj --no-restore
+
       - name: Install Playwright Chromium
         shell: pwsh
         run: ./tests/ChangeDetection.Tests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
@@ -50,6 +53,10 @@ jobs:
       - name: Run tests (ChangeDetection.Core.Tests)
         shell: pwsh
         run: ./test.ps1 -Project tests/ChangeDetection.Core.Tests -NoBuild -TailLines 0
+
+      - name: Run tests (ChangeDetection.UITests)
+        shell: pwsh
+        run: ./test.ps1 -Project tests/ChangeDetection.UITests -NoBuild -TailLines 0
 
       - name: Check for vulnerable packages
         run: dotnet list package --vulnerable --include-transitive
