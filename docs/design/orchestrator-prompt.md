@@ -181,11 +181,14 @@ src/ChangeDetection.Core/
 │   └── Validation/
 │       └── IPipelineValidator.cs   # Validation interface
 src/ChangeDetection/Services/
-├── Pipeline/                        # EXISTING — keep untouched during Phases 1-5
-│   ├── WatchSetupPipeline.cs       # Old pipeline (DO NOT MODIFY)
-│   ├── PipelineWorkerService.cs    # Old worker (DO NOT MODIFY)
-│   ├── PipelineQueueService.cs     # Old queue (DO NOT MODIFY)
-│   └── PipelineEventService.cs     # Old events (DO NOT MODIFY)
+├── Pipeline/
+│   └── PipelineEventService.cs     # Historical run/event diagnostics
+├── SetupPipeline/
+│   ├── ComposableSetupPipeline.cs
+│   ├── ComposableSetupPipeline.Analysis.cs
+│   ├── ComposableSetupPipeline.Assembly.cs
+│   ├── ComposableSetupPipeline.Validation.cs
+│   └── ComposableSetupPipeline.Templates.cs
 ├── Blocks/                          # NEW — all block implementations
 │   ├── Acquisition/                # InputBlock, NavigateBlock, WaitBlock, etc.
 │   ├── Extraction/                 # FilterBlock, ExtractSchemaBlock
@@ -220,7 +223,7 @@ Before certain work items, the orchestrator MUST run an `explore` agent to read 
 
 | Before Work Item | Explore What | Why |
 |-----------------|-------------|-----|
-| 1.1 | `ChangeDetection.Core/Entities/PipelineRun.cs`, `PipelineEvent.cs`, `PipelineQueueItem.cs` | Understand existing pipeline entities to avoid name collisions |
+| 1.1 | `ChangeDetection.Core/Entities/PipelineRun.cs`, `PipelineEvent.cs` | Understand existing pipeline entities to avoid name collisions |
 | 1.2 | `ChangeDetection.Core/Entities/WatchedSite.cs` (full file) | Know all 35 properties before adding `PipelineDefinitionJson` |
 | 1.5 | `src/ChangeDetection/ChangeDetection/Services/Scraping/PlaywrightFetcher.cs` | Understand `IContentFetcher` API to wire into NavigateBlock |
 | 1.10 | `src/ChangeDetection/ChangeDetection/Services/Background/ChangeCheckBackgroundService.cs` and `Program.cs` | Understand scheduling flow and registration before modifying |
@@ -274,8 +277,6 @@ You will add: `PipelineDefinitionJson` (string, nullable) — the JSON-serialize
 ### Existing Pipeline-Related Entities (DO NOT collide with these names)
 - `PipelineRun` — existing entity in `ChangeDetection.Core/Entities/PipelineRun.cs`
 - `PipelineEvent` — existing entity in `ChangeDetection.Core/Entities/PipelineEvent.cs`
-- `PipelineQueueItem` — existing entity in `ChangeDetection.Core/Entities/PipelineQueueItem.cs`
-
 Use distinct names for new types: `BlockExecutionRun`, `BlockExecutionResult`, etc.
 
 ---

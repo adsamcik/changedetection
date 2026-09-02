@@ -164,9 +164,8 @@ which blocks to use and how to configure them.
 1. **Never maintain parallel legacy/modern implementations.** When a modern replacement 
    exists, the legacy version must be removed or migrated — never left running alongside.
 
-2. **All UI flows must use the latest pipeline.** The setup flow uses `ComposableSetupPipeline` 
-   via `ComposableSetupHub`. The old `WatchSetupPipeline`/`SetupConversationHub` are deprecated 
-   and should not be used for new features.
+2. **All UI flows must use the latest pipeline.** The setup flow uses `ComposableSetupPipeline`
+   via `ComposableSetupHub`; the former setup orchestrator and conversation hub have been removed.
 
 3. **All watch checks must use the pipeline executor.** Watches without `PipelineDefinitionJson` 
    should get an auto-generated basic pipeline, not fall back to the legacy `ServerWatchService` 
@@ -181,15 +180,14 @@ which blocks to use and how to configure them.
 
 ## Legacy Code Status
 
-All legacy code paths have been removed. The `WatchSetupPipeline` and `SetupConversationHub` are
-deprecated and marked `[Obsolete]`. ALL watches use the pipeline executor path — watches without
+All legacy setup code paths have been removed. ALL watches use the pipeline executor path — watches without
 a `PipelineDefinitionJson` get an auto-generated basic pipeline (Input → Navigate → ExtractSchema/
 HashCompare → Output) on first check, then proceed through the standard pipeline executor.
 
-The legacy DI registrations (individual pipeline stages, `IWatchSetupPipeline`) and the commented-out
-`SetupConversationHub` hub mapping have been removed from `Program.cs`.
+The former setup queue, resumable-session facade, individual stage registrations, and legacy HTTP
+execution routes are not compatibility surfaces. New setup behavior belongs in `IComposableSetupPipeline`.
 
-## Current Status (Mar 2026)
+## Current Status (Sep 2026)
 
 ### What Works End-to-End:
 - **Known platforms** (Workday, Teamtailor, Platsbanken, Workable): User pastes URL →

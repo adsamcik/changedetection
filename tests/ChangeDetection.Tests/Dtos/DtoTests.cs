@@ -128,38 +128,6 @@ public class ChangeDtoTests
     }
 }
 
-public class LlmDtoTests
-{
-    [Test]
-    public async Task ProcessInputResponse_HasDefaultValues()
-    {
-        // Act
-        var response = new ProcessInputResponse();
-
-        // Assert
-        response.IsSuccess.ShouldBeFalse();
-        response.Intent.ShouldBe("Unknown");
-        response.NeedsClarification.ShouldBeFalse();
-        response.ClarificationQuestions.ShouldBeEmpty();
-        response.Suggestions.ShouldBeEmpty();
-        await Task.CompletedTask;
-    }
-
-    [Test]
-    public async Task ParsedWatchRequestDto_HasDefaultValues()
-    {
-        // Act
-        var dto = new ParsedWatchRequestDto();
-
-        // Assert - all properties are nullable with null defaults
-        dto.Url.ShouldBeNull();
-        dto.UseJavaScript.ShouldBeNull();
-        dto.Tags.ShouldBeNull();
-        await Task.CompletedTask;
-    }
-
-}
-
 public class LlmProviderDtoTests
 {
     [Test]

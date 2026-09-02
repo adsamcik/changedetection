@@ -130,19 +130,6 @@ public record WatchCreatedEvent(
     string Name);
 
 /// <summary>
-/// Event data for setup session changes.
-/// </summary>
-public record SetupSessionUpdatedEvent(
-    Guid SessionId,
-    string DisplayName,
-    string? CurrentPrompt,
-    bool IsProcessing,
-    bool IsCompleted,
-    bool IsCancelled,
-    bool IsBackgrounded = false,
-    string? CurrentStage = null);
-
-/// <summary>
 /// Event data for aggregate group updates (recomputed after a member watch check).
 /// </summary>
 public record AggregateUpdatedEvent(

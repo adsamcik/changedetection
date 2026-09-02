@@ -33,6 +33,17 @@ public interface IErrorResolutionService
 }
 
 /// <summary>
+/// Selector syntax supported by automated error recovery.
+/// </summary>
+public enum SelectorType
+{
+    CssSelector,
+    XPath,
+    TextPattern,
+    JsonPath
+}
+
+/// <summary>
 /// Context for error resolution attempt.
 /// </summary>
 public class ErrorResolutionContext

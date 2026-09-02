@@ -5,6 +5,7 @@ using ChangeDetection.Core.Interfaces;
 using ChangeDetection.Endpoints;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Routing;
 using Shouldly;
 using TUnit.Core;
 
@@ -27,6 +28,20 @@ public class PipelineDebugEndpointTests : TestBase, IAsyncDisposable
     {
         _client?.Dispose();
         if (_factory != null) await _factory.DisposeAsync();
+    }
+
+    [Test]
+    public async Task LegacyActiveSessionsRoute_IsNotMapped()
+    {
+        var routes = _factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Select(endpoint => endpoint.RoutePattern.RawText)
+            .ToList();
+
+        routes.ShouldNotContain("/api/debug/pipeline/active");
+
+        await Task.CompletedTask;
     }
 
     [Test]
@@ -108,17 +123,6 @@ public class PipelineDebugEndpointTests : TestBase, IAsyncDisposable
         var detail = await response.Content.ReadFromJsonAsync<PipelineRunDetailDto>();
         detail.ShouldNotBeNull();
         detail.Run.SessionId.ShouldBe(run.SessionId);
-    }
-
-    [Test]
-    public async Task GetActiveSessions_ReturnsOk()
-    {
-        var response = await _client.GetAsync("/api/debug/pipeline/active");
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        var active = await response.Content.ReadFromJsonAsync<ActiveSessionsDto>();
-        active.ShouldNotBeNull();
-        active.InMemoryPipelineSessions.ShouldBeGreaterThanOrEqualTo(0);
     }
 
     [Test]

@@ -2,7 +2,7 @@ namespace ChangeDetection.Core.Pipeline;
 
 /// <summary>
 /// Flows pipeline run context through async execution using AsyncLocal.
-/// Set by WatchSetupPipeline at run start, read by LlmProviderChain for correlation.
+/// Can be set by an orchestrator at run start and is read by LLM logging for correlation.
 /// </summary>
 public static class PipelineExecutionContext
 {

@@ -23,23 +23,6 @@ public class DtoAdvancedTests
     }
 
     [Test]
-    public async Task ParsedWatchRequestDto_NullablePropertiesDefaultToNull()
-    {
-        // Act
-        var dto = new ParsedWatchRequestDto();
-
-        // Assert
-        dto.Url.ShouldBeNull();
-        dto.Title.ShouldBeNull();
-        dto.CssSelector.ShouldBeNull();
-        dto.CheckIntervalMinutes.ShouldBeNull();
-        dto.UseJavaScript.ShouldBeNull();
-        dto.NotificationEmail.ShouldBeNull();
-        dto.Description.ShouldBeNull();
-        await Task.CompletedTask;
-    }
-
-    [Test]
     public async Task LlmProviderDto_HasCorrectDefaults()
     {
         // Act

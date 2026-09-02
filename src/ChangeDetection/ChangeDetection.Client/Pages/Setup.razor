@@ -1,15 +1,11 @@
 @page "/setup"
-@page "/setup/{SessionId:guid}"
 @rendermode InteractiveAuto
 @layout EmptyLayout
 @using ChangeDetection.Client.Layout
 
-<SetupFlow SessionId="@SessionId" Input="@Input" />
+<SetupFlow Input="@Input" />
 
 @code {
-    [Parameter]
-    public Guid? SessionId { get; set; }
-
     [SupplyParameterFromQuery]
     public string? Input { get; set; }
 }

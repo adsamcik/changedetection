@@ -6,6 +6,7 @@ using ChangeDetection.Services.Persistence;
 using ChangeDetection.Services.Security;
 using ChangeDetection.Shared.Dtos;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Routing;
 using Shouldly;
 using TUnit.Core;
 
@@ -47,6 +48,22 @@ public class LlmEndpointTests : TestBase, IAsyncDisposable
         var created = await response.Content.ReadFromJsonAsync<LlmProviderDto>();
         created.ShouldNotBeNull();
         return created;
+    }
+
+    [Test]
+    public async Task LegacySetupRoutes_AreNotMapped()
+    {
+        var routes = _factory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Select(endpoint => endpoint.RoutePattern.RawText)
+            .ToList();
+
+        routes.ShouldNotContain("/api/llm/process-input");
+        routes.ShouldNotContain("/api/llm/run-pipeline");
+        routes.ShouldNotContain("/api/llm/pending-setups");
+
+        await Task.CompletedTask;
     }
 
     // --- Provider CRUD ---
@@ -268,16 +285,4 @@ public class LlmEndpointTests : TestBase, IAsyncDisposable
         response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
-    // --- Sessions ---
-
-    [Test]
-    public async Task GetPendingSetups_ReturnsEmptyList()
-    {
-        var response = await _client.GetAsync("/api/llm/pending-setups");
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        var pending = await response.Content.ReadFromJsonAsync<List<PendingSetupDto>>();
-        pending.ShouldNotBeNull();
-        pending.ShouldBeEmpty();
-    }
 }

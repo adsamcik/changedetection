@@ -116,23 +116,6 @@ public class LiteDbContext : IDisposable
                 .Field(x => x.Stage, "Stage")
                 .Field(x => x.EventType, "EventType");
             
-            // PipelineQueueItem - register to fix LiteDB enum index issues
-            mapper.Entity<Core.Entities.PipelineQueueItem>()
-                .Id(x => x.Id)
-                .Field(x => x.SessionId, "SessionId")
-                .Field(x => x.OwnerId, "OwnerId")
-                .Field(x => x.OperationType, "OperationType")
-                .Field(x => x.Status, "Status");
-
-            // PersistedSession - configure eagerly because collection indexes can be
-            // created concurrently by multiple test/application contexts.
-            mapper.Entity<Core.Entities.PersistedSession>()
-                .Id(x => x.Id)
-                .Field(x => x.SessionId, "SessionId")
-                .Field(x => x.OwnerId, "OwnerId")
-                .Field(x => x.LastActivityAt, "LastActivityAt")
-                .Field(x => x.AwaitingUserInput, "AwaitingUserInput");
-
             // TrackedItem is used through the generic repository and therefore does
             // not otherwise get an eager mapping before concurrent access begins.
             mapper.Entity<Core.Entities.TrackedItem>()
@@ -294,22 +277,6 @@ public class LiteDbContext : IDisposable
         notificationOutbox.EnsureIndex(x => x.NextRetryAt);
         notificationOutbox.EnsureIndex(x => x.ProcessingStartedAt);
         notificationOutbox.EnsureIndex(x => x.WatchedSiteId);
-
-        // Configure indexes for PipelineQueueItem
-        var pipelineQueue = _database.GetCollection<Core.Entities.PipelineQueueItem>("pipeline_queue");
-        pipelineQueue.EnsureIndex(x => x.Status);
-        pipelineQueue.EnsureIndex(x => x.SessionId);
-        pipelineQueue.EnsureIndex(x => x.OwnerId);
-        pipelineQueue.EnsureIndex(x => x.EnqueuedAt);
-        pipelineQueue.EnsureIndex(x => x.Priority);
-        pipelineQueue.EnsureIndex(x => x.StartedAt);
-
-        // Configure indexes for PersistedSession
-        var persistedSessions = _database.GetCollection<Core.Entities.PersistedSession>("persisted_sessions");
-        persistedSessions.EnsureIndex(x => x.SessionId, unique: true);
-        persistedSessions.EnsureIndex(x => x.OwnerId);
-        persistedSessions.EnsureIndex(x => x.LastActivityAt);
-        persistedSessions.EnsureIndex(x => x.AwaitingUserInput);
 
         // Configure indexes for PortalSuggestionEntity
         var portalSuggestions = _database.GetCollection<Core.Entities.PortalSuggestionEntity>("portal_suggestions");

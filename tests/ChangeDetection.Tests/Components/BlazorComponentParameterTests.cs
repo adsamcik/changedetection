@@ -173,7 +173,7 @@ public class BlazorComponentParameterTests
     /// Such properties should use [Parameter] instead.
     /// </summary>
     [Test]
-    public async Task SetupFlow_SessionId_ShouldBeRegularParameter()
+    public async Task SetupFlow_Input_ShouldBeRegularParameter()
     {
         // Arrange
         var clientAssembly = LoadClientAssemblyOrSkip();
@@ -181,31 +181,31 @@ public class BlazorComponentParameterTests
         
         setupFlowType.ShouldNotBeNull("SetupFlow component should exist");
 
-        var sessionIdProperty = setupFlowType.GetProperty("SessionId");
-        sessionIdProperty.ShouldNotBeNull("SessionId property should exist on SetupFlow");
+        var inputProperty = setupFlowType.GetProperty("Input");
+        inputProperty.ShouldNotBeNull("Input property should exist on SetupFlow");
 
         // Act
-        var hasParameterAttribute = sessionIdProperty
+        var hasParameterAttribute = inputProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "ParameterAttribute");
         
-        var hasSupplyParameterFromQuery = sessionIdProperty
+        var hasSupplyParameterFromQuery = inputProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "SupplyParameterFromQueryAttribute");
         
-        var hasCascadingParameter = sessionIdProperty
+        var hasCascadingParameter = inputProperty
             .GetCustomAttributes()
             .Any(a => a.GetType().Name == "CascadingParameterAttribute");
 
         // Assert
         hasParameterAttribute.ShouldBeTrue(
-            "SessionId should have [Parameter] attribute since it's passed from parent Setup.razor");
+            "Input should have [Parameter] because it is passed from parent Setup.razor");
         
         hasSupplyParameterFromQuery.ShouldBeFalse(
-            "SessionId should NOT have [SupplyParameterFromQuery] - the parent component reads the route parameter and passes it down");
+            "Input should not have [SupplyParameterFromQuery] because the parent component reads the query parameter");
         
         hasCascadingParameter.ShouldBeFalse(
-            "SessionId should NOT have [CascadingParameter] - it's passed as an explicit parameter from parent");
+            "Input should not have [CascadingParameter] because it is passed explicitly by the parent");
         await Task.CompletedTask;
     }
 

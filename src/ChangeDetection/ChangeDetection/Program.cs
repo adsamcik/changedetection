@@ -332,7 +332,6 @@ builder.Services.AddScoped<IPortalDiscoveryAnalyzer, PortalDiscoveryAnalyzer>();
 builder.Services.AddScoped<IPortalSuggestionService, PortalSuggestionService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ILlmProviderChain, LlmProviderChain>();
-builder.Services.AddScoped<IInputProcessor, InputProcessor>();
 builder.Services.AddScoped<IAgentInteractionContext, AgentInteractionContext>();
 builder.Services.AddScoped<AskUserService>();
 builder.Services.AddScoped<IAskUserService>(sp => sp.GetRequiredService<AskUserService>());
@@ -343,9 +342,6 @@ builder.Services.AddScoped<IDelegateResearchService, DelegateResearchService>();
 builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepository>();
 builder.Services.AddScoped<INotificationOutboxService, NotificationOutboxService>();
 
-// Session persistence for resumable setup wizards
-builder.Services.AddScoped<ISessionPersistenceService, SessionPersistenceService>();
-
 // LLM-powered content analysis services
 builder.Services.AddScoped<IChangeAnalyzer, ChangeAnalyzer>();
 builder.Services.AddScoped<IProfileRelevanceScorer, JobMatchRelevanceScorer>();
@@ -355,22 +351,8 @@ builder.Services.AddScoped<IJobDeduplicationService, JobDeduplicationService>();
 
 builder.Services.AddSingleton<SetupFlowEnhancements>();
 
-// Pipeline queue for persistent, concurrent pipeline execution
-builder.Services.AddSingleton<IPipelineQueueRepository>(sp =>
-    new PipelineQueueRepository(
-        sp.GetRequiredService<ThreadSafeLiteDbContext>(),
-        sp.GetRequiredService<ILogger<PipelineQueueRepository>>()));
-builder.Services.AddSingleton<PipelineQueueService>();
-builder.Services.AddSingleton<IPipelineQueueService>(sp => sp.GetRequiredService<PipelineQueueService>());
-builder.Services.AddHostedService<PipelineWorkerService>();
-
 // Pipeline event tracking for history and debugging
 builder.Services.AddScoped<IPipelineEventService, PipelineEventService>();
-
-// Pipeline support services
-builder.Services.AddSingleton<ConversationSessionManager>();
-builder.Services.AddSingleton<IConversationSessionManager>(sp => sp.GetRequiredService<ConversationSessionManager>());
-builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<ConversationSessionManager>());
 
 // URL validation for SSRF protection
 builder.Services.AddSingleton<IUrlValidator, SafeUrlValidator>();
@@ -463,16 +445,6 @@ builder.Services.AddSingleton<PipelineDegradationService>();
 
 // Composable setup pipeline (LLM-driven pipeline assembly from natural language)
 builder.Services.AddScoped<IComposableSetupPipeline, ComposableSetupPipeline>();
-
-// Legacy setup pipeline + stages — kept for PipelineWorkerService and LlmEndpoints
-// Marked [Obsolete] in WatchSetupPipeline.cs. Will be fully removed when dependents are migrated.
-builder.Services.AddScoped<UrlExtractionStage>();
-builder.Services.AddScoped<ContentFetchingStage>();
-builder.Services.AddScoped<ContentAnalysisStage>();
-builder.Services.AddScoped<SelectorGenerationStage>();
-builder.Services.AddScoped<SelectorValidationStage>();
-builder.Services.AddScoped<SchemaDiscoveryStage>();
-builder.Services.AddScoped<IWatchSetupPipeline, WatchSetupPipeline>();
 
 // Object extraction and filtering services
 builder.Services.AddScoped<IObjectExtractionService, ObjectExtractionService>();

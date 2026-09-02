@@ -5,7 +5,7 @@ using ChangeDetection.Shared.Dtos;
 namespace ChangeDetection.Endpoints;
 
 /// <summary>
-/// Debug endpoints for inspecting pipeline runs, events, LLM logs, and active sessions.
+/// Debug endpoints for inspecting pipeline runs, events, and LLM logs.
 /// Provides full observability into the LLM pipeline execution for debugging stalls and failures.
 /// </summary>
 public static class PipelineDebugEndpoints
@@ -29,10 +29,6 @@ public static class PipelineDebugEndpoints
             .WithName("GetPipelineRunBySession")
             .Produces<PipelineRunDetailDto>()
             .Produces(404);
-
-        group.MapGet("/active", GetActiveSessions)
-            .WithName("GetActivePipelineSessions")
-            .Produces<ActiveSessionsDto>();
 
         group.MapGet("/llm/log", GetLlmLog)
             .WithName("GetLlmLog")
@@ -132,17 +128,6 @@ public static class PipelineDebugEndpoints
             FinalConfigurationJson = run.FinalConfigurationJson,
             SessionStateJson = run.SessionStateJson
         });
-    }
-
-    private static Task<IResult> GetActiveSessions(
-        ISessionPersistenceService sessionPersistence,
-        CancellationToken ct)
-    {
-        return Task.FromResult(Results.Ok(new ActiveSessionsDto
-        {
-            InMemoryPipelineSessions = 0,
-            InMemoryStateHistories = 0
-        }));
     }
 
     private static Task<IResult> GetLlmLog(
@@ -313,12 +298,6 @@ public record PipelineEventDto
     public float? Confidence { get; init; }
     public string? PromptText { get; init; }
     public string? ResponseText { get; init; }
-}
-
-public record ActiveSessionsDto
-{
-    public int InMemoryPipelineSessions { get; init; }
-    public int InMemoryStateHistories { get; init; }
 }
 
 

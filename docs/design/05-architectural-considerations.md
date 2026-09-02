@@ -61,11 +61,13 @@ Issues identified through adversarial review. These need to be addressed during 
 
 **Solution:** At setup time, compute estimated cost per run based on block types and model selection. Show in confirmation step. Add per-watch monthly LLM budget with graceful degradation (skip LLM blocks, fall back to hash-only, flag as degraded).
 
-### 7. Migration from Current Architecture
+### 7. Migration from the Previous Architecture (Complete)
 
-**Problem:** 6 hardcoded stages in WatchSetupPipeline → composable blocks, without breaking working watches.
+**Problem:** The previous setup implementation used six hardcoded stages rather than composable blocks.
 
-**Solution:** Lazy `LegacyPipelineMigrator` — deterministic mapping from flat WatchedSite properties to block graph. Run on first execution if `PipelineDefinitionJson == null`. Feature flag to keep old code path alive for 2 release cycles.
+**Solution:** Watches without `PipelineDefinitionJson` are deterministically mapped to a block graph on first
+execution. The parallel setup orchestrator, its queue, and its session facade have been removed; setup now
+enters exclusively through `IComposableSetupPipeline`.
 
 ### 8. Debugging
 

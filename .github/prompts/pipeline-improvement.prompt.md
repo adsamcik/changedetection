@@ -16,23 +16,21 @@ Before running anything, build a deep mental model:
    - `.github/instructions/implementation.instructions.md`
    - `.github/instructions/csharp.instructions.md`
 
-2. **Map the pipeline stages** by reading these source files:
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/WatchSetupPipeline.cs` — orchestrator
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/ContentAnalysisStage.cs` — LLM classification + intent + sections
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/SchemaDiscoveryStage.cs` — 2-turn field discovery
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/SelectorGenerationStage.cs` — CSS/XPath generation
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/SelectorValidationStage.cs` — selector execution + scoring
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/UrlExtractionStage.cs` — regex URL extraction
-   - `src/ChangeDetection/ChangeDetection/Services/Pipeline/ContentFetchingStage.cs` — HTTP/Playwright fetch
+2. **Map the pipeline phases** by reading these source files:
+   - `src/ChangeDetection/ChangeDetection/Services/SetupPipeline/ComposableSetupPipeline.cs` — public orchestration flow
+   - `src/ChangeDetection/ChangeDetection/Services/SetupPipeline/ComposableSetupPipeline.Analysis.cs` — intent and content analysis
+   - `src/ChangeDetection/ChangeDetection/Services/SetupPipeline/ComposableSetupPipeline.Assembly.cs` — block graph assembly
+   - `src/ChangeDetection/ChangeDetection/Services/SetupPipeline/ComposableSetupPipeline.Validation.cs` — dry run, adversarial, and QC validation
+   - `src/ChangeDetection/ChangeDetection/Services/SetupPipeline/ComposableSetupPipeline.Templates.cs` — deterministic platform templates
    - `src/ChangeDetection/ChangeDetection/Services/Content/DomCompactor.cs` — HTML compaction for LLM context
    - `src/ChangeDetection/ChangeDetection/Services/LLM/LlmProviderChain.cs` — multi-provider fallback
-   - `src/ChangeDetection.Core/Interfaces/IWatchSetupPipeline.cs` — pipeline interface
-   - `src/ChangeDetection.Shared/DTOs/PipelineDtos.cs` — all DTOs (FlowStateEntry, PipelineProgress, etc.)
+   - `src/ChangeDetection.Core/Pipeline/Setup/IComposableSetupPipeline.cs` — setup interface
+   - `src/ChangeDetection.Shared/DTOs/PipelineDtos.cs` — client-side setup progress DTOs
 
 3. **Study existing tests** for patterns:
-   - `tests/ChangeDetection.Tests/EndToEnd/LttStorePipelineE2ETests.cs`
-   - `tests/ChangeDetection.Tests/Pipeline/LttStorePipelineTests.cs`
-   - `tests/ChangeDetection.Tests/Pipeline/RealLlmPipelineTests.cs`
+   - `tests/ChangeDetection.Tests/Pipeline/Setup/ComposableSetupPipelineTests.cs`
+   - `tests/ChangeDetection.Tests/Pipeline/HeadlessPipelineBuildTests.cs`
+   - `tests/ChangeDetection.Tests/EndToEnd/PipelineReliabilityE2ETests.cs`
 
 4. **Understand the LLM prompts** — read the actual prompt strings in each stage file. These are your primary improvement targets.
 
@@ -92,10 +90,10 @@ For **each synthetic prompt**, execute this cycle:
 
 If no existing test covers your scenario, **create a new test file** named after the URL category (e.g., `AmazonProductPipelineTests.cs`, `VeeamCareersPipelineTests.cs`) in `tests/ChangeDetection.Tests/Pipeline/`. The test should:
 - Use `CachingWebApplicationFactory` for dual caching (LLM + content)
-- Run the full pipeline via `IWatchSetupPipeline.ProcessStreamingAsync()`
-- Collect ALL `PipelineProgress` events into a list
+- Run the full pipeline via `IComposableSetupPipeline.StartSetupAsync()`
+- Collect all `SetupProgress` events into a list
 - Log every event with `Log()` from TestBase
-- Follow the exact patterns in `LttStorePipelineE2ETests.cs` for real URL testing
+- Follow the composable setup test harness patterns for real URL testing
 
 **If a URL fetch fails** (anti-bot, timeout, 403, etc.), log the failure in SQL but continue to the next prompt. Mark the run as `N/A - fetch failed` rather than grading it. Retry once before giving up.
 
