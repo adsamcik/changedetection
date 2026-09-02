@@ -36,13 +36,14 @@ public class ServerFixture : IAsyncDisposable
         _baseUrl = $"http://127.0.0.1:{port}";
 
         var projectPath = FindProjectPath();
+        var configuration = GetTestConfiguration();
 
         _process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                Arguments = $"run --project \"{projectPath}\" --no-build --urls {_baseUrl}",
+                Arguments = $"run --project \"{projectPath}\" --configuration {configuration} --no-build --urls {_baseUrl}",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -88,6 +89,14 @@ public class ServerFixture : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private static string GetTestConfiguration()
+    {
+        var configured = Environment.GetEnvironmentVariable("TEST_CONFIGURATION");
+        return string.Equals(configured, "Release", StringComparison.OrdinalIgnoreCase)
+            ? "Release"
+            : "Debug";
     }
 
     private static string FindProjectPath()

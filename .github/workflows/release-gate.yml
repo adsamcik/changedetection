@@ -1,0 +1,59 @@
+name: Release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version to validate (without a leading v)
+        required: true
+        default: 0.0.0-local
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-release-${{ hashFiles('**/*.csproj', '**/*.slnx') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-release-
+            ${{ runner.os }}-nuget-
+
+      - name: Run release gate
+        shell: pwsh
+        env:
+          REQUESTED_VERSION: ${{ inputs.version || github.ref_name }}
+        run: |
+          $version = $env:REQUESTED_VERSION -replace '^v', ''
+          ./scripts/release-gate.ps1 -Version $version
+
+      - name: Upload publish artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: changedetection-${{ inputs.version || github.ref_name }}
+          path: .artifacts/release-gate/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

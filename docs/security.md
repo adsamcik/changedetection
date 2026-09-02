@@ -11,13 +11,15 @@
 
 LLM provider API keys entered through the settings UI are encrypted before they are written to LiteDB. Existing plaintext keys are encrypted automatically the next time their provider configuration is read. Runtime services receive the decrypted value; API responses never return it.
 
-Encryption uses the ASP.NET Core Data Protection key ring with the application name `ChangeDetection`. Container and multi-instance deployments should mount a persistent, access-controlled directory and set:
+Encryption uses the ASP.NET Core Data Protection key ring with the application name `ChangeDetection`. Container deployments should mount a persistent, access-controlled directory and set:
 
 ```text
 Security__DataProtectionKeyRingPath=/run/secrets/changedetection-keyring
 ```
 
 The key-ring directory must be backed up separately from the database. Losing it makes encrypted provider keys unrecoverable.
+
+The production container maps this directory to the dedicated `/keys` volume. Keep that volume access-controlled and back it up separately from `/data`.
 
 Search-provider API keys are not stored in LiteDB. Supply them through an external configuration source such as environment variables:
 
@@ -28,3 +30,5 @@ SearchSettings__NewsDataApiKey=...
 ```
 
 LLM providers declared through configuration can likewise source their key from the environment, for example `LlmProviders__0__ApiKey`.
+
+For production, inject these values from the hosting platform's secret manager. Do not bake them into the image or commit a populated `.env` file. The supplied `.env.example` contains names and empty placeholders only.

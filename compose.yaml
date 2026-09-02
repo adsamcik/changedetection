@@ -1,0 +1,47 @@
+name: changedetection
+
+services:
+  app:
+    image: changedetection:${CHANGEDETECTION_VERSION:-0.0.0-local}
+    build:
+      context: .
+      args:
+        VERSION: ${CHANGEDETECTION_VERSION:-0.0.0-local}
+        VCS_REF: ${CHANGEDETECTION_REVISION:-unknown}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${CHANGEDETECTION_PORT:-5171}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      LiteDb__Path: /data/changedetection.db
+      Security__DataProtectionKeyRingPath: /keys
+      SearchSettings__GoogleCseApiKey: ${CHANGEDETECTION_GOOGLE_CSE_API_KEY:-}
+      SearchSettings__GoogleCseEngineId: ${CHANGEDETECTION_GOOGLE_CSE_ENGINE_ID:-}
+      SearchSettings__BraveApiKey: ${CHANGEDETECTION_BRAVE_API_KEY:-}
+      SearchSettings__NewsDataApiKey: ${CHANGEDETECTION_NEWSDATA_API_KEY:-}
+    volumes:
+      - changedetection-data:/data
+      - changedetection-keys:/keys
+      - changedetection-backups:/app/backups
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 4
+
+volumes:
+  changedetection-data:
+  changedetection-keys:
+  changedetection-backups:

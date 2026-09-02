@@ -27,6 +27,9 @@
 .PARAMETER Project
     Test project path (defaults to tests/ChangeDetection.Tests)
 
+.PARAMETER Configuration
+    Build configuration to execute (defaults to Debug)
+
 .PARAMETER TailLines
     Number of lines to show in console (default: 50, use 0 for all)
 
@@ -68,6 +71,8 @@ param(
     [string]$Filter = "",
     [switch]$NoBuild,
     [string]$Project = "tests/ChangeDetection.Tests",
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration = "Debug",
     [int]$TailLines = 50,
     [int]$MaxParallel = 8,
     [switch]$IncludeOllama,
@@ -100,6 +105,10 @@ if (-not $IncludeCopilot) {
     $env:SKIP_COPILOT_TESTS = $null
 }
 
+# UI test infrastructure uses this to start the application from the same
+# build configuration as the test executable.
+$env:TEST_CONFIGURATION = $Configuration
+
 # Ensure we're in repo root
 $repoRoot = $PSScriptRoot
 Push-Location $repoRoot
@@ -109,12 +118,12 @@ try {
     $resultsDir = Join-Path $repoRoot "TestResults"
 
     # Build command for TUnit (uses dotnet run)
-    $runArgs = @("run", "--project", $Project)
+    $runArgs = @("run", "--project", $Project, "--configuration", $Configuration)
     
     if (-not $NoBuild) {
         # Build first
         Write-Host "Building..." -ForegroundColor Cyan
-        & dotnet build $Project --verbosity quiet
+        & dotnet build $Project --configuration $Configuration --verbosity quiet
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Build failed!" -ForegroundColor Red
             exit $LASTEXITCODE
@@ -146,6 +155,7 @@ try {
 
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Running TUnit tests with logging to: $logFile" -ForegroundColor Cyan
+    Write-Host "Configuration: $Configuration" -ForegroundColor Cyan
     Write-Host "Filter: $(if ($Filter) { $Filter } else { '(all tests)' })" -ForegroundColor Cyan
     if ($Filter -and $effectiveFilter -ne $Filter) {
         Write-Host "TUnit filter: $effectiveFilter" -ForegroundColor DarkGray
